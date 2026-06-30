@@ -1,0 +1,7 @@
+[gd_scene format=4 uid="uid://br0cky1map000"]
+
+[ext_resource type="PackedScene" uid="uid://ey0blx655rs7" path="res://scenes/world/BiomeMap.tscn" id="1"]
+
+[node name="RockyMap" instance=ExtResource("1")]
+random_theme = false
+theme = 3

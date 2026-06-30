@@ -44,7 +44,7 @@ var _cam_pos: Vector2 = Vector2.ZERO
 var _follow_mode: bool = true
 
 # Système de portes
-var _map:           Zone1          = null
+var _map:           MapBase        = null
 var _entry_barrier: StaticBody2D   = null
 var _exit_portals:  Array          = []
 
@@ -59,7 +59,7 @@ const ENEMY_SCENE := preload("res://scenes/combat/EnemyPokemon.tscn")
 func _ready() -> void:
 	y_sort_enabled = true
 	_register_switch_key()
-	_map = get_node_or_null("Map") as Zone1
+	_map = get_node_or_null("Map") as MapBase
 	_refresh_map_bounds()
 	RunManager.inst().start_run()
 	_cam_pos = player_spawn.global_position
@@ -178,6 +178,13 @@ func _preload_moves() -> void:
 					move_owners[mname] = []
 				move_owners[mname].append({"pd": pd, "level": int(lm["level"])})
 				count += 1
+
+	# Injecte les capacités permanentes achetées au hub pour tous les Pokémon
+	for pm_name in GameManager.purchased_move_names:
+		if not move_owners.has(pm_name):
+			move_owners[pm_name] = []
+		for pd_id in unique:
+			move_owners[pm_name].append({"pd": unique[pd_id], "level": 0})
 
 	var all_names: Array = move_owners.keys()
 	if all_names.is_empty():
@@ -453,8 +460,8 @@ func _spawn_from_pool(pool: Array[int], count: int, lv: int) -> void:
 func _random_valid_spawn() -> Vector2:
 	# Cherche une position libre (ni arbre, ni eau, ni bord)
 	for _attempt in 40:
-		var tx := randi_range(10, Zone1.W - 10)
-		var ty := randi_range(10, Zone1.H - 10)
+		var tx := randi_range(10, MapBase.W - 10)
+		var ty := randi_range(10, MapBase.H - 10)
 		var pos := Vector2(tx * 16.0 + 8.0, ty * 16.0 + 8.0)
 		if is_instance_valid(_map) and _map.is_valid_spawn(pos):
 			return pos
@@ -680,7 +687,7 @@ func _transition_to_next_zone() -> void:
 			_map.queue_free()
 		var zone_path  := RunManager.inst().current_zone_path()
 		var new_scene  := load(zone_path) as PackedScene
-		_map            = new_scene.instantiate() as Zone1
+		_map            = new_scene.instantiate() as MapBase
 		_map.name       = "Map"
 		add_child(_map)
 		move_child(_map, 0)

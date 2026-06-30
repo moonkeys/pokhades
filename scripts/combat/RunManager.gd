@@ -8,7 +8,7 @@ static func inst() -> RunManager:
 	return _s
 
 
-const ZONE_PATH := "res://scenes/world/Zone1.tscn"
+const ZONE_PATH := "res://scenes/world/BiomeMap.tscn"
 const BONUSES: Array = [
 	{"id": "heal_full", "label": "✚ Soin complet"},
 	{"id": "heal_half", "label": "✚ Soin 50%"},
@@ -18,7 +18,7 @@ const BONUSES: Array = [
 	{"id": "boost_spd", "label": "⚡ SPD +20%"},
 ]
 
-var current_zone_idx: int = 0   # toujours 0 (Zone1)
+var current_zone_idx: int = 0   # toujours 0 (BiomeMap)
 var rooms_cleared:    int = 0
 
 

@@ -91,4 +91,46 @@ func _on_body_entered(body: Node) -> void:
 	_opened = true
 	if is_instance_valid(_layer):
 		_layer.set_cell(_cell, _source_id, _open_atlas)
+	_reveal_item()
 	opened.emit(_item)
+
+
+## Fait flotter l'icône de l'objet + son nom au-dessus du coffre,
+## avec une montée douce puis un fondu, façon "loot révélé".
+func _reveal_item() -> void:
+	var holder := Node2D.new()
+	holder.position = Vector2(0, -10)
+	holder.z_index  = 4096   # au-dessus de tout le reste
+	add_child(holder)
+
+	# ── Icône de l'objet ───────────────────────────────────────────
+	var icon_tex: Texture2D = _item.get("icon", null)
+	if icon_tex != null and icon_tex.get_height() > 0:
+		var spr := Sprite2D.new()
+		spr.texture = icon_tex
+		var s := 20.0 / float(icon_tex.get_height())   # hauteur cible ~20px
+		spr.scale = Vector2(s, s)
+		spr.position = Vector2(0, -2)
+		holder.add_child(spr)
+
+	# ── Nom de l'objet ─────────────────────────────────────────────
+	var name_str: String = _item.get("name_fr", _item.get("api_name", "Objet"))
+	var lbl := Label.new()
+	lbl.text = str(name_str)
+	lbl.size = Vector2(160, 18)
+	lbl.position = Vector2(-80, -34)
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.add_theme_font_size_override("font_size", 9)
+	lbl.add_theme_color_override("font_color", Color(1.0, 0.95, 0.6))
+	lbl.add_theme_color_override("font_outline_color", Color(0.15, 0.10, 0.02))
+	lbl.add_theme_constant_override("outline_size", 4)
+	holder.add_child(lbl)
+
+	# ── Animation : montée + fondu ─────────────────────────────────
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(holder, "position:y", -34.0, 2.2) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw.tween_property(holder, "modulate:a", 0.0, 0.8) \
+		.set_delay(1.8)
+	tw.chain().tween_callback(holder.queue_free)

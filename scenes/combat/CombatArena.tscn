@@ -2,7 +2,7 @@
 
 [ext_resource type="Script" uid="uid://ckrcx26tjjuh5" path="res://scripts/combat/CombatArena.gd" id="1"]
 [ext_resource type="Script" uid="uid://cbuws2t5bkfnp" path="res://scripts/ui/HUD.gd" id="2"]
-[ext_resource type="PackedScene" uid="uid://zone1outdoor001" path="res://scenes/world/Zone1.tscn" id="3"]
+[ext_resource type="PackedScene" uid="uid://ey0blx655rs7" path="res://scenes/world/BiomeMap.tscn" id="3"]
 
 [node name="CombatArena" type="Node2D" unique_id=37736154]
 script = ExtResource("1")
