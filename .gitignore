@@ -1,0 +1,15 @@
+# Godot 4 — fichiers générés automatiquement
+.godot/
+*.import
+
+# Export
+export/
+*.apk
+*.aab
+*.ipa
+*.exe
+*.x86_64
+*.dmg
+
+# Éditeur
+.DS_Store

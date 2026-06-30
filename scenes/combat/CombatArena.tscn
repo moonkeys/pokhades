@@ -1,0 +1,61 @@
+[gd_scene format=3 uid="uid://dvtw2w4x1g17j"]
+
+[ext_resource type="Script" uid="uid://ckrcx26tjjuh5" path="res://scripts/combat/CombatArena.gd" id="1"]
+[ext_resource type="Script" uid="uid://cbuws2t5bkfnp" path="res://scripts/ui/HUD.gd" id="2"]
+[ext_resource type="PackedScene" uid="uid://zone1outdoor001" path="res://scenes/world/Zone1.tscn" id="3"]
+
+[node name="CombatArena" type="Node2D" unique_id=37736154]
+script = ExtResource("1")
+y_sort_enabled = true
+
+[node name="Map" parent="." instance=ExtResource("3") unique_id=1088689484]
+
+[node name="PlayerSpawnPoint" type="Marker2D" parent="." unique_id=1780135870]
+position = Vector2(640, 360)
+
+[node name="EnemySpawnPoints" type="Node2D" parent="." unique_id=728806210]
+
+[node name="Spawn1" type="Marker2D" parent="EnemySpawnPoints" unique_id=1171885731]
+position = Vector2(175, 140)
+
+[node name="Spawn2" type="Marker2D" parent="EnemySpawnPoints" unique_id=31613087]
+position = Vector2(450, 100)
+
+[node name="Spawn3" type="Marker2D" parent="EnemySpawnPoints" unique_id=1888799515]
+position = Vector2(775, 125)
+
+[node name="Spawn4" type="Marker2D" parent="EnemySpawnPoints" unique_id=736170719]
+position = Vector2(1050, 150)
+
+[node name="Spawn5" type="Marker2D" parent="EnemySpawnPoints" unique_id=364811766]
+position = Vector2(1200, 210)
+
+[node name="Spawn6" type="Marker2D" parent="EnemySpawnPoints" unique_id=1657112102]
+position = Vector2(175, 475)
+
+[node name="Spawn7" type="Marker2D" parent="EnemySpawnPoints" unique_id=477472113]
+position = Vector2(400, 550)
+
+[node name="Spawn8" type="Marker2D" parent="EnemySpawnPoints" unique_id=904698136]
+position = Vector2(750, 575)
+
+[node name="Spawn9" type="Marker2D" parent="EnemySpawnPoints" unique_id=301828862]
+position = Vector2(1050, 500)
+
+[node name="Spawn10" type="Marker2D" parent="EnemySpawnPoints" unique_id=2069514946]
+position = Vector2(1200, 600)
+
+[node name="Spawn11" type="Marker2D" parent="EnemySpawnPoints" unique_id=1121581636]
+position = Vector2(350, 310)
+
+[node name="Spawn12" type="Marker2D" parent="EnemySpawnPoints" unique_id=1149835836]
+position = Vector2(975, 310)
+
+[node name="Spawn13" type="Marker2D" parent="EnemySpawnPoints" unique_id=1594905916]
+position = Vector2(340, 650)
+
+[node name="Spawn14" type="Marker2D" parent="EnemySpawnPoints" unique_id=1612845388]
+position = Vector2(950, 650)
+
+[node name="HUD" type="CanvasLayer" parent="." unique_id=1874962987]
+script = ExtResource("2")
