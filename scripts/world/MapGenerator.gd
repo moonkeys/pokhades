@@ -44,6 +44,11 @@ enum MapTheme { FOREST = 0, SWAMP = 1, MEADOW = 2, ROCKY = 3 }
 @export var random_theme: bool  = true
 @export var theme:        MapTheme = MapTheme.FOREST
 
+@export_group("Arène (grotte)")
+## Mode arène : petite salle fermée de falaises, pas de chemins ni de coffre gardé.
+@export var arena_mode: bool     = false
+@export var arena_size: Vector2i = Vector2i(32, 22)
+
 @export_group("Tiles Thème — Forêt")
 @export var tile_sapin_origin:    Vector2i = Vector2i(1,  9)   # sapin 3×3 (centre 2,10)
 @export var tile_arbre_mort_orig: Vector2i = Vector2i(64, 9)   # arbre mort 3×3 (centre 65,10)
@@ -110,6 +115,8 @@ func _ready() -> void:
 	_setup_water_shader()
 	if not Engine.is_editor_hint():
 		_build_map_collision()
+		_build_pathfinding_grid()
+		add_to_group("combat_map")
 		_build_tall_grass_areas()
 		_setup_flower_shader()
 
@@ -145,6 +152,10 @@ func _generate() -> void:
 
 	_rng.seed = map_seed if map_seed != 0 else randi()
 
+	if arena_mode:
+		_generate_arena()
+		return
+
 	if random_size:
 		map_size = Vector2i(
 			_rng.randi_range(map_size_min.x, map_size_max.x),
@@ -169,6 +180,65 @@ func _generate() -> void:
 	_clear_portal_zones()
 	_objects.y_sort_enabled = true
 	print("MapGenerator: génération terminée.")
+
+
+## ─────────────────────────────────────────────────────────────────
+## ARÈNE — petite salle fermée de falaises (grotte de demi-boss)
+## ─────────────────────────────────────────────────────────────────
+
+func _generate_arena() -> void:
+	map_size     = arena_size
+	theme        = MapTheme.ROCKY
+	random_theme = false
+	gating_type  = GatingType.NONE
+	_apply_theme()
+	_compute_portals()
+
+	var W := map_size.x
+	var H := map_size.y
+	print("MapGenerator: ARÈNE  taille=%s" % map_size)
+
+	_init_grid()
+
+	# Sol rocheux partout
+	for r in H:
+		for c in W:
+			_ground.set_cell(Vector2i(c, r), source_id, _ground_tile)
+
+	# Murs de falaise (2 cases d'épaisseur) tout autour
+	var cliff_center := tile_cliff_origin + Vector2i(1, 1)   # (53,33)
+	for r in H:
+		for c in W:
+			if c < 2 or c >= W - 2 or r < 2 or r >= H - 2:
+				_objects.set_cell(Vector2i(c, r), source_id, cliff_center)
+				_grid[r][c] = Terrain.TREE
+
+	# Couverture centrale : rochers/gros cailloux (évite l'entrée et le centre)
+	var center := Vector2i(W / 2, H / 2)
+	var cover: Array[Vector2i] = []
+	for r in range(4, H - 4):
+		for c in range(4, W - 4):
+			var cell := Vector2i(c, r)
+			if _cell_dist(cell, entry_tile) < 5: continue
+			if _cell_dist(cell, center) < 4:     continue
+			cover.append(cell)
+	cover.shuffle()
+	var placed := 0
+	for cell: Vector2i in cover:
+		if placed >= 6: break
+		if _objects.get_cell_source_id(cell) != -1: continue
+		if _rng.randf() < 0.5 and _can_place_block(cell, 2, 2):
+			for dy in 2:
+				for dx in 2:
+					_objects.set_cell(cell + Vector2i(dx, dy), source_id,
+						tile_gros_caillou_orig + Vector2i(dx, dy))
+		else:
+			_objects.set_cell(cell, source_id,
+				tiles_cailloux[_rng.randi() % tiles_cailloux.size()])
+		placed += 1
+
+	_objects.y_sort_enabled = true
+	print("MapGenerator: arène générée.")
 
 
 ## ─────────────────────────────────────────────────────────────────
@@ -915,6 +985,20 @@ func world_to_cell(world_pos: Vector2) -> Vector2i:
 ## Override — retourne la taille réelle générée (variable).
 func get_map_pixel_size() -> Vector2:
 	return Vector2(map_size.x * 16, map_size.y * 16)
+
+
+## Override — taille de la map en cellules (variable).
+func get_map_cell_size() -> Vector2i:
+	return map_size
+
+
+## Cellules d'entrée de grotte (base 26,38) — pour spawner les déclencheurs.
+func get_cave_cells() -> Array[Vector2i]:
+	var result: Array[Vector2i] = []
+	for cell: Vector2i in _objects.get_used_cells():
+		if _objects.get_cell_atlas_coords(cell) == tile_grotte_bas:
+			result.append(cell)
+	return result
 
 
 func get_entry_world_pos() -> Vector2:

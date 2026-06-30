@@ -1,0 +1,6 @@
+[gd_scene format=4 uid="uid://bcav3arena001"]
+
+[ext_resource type="PackedScene" uid="uid://ey0blx655rs7" path="res://scenes/world/BiomeMap.tscn" id="1"]
+
+[node name="CaveArena" instance=ExtResource("1")]
+arena_mode = true

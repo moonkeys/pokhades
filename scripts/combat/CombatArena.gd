@@ -19,6 +19,8 @@ const POOL_ELEM:      Array[int] = [403, 261, 191, 43]
 const POOL_SEMI_BOSS: Array[int] = [20, 400, 17, 404, 402, 262, 55, 162]
 # Boss de zone — vague 10
 const POOL_BOSSES:    Array[int] = [143, 123, 128, 24, 22, 862]
+# Élite de grotte — allure plus imposante, réservés aux arènes de demi-boss
+const POOL_CAVE_ELITE: Array[int] = [217, 229, 359, 297, 342]
 
 const PLAYER_LEVEL:    int = 10
 const SEMI_BOSS_LEVEL: int = 13
@@ -47,6 +49,19 @@ var _follow_mode: bool = true
 var _map:           MapBase        = null
 var _entry_barrier: StaticBody2D   = null
 var _exit_portals:  Array          = []
+
+# ── Grotte (arène de demi-boss) ──────────────────────────────────────
+const CAVE_PATH       := "res://scenes/world/CaveArena.tscn"
+const CAVE_BOSS_COUNT := 2
+
+var _cave_active:     bool    = false
+var _cave_portals:    Array   = []          # déclencheurs grotte / portail retour
+var _saved_map:       MapBase = null        # map rocailleuse détachée
+var _saved_nodes:     Array   = []          # ennemis + coffres + barrière détachés
+var _saved_alive:     int     = 0
+var _saved_killed:    int     = 0
+var _saved_room_total: int    = 0
+var _saved_team_pos:  Array   = []          # positions équipe avant la grotte
 
 @onready var hud          = $HUD
 
@@ -149,7 +164,7 @@ func _preload_all() -> void:
 
 	# Phase 2 (arrière-plan) : pools des salles suivantes
 	# Ils seront mis en cache avant que le joueur les atteigne
-	for eid: int in (POOL_FLYERS + POOL_ELEM + POOL_SEMI_BOSS + POOL_BOSSES):
+	for eid: int in (POOL_FLYERS + POOL_ELEM + POOL_SEMI_BOSS + POOL_BOSSES + POOL_CAVE_ELITE):
 		if not priority_seen.has(eid):
 			PokemonAPI.get_pokemon(eid, func(data: Dictionary) -> void:
 				if not is_instance_valid(self): return
@@ -235,6 +250,7 @@ func _start_zone() -> void:
 	_spawn_team()
 	_spawn_entry_barrier()
 	_spawn_chests()
+	_spawn_cave_portals()
 	hud.set_wave(RunManager.inst().get_zone_name())
 	hud.set_kills(0, 0)
 	await get_tree().create_timer(1.2).timeout
@@ -458,15 +474,18 @@ func _spawn_from_pool(pool: Array[int], count: int, lv: int) -> void:
 
 
 func _random_valid_spawn() -> Vector2:
-	# Cherche une position libre (ni arbre, ni eau, ni bord)
+	# Cherche une position libre (ni arbre, ni eau, ni bord) — taille réelle de la map
+	var sz := Vector2i(MapBase.W, MapBase.H)
+	if is_instance_valid(_map):
+		sz = _map.get_map_cell_size()
 	for _attempt in 40:
-		var tx := randi_range(10, MapBase.W - 10)
-		var ty := randi_range(10, MapBase.H - 10)
+		var tx := randi_range(6, maxi(7, sz.x - 6))
+		var ty := randi_range(6, maxi(7, sz.y - 6))
 		var pos := Vector2(tx * 16.0 + 8.0, ty * 16.0 + 8.0)
 		if is_instance_valid(_map) and _map.is_valid_spawn(pos):
 			return pos
-	# Fallback : milieu de la zone jouable
-	return Vector2(640, 360)
+	# Fallback : centre de la map
+	return Vector2(sz.x * 8.0, sz.y * 8.0)
 
 
 # ── Signaux ───────────────────────────────────────────────────────────
@@ -482,7 +501,10 @@ func _on_enemy_died(xp_reward: int) -> void:
 
 	if _alive <= 0:
 		await get_tree().create_timer(1.0).timeout
-		_on_room_cleared()
+		if _cave_active:
+			_on_cave_cleared()
+		else:
+			_on_room_cleared()
 
 
 func _on_team_member_died(idx: int) -> void:
@@ -721,6 +743,232 @@ func _transition_to_next_zone() -> void:
 		await get_tree().process_frame
 		_spawn_entry_barrier()
 		_spawn_chests()
+		_spawn_cave_portals()
 		await get_tree().create_timer(0.8).timeout
 		_spawn_room_enemies()
 	)
+
+
+# ── Grotte : arène de demi-boss (détour bonus) ────────────────────────
+
+func _spawn_cave_portals() -> void:
+	for p in _cave_portals:
+		if is_instance_valid(p): p.queue_free()
+	_cave_portals.clear()
+	if _cave_active or not is_instance_valid(_map):
+		return
+	for cell: Vector2i in _map.get_cave_cells():
+		var area := Area2D.new()
+		area.position        = Vector2(cell.x * 16.0 + 8.0, cell.y * 16.0 + 8.0)
+		area.collision_layer = 0
+		area.collision_mask  = 1
+		var cs := CollisionShape2D.new()
+		var sh := RectangleShape2D.new()
+		sh.size  = Vector2(14, 14)
+		cs.shape = sh
+		area.add_child(cs)
+		var lbl := Label.new()
+		lbl.text     = "⛰ Grotte"
+		lbl.position = Vector2(-26, -34)
+		lbl.add_theme_font_size_override("font_size", 10)
+		lbl.add_theme_color_override("font_color", Color(0.95, 0.85, 0.5))
+		lbl.add_theme_color_override("font_outline_color", Color(0.12, 0.08, 0.02))
+		lbl.add_theme_constant_override("outline_size", 4)
+		area.add_child(lbl)
+		var entrance := cell
+		area.body_entered.connect(func(body: Node) -> void:
+			if _cave_active: return
+			if not (body.is_in_group("players") and body.get("is_active") == true): return
+			_enter_cave(entrance)
+		)
+		add_child(area)
+		_cave_portals.append(area)
+
+
+func _enter_cave(_entrance: Vector2i) -> void:
+	if _cave_active:
+		return
+	_cave_active = true
+	_fade_transition(func() -> void:
+		_save_overworld()
+		_load_cave()
+		_spawn_cave_bosses()
+	)
+
+
+func _save_overworld() -> void:
+	_saved_alive      = _alive
+	_saved_killed     = _killed
+	_saved_room_total = _room_total
+	_saved_team_pos.clear()
+	for m in _team:
+		_saved_team_pos.append(m.global_position if is_instance_valid(m) else Vector2.ZERO)
+
+	# Détache (gèle) tout l'overworld : ennemis, coffres, barrière, map
+	_saved_nodes.clear()
+	for e in get_tree().get_nodes_in_group("enemies"):
+		if e.get_parent() == self:
+			remove_child(e)
+			_saved_nodes.append(e)
+	var chests: Array = []
+	for child in get_children():
+		if child is Chest:
+			chests.append(child)
+	for c in chests:
+		remove_child(c)
+		_saved_nodes.append(c)
+	if is_instance_valid(_entry_barrier):
+		remove_child(_entry_barrier)
+		_saved_nodes.append(_entry_barrier)
+
+	# Déclencheurs de grotte consommés
+	for p in _cave_portals:
+		if is_instance_valid(p): p.queue_free()
+	_cave_portals.clear()
+
+	_saved_map = _map
+	remove_child(_saved_map)
+
+
+func _load_cave() -> void:
+	var scene := load(CAVE_PATH) as PackedScene
+	_map      = scene.instantiate() as MapBase
+	_map.name = "CaveMap"
+	add_child(_map)
+	move_child(_map, 0)
+	_refresh_map_bounds()
+	_alive = 0
+	_killed = 0
+	_room_total = 0
+
+	var et := _map.entry_tile
+	var spawn_center := Vector2(et.x * 16.0 + 8.0, (et.y - 2) * 16.0 + 8.0)
+	for i in _team.size():
+		if is_instance_valid(_team[i]):
+			_team[i].global_position = spawn_center + SPAWN_OFFSETS[i % SPAWN_OFFSETS.size()]
+	_cam_pos = spawn_center
+
+
+func _spawn_cave_bosses() -> void:
+	var rooms := RunManager.inst().rooms_cleared
+	# 2 demi-boss renforcés (allure imposante) — costauds mais pas injustes.
+	_spawn_from_pool(POOL_CAVE_ELITE, CAVE_BOSS_COUNT, SEMI_BOSS_LEVEL + rooms * 3)
+	_room_total = _alive
+	hud.set_kills(0, _room_total)
+	if _alive > 0:
+		hud.set_wave("⛰ Arène d'élite — %d adversaires !" % _room_total)
+	else:
+		_on_cave_cleared()   # sécurité : pool non chargé → récompense directe
+
+
+func _on_cave_cleared() -> void:
+	var gold := 150 + RunManager.inst().rooms_cleared * 30
+	GameManager.add_gold(gold)
+	for i in _team.size():
+		var m = _team[i]
+		if is_instance_valid(m) and not m.pokemon_instance.is_fainted():
+			m.pokemon_instance.current_hp = m.pokemon_instance.max_hp
+			hud.update_team_hp(i, 1.0)
+	if _active_index < _team.size():
+		hud.update_hp(1.0)
+	hud.set_wave("⛰ Arène vaincue !  +%d Or" % gold)
+	await get_tree().create_timer(0.8).timeout
+	_spawn_cave_reward()
+
+
+func _spawn_cave_reward() -> void:
+	if not is_instance_valid(_map):
+		_exit_cave()
+		return
+	var sz   := _map.get_map_cell_size()
+	var cell := Vector2i(sz.x / 2, sz.y / 2)
+	var chest := Chest.new()
+	chest.position = Vector2(cell.x * 16.0 + 8.0, cell.y * 16.0 + 8.0)
+	# Objet garanti puissant (meilleur du pool)
+	chest.setup(_map.get_objects_layer(), cell, _map.source_id,
+		{"api_name": "choice-band", "effect": "atk", "mult": 1.5})
+	chest.opened.connect(func(item: Dictionary) -> void:
+		_apply_item(item)
+		_spawn_cave_return_portal()
+	, CONNECT_ONE_SHOT)
+	add_child(chest)
+	hud.set_wave("✦ Coffre doré — approche-toi !")
+
+
+func _spawn_cave_return_portal() -> void:
+	if not is_instance_valid(_map):
+		_exit_cave()
+		return
+	var sz   := _map.get_map_cell_size()
+	var tile := Vector2i(sz.x / 2, 3)
+	var portal := ExitPortal.new()
+	portal.position = Vector2(tile.x * 16.0 + 8.0, tile.y * 16.0 + 8.0)
+	portal.setup({"zone_name": "Retour", "bonus_label": ""})
+	portal.chosen.connect(func(_d: Dictionary) -> void: _exit_cave(), CONNECT_ONE_SHOT)
+	add_child(portal)
+	_cave_portals.append(portal)
+	hud.set_wave("↑ Sortie de la grotte")
+
+
+func _exit_cave() -> void:
+	_fade_transition(func() -> void:
+		_teardown_cave()
+		_restore_overworld()
+	)
+
+
+func _teardown_cave() -> void:
+	for p in _cave_portals:
+		if is_instance_valid(p): p.queue_free()
+	_cave_portals.clear()
+	for child in get_children():
+		if child is Chest:
+			child.queue_free()
+	for e in get_tree().get_nodes_in_group("enemies"):
+		if e.get_parent() == self:
+			e.queue_free()
+	if is_instance_valid(_map):
+		_map.queue_free()
+	_map = null
+
+
+func _restore_overworld() -> void:
+	_map = _saved_map
+	_saved_map = null
+	if is_instance_valid(_map):
+		add_child(_map)
+		move_child(_map, 0)
+		_refresh_map_bounds()
+	for n in _saved_nodes:
+		if is_instance_valid(n):
+			add_child(n)
+	_saved_nodes.clear()
+
+	_alive      = _saved_alive
+	_killed     = _saved_killed
+	_room_total = _saved_room_total
+	hud.set_kills(_killed, _room_total)
+
+	for i in _team.size():
+		if is_instance_valid(_team[i]) and i < _saved_team_pos.size():
+			_team[i].global_position = _saved_team_pos[i]
+			if i == _active_index:
+				_cam_pos = _saved_team_pos[i]
+
+	_cave_active = false
+	hud.set_wave(RunManager.inst().get_zone_name())   # grotte consommée
+
+
+func _fade_transition(mid: Callable) -> void:
+	var fade_layer := CanvasLayer.new()
+	fade_layer.layer = 99
+	var rect := ColorRect.new()
+	rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	rect.color = Color(0, 0, 0, 0)
+	fade_layer.add_child(rect)
+	add_child(fade_layer)
+	var tw := create_tween()
+	tw.tween_property(rect, "color:a", 1.0, 0.4).set_ease(Tween.EASE_IN)
+	tw.tween_callback(mid)
+	tw.tween_property(rect, "color:a", 0.0, 0.4).set_ease(Tween.EASE_OUT)
+	tw.tween_callback(func() -> void: fade_layer.queue_free())

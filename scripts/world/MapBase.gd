@@ -1,5 +1,5 @@
 @tool
-class_name Zone1
+class_name MapBase
 extends Node2D
 
 @onready var _ground:     TileMapLayer = $Ground
@@ -90,6 +90,8 @@ func _ready() -> void:
 	_setup_water_shader()
 	if not Engine.is_editor_hint():
 		_build_map_collision()
+		_build_pathfinding_grid()
+		add_to_group("combat_map")
 
 
 func _process(delta: float) -> void:
@@ -443,6 +445,16 @@ func get_chest_cells() -> Array[Vector2i]:
 	return cells
 
 
+## Taille de la map en cellules — surchargé dans MapGenerator (taille variable).
+func get_map_cell_size() -> Vector2i:
+	return Vector2i(W, H)
+
+
+## Cellules d'entrée de grotte — surchargé dans MapGenerator. Vide par défaut.
+func get_cave_cells() -> Array[Vector2i]:
+	return []
+
+
 func get_objects_layer() -> TileMapLayer:
 	return _objects
 
@@ -455,3 +467,47 @@ func is_tall_grass(world_pos: Vector2) -> bool:
 		return false
 	# Seule la tile tile_tg déclenche les combats — pas les fleurs/petites herbes
 	return _tall_grass.get_cell_atlas_coords(cell) == tile_tg
+
+
+# ── Pathfinding (contournement d'obstacles pour l'IA) ──────────────────────
+
+var _astar: AStarGrid2D = null
+
+## Construit la grille A* à partir des mêmes obstacles que _build_map_collision()
+## (objets non-décoratifs + eau). Appelé une fois après génération.
+func _build_pathfinding_grid() -> void:
+	var sz := get_map_cell_size()
+	_astar = AStarGrid2D.new()
+	_astar.region        = Rect2i(0, 0, sz.x, sz.y)
+	_astar.cell_size      = Vector2(16, 16)
+	_astar.diagonal_mode   = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
+	_astar.default_compute_heuristic  = AStarGrid2D.HEURISTIC_OCTILE
+	_astar.default_estimate_heuristic = AStarGrid2D.HEURISTIC_OCTILE
+	_astar.update()
+
+	for cell: Vector2i in _objects.get_used_cells():
+		if not _astar.is_in_boundsv(cell):
+			continue
+		if not _is_decor_tile(_objects.get_cell_atlas_coords(cell)):
+			_astar.set_point_solid(cell, true)
+	for cell: Vector2i in _water.get_used_cells():
+		if _astar.is_in_boundsv(cell):
+			_astar.set_point_solid(cell, true)
+
+
+## Prochaine case (en coordonnées monde) à viser pour contourner les obstacles
+## entre `from_world` et `to_world`. Retourne `to_world` tel quel si aucun
+## chemin n'est trouvé (cible hors grille, dans un mur, etc.) — fallback ligne droite.
+func get_next_path_point(from_world: Vector2, to_world: Vector2) -> Vector2:
+	if not is_instance_valid(_astar):
+		return to_world
+	var from_cell := _objects.local_to_map(_objects.to_local(from_world))
+	var to_cell   := _objects.local_to_map(_objects.to_local(to_world))
+	if not _astar.is_in_boundsv(from_cell) or not _astar.is_in_boundsv(to_cell):
+		return to_world
+	if _astar.is_point_solid(from_cell) or _astar.is_point_solid(to_cell):
+		return to_world
+	var ids: Array = _astar.get_id_path(from_cell, to_cell)
+	if ids.size() < 2:
+		return to_world
+	return _objects.map_to_local(ids[1])

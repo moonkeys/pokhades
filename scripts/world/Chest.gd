@@ -25,12 +25,14 @@ var _open_atlas: Vector2i     = Vector2i(91, 61)
 var _pulse:      float        = 0.0
 
 
-func setup(objects_layer: TileMapLayer, cell: Vector2i, src_id: int) -> void:
+func setup(objects_layer: TileMapLayer, cell: Vector2i, src_id: int,
+		forced: Dictionary = {}) -> void:
 	_layer     = objects_layer
 	_cell      = cell
 	_source_id = src_id
 
-	var pool_entry: Dictionary = ITEM_POOL[randi() % ITEM_POOL.size()].duplicate()
+	var pool_entry: Dictionary = forced.duplicate() if not forced.is_empty() \
+		else ITEM_POOL[randi() % ITEM_POOL.size()].duplicate()
 	_item = pool_entry
 
 	PokemonAPI.get_item(pool_entry["api_name"], func(data: Dictionary) -> void:
