@@ -4,10 +4,10 @@ extends Node2D
 const NPC_DEFS: Array[Dictionary] = [
 	{"id": "start",    "pid": 149, "pos": Vector2(640, 175),  "accent": Color(0.85, 0.38, 0.10)},  # Dragonite
 	{"id": "shop",     "pid": 113, "pos": Vector2(215, 388),  "accent": Color(0.92, 0.60, 0.72)},  # Chansey
-	{"id": "team",     "pid": 68,  "pos": Vector2(1065, 388), "accent": Color(0.88, 0.35, 0.28)},  # Machamp
 	{"id": "pokedex",  "pid": 137, "pos": Vector2(215, 558),  "accent": Color(0.40, 0.58, 0.95)},  # Porygon
 	{"id": "upgrades", "pid": 65,  "pos": Vector2(1065, 558), "accent": Color(0.68, 0.35, 0.92)},  # Alakazam
 	{"id": "moves",    "pid": 196, "pos": Vector2(640, 290),  "accent": Color(0.55, 0.75, 0.95)},  # Espeon
+	{"id": "cs_master", "pid": 68, "pos": Vector2(1065, 290), "accent": Color(0.78, 0.62, 0.20)},  # Machamp
 ]
 
 # Pokémon décoratifs — déambulent autour de leur position de départ
@@ -232,13 +232,13 @@ func _update_prompt(npc: HubNPC) -> void:
 
 	var role: String
 	match npc.npc_id:
-		"start":    role = "Lancer la Run"
-		"shop":     role = "Boutique"
-		"team":     role = "Équipe"
-		"pokedex":  role = "Pokédex"
-		"upgrades": role = "Améliorations"
-		"moves":    role = "Capacités"
-		_:          role = "Parler"
+		"start":     role = "Lancer la Run"
+		"shop":      role = "Boutique"
+		"pokedex":   role = "Pokédex & Équipe"
+		"upgrades":  role = "Améliorations"
+		"moves":     role = "Capacités"
+		"cs_master": role = "Maître des CS"
+		_:           role = "Parler"
 
 	var display_name := npc.npc_name if not npc.npc_name.is_empty() else "…"
 	_prompt_lbl.text    = "[ E ]   %s   –   %s" % [display_name, role]
@@ -262,14 +262,14 @@ func _interact(npc: HubNPC) -> void:
 			return
 		"shop":
 			screen = ShopScreen.new()
-		"team":
-			screen = TeamBuilderScreen.new()
 		"pokedex":
 			screen = PokedexScreen.new()
 		"upgrades":
 			screen = UpgradeShopScreen.new()
 		"moves":
 			screen = MoveShopScreen.new()
+		"cs_master":
+			screen = CSAssignScreen.new()
 
 	if screen == null:
 		_blocked = false

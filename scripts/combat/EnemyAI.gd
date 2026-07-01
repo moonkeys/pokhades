@@ -10,6 +10,12 @@ var _attack_timer: float = 0.0
 var _current_anim: String = "idle"
 var _hp_bar: ProgressBar = null
 
+# Pathfinding (contournement d'obstacles)
+var _map:               MapBase = null
+var _path_repath_timer: float   = 0.0
+var _path_waypoint:     Vector2 = Vector2.ZERO
+const REPATH_INTERVAL := 0.4
+
 signal died(xp_reward: int)
 
 @onready var sprite: AnimatedSprite2D = $AnimatedSprite2D
@@ -18,6 +24,7 @@ signal died(xp_reward: int)
 func _ready() -> void:
 	add_to_group("enemies")
 	_create_hp_bar()
+	_map = get_tree().get_first_node_in_group("combat_map") as MapBase
 
 
 func _create_hp_bar() -> void:
@@ -122,7 +129,8 @@ func _physics_process(delta: float) -> void:
 	var dist := global_position.distance_to(target.global_position)
 
 	if dist > ATTACK_RANGE:
-		var dir := (target.global_position - global_position).normalized()
+		var steer_pos := _get_steer_target(target.global_position, delta)
+		var dir := (steer_pos - global_position).normalized()
 		velocity = dir * SPEED
 		_update_anim(velocity)
 		move_and_slide()
@@ -131,6 +139,37 @@ func _physics_process(delta: float) -> void:
 		_update_anim(Vector2.ZERO)
 		if _attack_timer <= 0.0:
 			_do_attack(target)
+
+
+## Renvoie le point vers lequel diriger l'ennemi : ligne droite si la vue est
+## dégagée, sinon le prochain point de détour calculé via la grille A* de la map.
+func _get_steer_target(target_pos: Vector2, delta: float) -> Vector2:
+	_path_repath_timer -= delta
+	if _has_clear_line_of_sight(target_pos):
+		_path_repath_timer = 0.0   # ligne dégagée — pas besoin de chemin mémorisé
+		return target_pos
+
+	if not is_instance_valid(_map):
+		return target_pos
+
+	if _path_repath_timer <= 0.0:
+		_path_repath_timer = REPATH_INTERVAL
+		_path_waypoint = _map.get_next_path_point(global_position, target_pos)
+
+	# Si on est arrivé près du point de détour, on continue tout droit en attendant le recalcul
+	if global_position.distance_to(_path_waypoint) < 10.0:
+		return target_pos
+
+	return _path_waypoint
+
+
+func _has_clear_line_of_sight(target_pos: Vector2) -> bool:
+	var space := get_world_2d().direct_space_state
+	var query := PhysicsRayQueryParameters2D.create(global_position, target_pos)
+	query.collision_mask = 1   # murs/obstacles uniquement
+	query.exclude        = [self]
+	var result := space.intersect_ray(query)
+	return result.is_empty()
 
 
 func _get_attack_type() -> String:

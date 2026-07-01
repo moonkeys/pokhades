@@ -19,11 +19,11 @@ var _water:   TileMapLayer = null
 var _objects: TileMapLayer = null
 
 const NPC_TILES := {
-	"start":   Vector2i(40, 11),
-	"shop":    Vector2i(13, 24),
-	"team":    Vector2i(66, 24),
-	"pokedex": Vector2i(13, 35),
-	"moves":   Vector2i(66, 35),
+	"start":    Vector2i(40, 11),
+	"shop":     Vector2i(13, 24),
+	"pokedex":  Vector2i(13, 35),
+	"upgrades": Vector2i(66, 35),
+	"moves":    Vector2i(40, 18),   # Espeon — tuteur de capacités, chemin central
 }
 const PLAYER_TILE := Vector2i(40, 31)
 

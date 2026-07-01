@@ -2,6 +2,7 @@ class_name Chest
 extends Area2D
 
 signal opened(item: Dictionary)
+signal player_in_range(in_range: bool)
 
 const ITEM_POOL: Array[Dictionary] = [
 	{"api_name": "choice-band",  "effect": "atk", "mult": 1.5},
@@ -23,6 +24,7 @@ var _cell:       Vector2i     = Vector2i.ZERO
 var _source_id:  int          = 0
 var _open_atlas: Vector2i     = Vector2i(91, 61)
 var _pulse:      float        = 0.0
+var _player_near: bool        = false
 
 
 func setup(objects_layer: TileMapLayer, cell: Vector2i, src_id: int,
@@ -47,13 +49,14 @@ func setup(objects_layer: TileMapLayer, cell: Vector2i, src_id: int,
 
 	var cs := CollisionShape2D.new()
 	var sh := CircleShape2D.new()
-	sh.radius = 14.0
+	sh.radius = 22.0   # portée d'interaction — l'ouverture nécessite la touche [E]
 	cs.shape  = sh
 	add_child(cs)
 
 	collision_layer = 0
 	collision_mask  = 1
 	body_entered.connect(_on_body_entered)
+	body_exited.connect(_on_body_exited)
 
 
 func _fetch_icon(url: String) -> void:
@@ -76,6 +79,8 @@ func _process(delta: float) -> void:
 		return
 	_pulse += delta * 2.5
 	queue_redraw()
+	if _player_near and Input.is_action_just_pressed("interact"):
+		_open()
 
 
 func _draw() -> void:
@@ -90,7 +95,23 @@ func _on_body_entered(body: Node) -> void:
 		return
 	if not (body.is_in_group("players") and body.get("is_active") == true):
 		return
+	_player_near = true
+	player_in_range.emit(true)
+
+
+func _on_body_exited(body: Node) -> void:
+	if not (body.is_in_group("players") and body.get("is_active") == true):
+		return
+	_player_near = false
+	player_in_range.emit(false)
+
+
+func _open() -> void:
+	if _opened:
+		return
 	_opened = true
+	_player_near = false
+	player_in_range.emit(false)
 	if is_instance_valid(_layer):
 		_layer.set_cell(_cell, _source_id, _open_atlas)
 	_reveal_item()

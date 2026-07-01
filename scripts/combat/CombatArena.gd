@@ -1,9 +1,22 @@
 extends Node2D
 
 const ZOOM  := 2.0     # zoom caméra combat (tiles 32px à l'écran)
+const WATER_LAYER := 4  # cf. MapGenerator.WATER_LAYER — collision dédiée à l'eau
 
 var _map_w: float = 1280.0
 var _map_h: float = 720.0
+
+# ── CS (Capacités Spéciales) — calculées une fois au spawn de l'équipe ──
+var _cs_surf_unlocked:  bool = false   # Surf : effet d'équipe (cf. _compute_cs_unlocks)
+var _cs_holder_idx: Dictionary = {}    # "cs_coupe"/"cs_force" -> team_index du porteur (-1 si aucun)
+var _cs_triggers: Array = []   # [{"area":Area2D, "cs_id":String, "prompt":String, "on_use":Callable}, ...]
+## {} si aucun ; sinon {"cs_id":String, "prompt":String, "on_use":Callable}
+## Le prompt/l'interaction ne sont actifs que si le membre CONTRÔLÉ (actif)
+## est justement le porteur de cette CS — recalculé chaque frame (cf.
+## _refresh_cs_prompt) pour réagir immédiatement à un changement de Pokémon
+## actif même sans bouger.
+var _near_obstacle: Dictionary = {}
+var _near_chest_prompt: String = ""   # "" si aucun coffre à portée
 
 
 # ── Pools ennemis — Zone 1 ───────────────────────────────────────────
@@ -95,6 +108,12 @@ func _register_switch_key() -> void:
 		ev2.keycode = KEY_F
 		InputMap.action_add_event("toggle_follow", ev2)
 
+	if not InputMap.has_action("interact"):
+		InputMap.add_action("interact")
+		var ev3 := InputEventKey.new()
+		ev3.keycode = KEY_E
+		InputMap.action_add_event("interact", ev3)
+
 
 func _process(delta: float) -> void:
 	if _team.size() > 0 and is_instance_valid(_team[_active_index]):
@@ -108,6 +127,15 @@ func _process(delta: float) -> void:
 		_follow_mode = not _follow_mode
 		_update_leaders()
 		hud.set_follow_mode(_follow_mode)
+
+	_refresh_cs_prompt()
+	if not _near_obstacle.is_empty() and Input.is_action_just_pressed("interact"):
+		var cb: Callable = _near_obstacle["on_use"]
+		_near_obstacle = {}
+		_refresh_interact_prompt()
+		if cb.is_valid():
+			cb.call()
+		_spawn_cs_triggers()
 
 
 func _refresh_map_bounds() -> void:
@@ -251,6 +279,7 @@ func _start_zone() -> void:
 	_spawn_entry_barrier()
 	_spawn_chests()
 	_spawn_cave_portals()
+	_spawn_cs_triggers()
 	hud.set_wave(RunManager.inst().get_zone_name())
 	hud.set_kills(0, 0)
 	await get_tree().create_timer(1.2).timeout
@@ -331,6 +360,34 @@ func _spawn_team() -> void:
 	hud.setup_moves(_team[0].pokemon_instance.equipped_moves)
 	_connect_move_signal(0)
 	_apply_hub_items()
+	_compute_cs_unlocks(team_ids)
+
+
+## Détermine une fois pour la run quelles CS l'équipe peut utiliser, en
+## fonction du Pokémon assigné (cf. GameManager.assign_cs) — basé sur la
+## composition d'équipe au lancement, insensible aux évolutions en cours de run.
+func _compute_cs_unlocks(team_ids: Array[int]) -> void:
+	_cs_surf_unlocked = GameManager.owns_cs("cs_surf") and GameManager.get_cs_holder("cs_surf") in team_ids
+
+	# Coupe/Force : seul le membre CONTRÔLÉ compte — on retrouve son index
+	# d'équipe (résiste à l'évolution, basée sur la composition au lancement).
+	_cs_holder_idx.clear()
+	for cs_id in ["cs_coupe", "cs_force"]:
+		var idx := -1
+		if GameManager.owns_cs(cs_id):
+			idx = team_ids.find(GameManager.get_cs_holder(cs_id))
+		_cs_holder_idx[cs_id] = idx
+
+	# CS Surf : toute l'équipe ignore la couche physique de l'eau (elle
+	# "surfe" ensemble), sinon comportement normal (bloquée par l'eau).
+	for m in _team:
+		if is_instance_valid(m):
+			m.collision_mask = 1 if _cs_surf_unlocked else (1 | WATER_LAYER)
+
+
+## Vrai si le membre actuellement CONTRÔLÉ (actif) est le porteur de `cs_id`.
+func _active_holds_cs(cs_id: String) -> bool:
+	return _cs_holder_idx.get(cs_id, -1) == _active_index
 
 
 func _apply_hub_items() -> void:
@@ -427,7 +484,6 @@ func _pool_for_room(room: int) -> Array[int]:
 func _on_room_cleared() -> void:
 	var gold := 30 + RunManager.inst().rooms_cleared * 20
 	GameManager.add_gold(gold)
-	_unlock_zone_rewards()
 	hud.set_wave("Salle libérée !  +%d Or" % gold)
 	hud.set_kills(_killed, _room_total)
 	await get_tree().create_timer(0.8).timeout
@@ -469,7 +525,7 @@ func _spawn_from_pool(pool: Array[int], count: int, lv: int) -> void:
 		add_child(enemy)
 		enemy.global_position = _random_valid_spawn()
 		enemy.setup(instance)
-		enemy.died.connect(_on_enemy_died)
+		enemy.died.connect(_on_enemy_died.bind(id, data.is_base_form))
 		_alive += 1
 
 
@@ -490,7 +546,7 @@ func _random_valid_spawn() -> Vector2:
 
 # ── Signaux ───────────────────────────────────────────────────────────
 
-func _on_enemy_died(xp_reward: int) -> void:
+func _on_enemy_died(xp_reward: int, pid: int, is_base_form: bool) -> void:
 	_alive  -= 1
 	_killed += 1
 	hud.set_kills(_killed, _room_total)
@@ -498,6 +554,10 @@ func _on_enemy_died(xp_reward: int) -> void:
 	for member in _team:
 		if is_instance_valid(member) and not member.pokemon_instance.is_fainted():
 			member.gain_xp(xp_reward)
+
+	if GameManager.record_defeat(pid, is_base_form):
+		var name_fr := (_cache[str(pid)] as PokemonData).name_fr if _cache.has(str(pid)) else "Pokémon"
+		hud.show_unlock(name_fr)
 
 	if _alive <= 0:
 		await get_tree().create_timer(1.0).timeout
@@ -510,6 +570,12 @@ func _on_enemy_died(xp_reward: int) -> void:
 func _on_team_member_died(idx: int) -> void:
 	hud.update_team_hp(idx, 0.0)
 
+	# Filet de sécurité : si toute l'équipe est KO, on quitte quel que soit
+	# l'index qui vient de mourir (évite un blocage si _active_index est périmé).
+	if _is_team_wiped():
+		_game_over()
+		return
+
 	if idx != _active_index:
 		return  # un compagnon est KO, l'équipe continue
 
@@ -521,25 +587,19 @@ func _on_team_member_died(idx: int) -> void:
 		_set_active(next)
 
 
+func _is_team_wiped() -> bool:
+	for m in _team:
+		if is_instance_valid(m) and not m.pokemon_instance.is_fainted():
+			return false
+	return true
+
+
 func _find_next_alive() -> int:
 	for i in _team.size():
 		var idx := (_active_index + 1 + i) % _team.size()
 		if not _team[idx].pokemon_instance.is_fainted():
 			return idx
 	return -1
-
-
-func _unlock_zone_rewards() -> void:
-	# Recrute 1 à 2 Pokémon aléatoires parmi les ennemis de la zone
-	var pool: Array[int] = POOL_RODENTS + POOL_BUGS + POOL_FLYERS
-	pool.shuffle()
-	var count: int = 1 if GameManager.run_count <= 2 else 2
-	for i in mini(count, pool.size()):
-		GameManager.unlock_pokemon(pool[i])
-	# Le boss de la vague 10 rejoint toujours
-	var boss_pool: Array[int] = POOL_BOSSES.duplicate()
-	boss_pool.shuffle()
-	GameManager.unlock_pokemon(boss_pool[0])
 
 
 func _apply_bonus(bonus_id: String) -> void:
@@ -583,38 +643,140 @@ func _spawn_chests() -> void:
 		chest.position = Vector2(cell.x * 16.0 + 8.0, cell.y * 16.0 + 8.0)
 		chest.setup(_map.get_objects_layer(), cell, _map.source_id)
 		chest.opened.connect(_on_chest_opened)
+		_wire_chest_prompt(chest)
 		add_child(chest)
 
 
-func _on_chest_opened(item: Dictionary) -> void:
-	_apply_item(item)
+## Affiche/masque le prompt "[E] Ouvrir" au HUD quand le joueur entre/sort
+## de la portée d'interaction d'un coffre. Le prompt HUD est partagé avec
+## les obstacles CS — cf. _refresh_interact_prompt() pour l'arbitrage.
+func _wire_chest_prompt(chest: Chest) -> void:
+	chest.player_in_range.connect(func(in_range: bool) -> void:
+		_near_chest_prompt = "Appuyer sur [E] pour ouvrir le coffre" if in_range else ""
+		_refresh_interact_prompt()
+	)
 
 
-func _apply_item(item: Dictionary) -> void:
-	if _active_index >= _team.size():
+## Un seul prompt HUD à la fois : priorité au coffre s'il y a superposition
+## (cas rare), sinon l'obstacle CS actuellement éligible, sinon rien.
+func _refresh_interact_prompt() -> void:
+	if not _near_chest_prompt.is_empty():
+		hud.set_interact_prompt(true, _near_chest_prompt)
+	elif not _near_obstacle.is_empty():
+		hud.set_interact_prompt(true, _near_obstacle["prompt"])
+	else:
+		hud.set_interact_prompt(false)
+
+
+## Déclencheurs d'interaction CS (arbre à couper / rocher à casser) —
+## toujours présents sur la carte ; l'éligibilité (bon Pokémon contrôlé)
+## est réévaluée chaque frame par _refresh_cs_prompt().
+func _spawn_cs_triggers() -> void:
+	for entry: Dictionary in _cs_triggers:
+		if is_instance_valid(entry.get("area")): entry["area"].queue_free()
+	_cs_triggers.clear()
+	_near_obstacle = {}
+	_refresh_interact_prompt()
+	if not is_instance_valid(_map):
 		return
-	var m = _team[_active_index]
+
+	for entry: Dictionary in _map.get_coupe_tree_approaches():
+		var cells: Array = entry["cells"]
+		var approach: Vector2i = entry["approach"]
+		_register_cs_trigger(approach, "cs_coupe", "Appuyer sur [E] pour couper l'arbre (CS Coupe)",
+			func() -> void: _map.cut_tree_group(cells)
+		)
+
+	var boulders: Dictionary = _map.get_force_boulder_approaches()
+	for bcell: Vector2i in boulders:
+		var approach: Vector2i = boulders[bcell]
+		var captured_bcell: Vector2i = bcell
+		_register_cs_trigger(approach, "cs_force", "Appuyer sur [E] pour casser le rocher (CS Force)",
+			func() -> void: _map.break_rock_at(captured_bcell)
+		)
+
+
+func _register_cs_trigger(approach: Vector2i, cs_id: String, prompt: String, on_use: Callable) -> void:
+	var area := Area2D.new()
+	area.position         = Vector2(approach.x * 16.0 + 8.0, approach.y * 16.0 + 8.0)
+	area.collision_layer  = 0
+	area.collision_mask   = 1
+	var cs := CollisionShape2D.new()
+	var sh := RectangleShape2D.new()
+	sh.size  = Vector2(16, 16)
+	cs.shape = sh
+	area.add_child(cs)
+	add_child(area)
+	_cs_triggers.append({"area": area, "cs_id": cs_id, "prompt": prompt, "on_use": on_use})
+
+
+## Recalculé chaque frame : le joueur doit à la fois se tenir dans la zone
+## ET contrôler (Pokémon actif) le porteur de la bonne CS. Réagit donc
+## immédiatement à un changement de Pokémon actif [TAB], même sans bouger.
+func _refresh_cs_prompt() -> void:
+	if _active_index >= _team.size() or not is_instance_valid(_team[_active_index]):
+		_clear_cs_prompt()
+		return
+	var active_body: Node = _team[_active_index]
+	for entry: Dictionary in _cs_triggers:
+		var area: Area2D = entry["area"]
+		if not is_instance_valid(area): continue
+		if active_body in area.get_overlapping_bodies() and _active_holds_cs(entry["cs_id"]):
+			if _near_obstacle.get("prompt", "") != entry["prompt"]:
+				_near_obstacle = entry
+				_refresh_interact_prompt()
+			return
+	_clear_cs_prompt()
+
+
+func _clear_cs_prompt() -> void:
+	if not _near_obstacle.is_empty():
+		_near_obstacle = {}
+		_refresh_interact_prompt()
+
+
+func _on_chest_opened(item: Dictionary) -> void:
+	_show_item_reward(item)
+
+
+## Affiche l'écran de choix : le joueur décide quel membre reçoit l'objet
+## (description + effet visibles), avant que l'effet ne soit appliqué.
+func _show_item_reward(item: Dictionary, on_done: Callable = Callable()) -> void:
+	var screen := ItemRewardScreen.new()
+	add_child(screen)
+	screen.setup(item, _team)
+	screen.member_chosen.connect(func(idx: int) -> void:
+		_apply_item_to_member(item, idx)
+		screen.queue_free()
+		if on_done.is_valid():
+			on_done.call()
+	, CONNECT_ONE_SHOT)
+
+
+func _apply_item_to_member(item: Dictionary, idx: int) -> void:
+	if idx < 0 or idx >= _team.size():
+		return
+	var m = _team[idx]
 	if not is_instance_valid(m):
 		return
 	var inst: PokemonInstance = m.pokemon_instance
 	if inst.is_fainted():
 		return
-	var label: String = item.get("label", "Objet")
-	var mult: float   = item.get("mult", 1.0)
-	match item.get("effect", ""):
-		"atk": inst.attack_mult  *= mult
-		"def": inst.defense_mult *= mult
-		"spd": inst.speed_mult   *= mult
-		"hp":
-			var add_hp := int(inst.max_hp * mult)
-			inst.current_hp = mini(inst.max_hp, inst.current_hp + add_hp)
-			var r := inst.hp_ratio()
-			hud.update_team_hp(_active_index, r)
-			hud.update_hp(r)
-	hud.set_wave("✦ %s trouvé !" % label)
+	inst.equip_item(item)
+	var r := inst.hp_ratio()
+	hud.update_team_hp(idx, r)
+	if idx == _active_index:
+		hud.update_hp(r)
+	var label: String = item.get("name_fr", item.get("api_name", "Objet"))
+	hud.set_wave("✦ %s → %s !" % [label, inst.data.name_fr.capitalize()])
 
+
+var _game_over_triggered: bool = false
 
 func _game_over() -> void:
+	if _game_over_triggered:
+		return
+	_game_over_triggered = true
 	hud.set_wave("DÉFAITE...")
 	var consolation_gold := RunManager.inst().rooms_cleared * 15
 	if consolation_gold > 0:
@@ -744,6 +906,7 @@ func _transition_to_next_zone() -> void:
 		_spawn_entry_barrier()
 		_spawn_chests()
 		_spawn_cave_portals()
+		_spawn_cs_triggers()
 		await get_tree().create_timer(0.8).timeout
 		_spawn_room_enemies()
 	)
@@ -888,9 +1051,9 @@ func _spawn_cave_reward() -> void:
 	chest.setup(_map.get_objects_layer(), cell, _map.source_id,
 		{"api_name": "choice-band", "effect": "atk", "mult": 1.5})
 	chest.opened.connect(func(item: Dictionary) -> void:
-		_apply_item(item)
-		_spawn_cave_return_portal()
+		_show_item_reward(item, _spawn_cave_return_portal)
 	, CONNECT_ONE_SHOT)
+	_wire_chest_prompt(chest)
 	add_child(chest)
 	hud.set_wave("✦ Coffre doré — approche-toi !")
 

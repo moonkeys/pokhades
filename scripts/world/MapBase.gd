@@ -455,6 +455,20 @@ func get_cave_cells() -> Array[Vector2i]:
 	return []
 
 
+## Obstacles CS — surchargés dans MapGenerator. Vides par défaut.
+func get_force_boulder_approaches() -> Dictionary:
+	return {}
+
+func get_coupe_tree_approaches() -> Array:
+	return []
+
+func break_rock_at(_cell: Vector2i) -> void:
+	pass
+
+func cut_tree_group(_cells: Array) -> void:
+	pass
+
+
 func get_objects_layer() -> TileMapLayer:
 	return _objects
 

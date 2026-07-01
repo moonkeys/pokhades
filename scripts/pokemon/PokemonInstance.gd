@@ -20,6 +20,9 @@ var defense_mult: float = 1.0
 var speed_mult:   float = 1.0
 var max_hp_mult:  float = 1.0
 
+# Objet tenu — un seul à la fois par Pokémon ({} si aucun)
+var held_item: Dictionary = {}
+
 
 func _init(pokemon_data: PokemonData, lv: int = 5) -> void:
 	data       = pokemon_data
@@ -37,10 +40,25 @@ func init_moves() -> void:
 	for md: MoveData in data.preloaded_moves:
 		if md.level_learned <= level:
 			learned_moves.append(md)
+
 	var slots := GameManager.move_slot_count
-	var count  := mini(slots, learned_moves.size())
-	for i in count:
-		equipped_moves.append(learned_moves[i])
+
+	# Équipe d'abord les capacités explicitement choisies dans le Pokédex
+	for api_name in GameManager.get_move_loadout(data.id):
+		if equipped_moves.size() >= slots:
+			break
+		for md: MoveData in learned_moves:
+			if md.api_name == api_name and md not in equipped_moves:
+				equipped_moves.append(md)
+				break
+
+	# Complète les emplacements restants automatiquement
+	var i := 0
+	while equipped_moves.size() < slots and i < learned_moves.size():
+		var md: MoveData = learned_moves[i]
+		if md not in equipped_moves:
+			equipped_moves.append(md)
+		i += 1
 
 
 func add_move(md: MoveData) -> void:
@@ -98,6 +116,41 @@ func _calc_max_hp() -> int:
 
 func heal_percent(pct: float) -> void:
 	current_hp = mini(max_hp, current_hp + int(float(max_hp) * pct))
+
+
+# ── Objet tenu ───────────────────────────────────────────────────────
+
+## Équipe `item` ({api_name, name_fr, effect, mult}). Un objet à effet de
+## stat (atk/def/spd) remplace l'objet précédemment tenu (son bonus est
+## retiré avant). Un objet "hp" est un consommable (soin instantané) —
+## il n'est jamais conservé comme objet tenu.
+func equip_item(item: Dictionary) -> void:
+	var effect: String = item.get("effect", "")
+	if effect == "hp":
+		var add_hp := int(float(max_hp) * float(item.get("mult", 1.0)))
+		current_hp = mini(max_hp, current_hp + add_hp)
+		return
+	if not held_item.is_empty():
+		_unapply_stat_mult(held_item)
+	held_item = item.duplicate()
+	_apply_stat_mult(held_item)
+
+
+func _apply_stat_mult(item: Dictionary) -> void:
+	var mult: float = item.get("mult", 1.0)
+	match item.get("effect", ""):
+		"atk": attack_mult  *= mult
+		"def": defense_mult *= mult
+		"spd": speed_mult   *= mult
+
+
+func _unapply_stat_mult(item: Dictionary) -> void:
+	var mult: float = item.get("mult", 1.0)
+	if mult == 0.0: return
+	match item.get("effect", ""):
+		"atk": attack_mult  /= mult
+		"def": defense_mult /= mult
+		"spd": speed_mult   /= mult
 
 func take_damage(amount: int) -> void:
 	current_hp = max(0, current_hp - amount)

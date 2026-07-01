@@ -12,6 +12,7 @@ var sp_attack: int = 65
 var sp_defense: int = 65
 var speed: int = 45
 var sprite_url: String = ""
+var is_base_form: bool = true   # false = forme évoluée (PokeAPI evolves_from_species)
 
 # Attaques niveau par niveau récupérées de PokéAPI
 var level_up_moves: Array = []    # [{level: int, name: String}] triés par niveau
@@ -24,7 +25,8 @@ static func from_api(data: Dictionary) -> PokemonData:
 	pd.name_en  = data.get("name_en", "")
 	pd.name_fr  = data.get("name_fr", pd.name_en)
 	pd.types    = data.get("types", ["normal"])
-	pd.sprite_url = data.get("sprite_url", "")
+	pd.sprite_url   = data.get("sprite_url", "")
+	pd.is_base_form = data.get("is_base_form", true)
 	pd.level_up_moves = data.get("level_up_moves", [])
 	var stats: Dictionary = data.get("stats", {})
 	pd.hp        = stats.get("hp", 45)

@@ -153,19 +153,14 @@ func _build_tab(idx: int) -> void:
 	lv.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	btn.add_child(lv)
 
-	# Types
+	# Types (mini-logos)
 	var tx_off := 58
 	for t: String in inst.data.types:
-		var badge := ColorRect.new()
-		badge.position    = Vector2(tx_off, 56)
-		badge.size        = Vector2(38, 12)
-		badge.color       = _type_color(t)
-		badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		btn.add_child(badge)
-		var tlbl := _lbl(t.to_upper().left(6), tx_off, 56, 38, 12, 9, Color.WHITE, true)
-		tlbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		btn.add_child(tlbl)
-		tx_off += 42
+		var pill := TypeIcon.make_pill(t, 42.0, 14.0, 7)
+		pill.position = Vector2(tx_off, 55)
+		pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		btn.add_child(pill)
+		tx_off += 44
 
 	var i := idx
 	btn.pressed.connect(func(): _set_active_tab(i))
@@ -207,14 +202,10 @@ func _refresh_content() -> void:
 
 	# ── Types ──
 	for t: String in inst.data.types:
-		var badge := Panel.new()
-		badge.position = Vector2(x0, y)
-		badge.size     = Vector2(62, 18)
-		_style_panel_color(badge, _type_color(t), Color.TRANSPARENT, 4)
-		_content_root.add_child(badge)
-		var tlbl := _lbl(t.to_upper(), 0, 2, 62, 14, 12, Color.WHITE, true)
-		badge.add_child(tlbl)
-		x0 += 68
+		var pill := TypeIcon.make_pill(t, 84.0, 22.0, 12)
+		pill.position = Vector2(x0, y)
+		_content_root.add_child(pill)
+		x0 += 90
 	x0 = 8
 	y += 24
 
@@ -308,17 +299,13 @@ func _build_equipped_slot(x: int, y: int, slot_idx: int, inst: PokemonInstance) 
 	if slot_idx < inst.equipped_moves.size():
 		var md: MoveData = inst.equipped_moves[slot_idx]
 
-		# Badge type
-		var badge := Panel.new()
-		badge.position = Vector2(30, 8)
-		badge.size     = Vector2(64, 28)
-		_style_panel_color(badge, _type_color(md.type), Color.TRANSPARENT, 4)
-		slot_p.add_child(badge)
-		var tlbl := _lbl(md.type.to_upper().left(7), 0, 7, 64, 14, 11, Color.WHITE, true)
-		badge.add_child(tlbl)
+		# Logo de type
+		var tpill := TypeIcon.make_pill(md.type, 84.0, 28.0, 13)
+		tpill.position = Vector2(30, 8)
+		slot_p.add_child(tpill)
 
 		# Nom
-		var nm := _lbl(md.display_name, 104, 11, 650, 22, 15, C_TEXT)
+		var nm := _lbl(md.display_name, 124, 11, 628, 22, 15, C_TEXT)
 		slot_p.add_child(nm)
 
 		# Puissance
@@ -359,16 +346,11 @@ func _build_avail_move(x: int, y: int, md: MoveData, inst: PokemonInstance) -> v
 	_style_button_raw(btn, C_AVAIL, C_BORDER, 5)
 	_content_root.add_child(btn)
 
-	# Badge type (petit)
-	var badge := ColorRect.new()
-	badge.position    = Vector2(6, 6)
-	badge.size        = Vector2(52, 26)
-	badge.color       = _type_color(md.type)
-	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	btn.add_child(badge)
-	var tlbl := _lbl(md.type.to_upper().left(6), 6, 6, 52, 26, 8, Color.WHITE, true)
-	tlbl.mouse_filter  = Control.MOUSE_FILTER_IGNORE
-	btn.add_child(tlbl)
+	# Logo de type (compact)
+	var tpill := TypeIcon.make_pill(md.type, 54.0, 18.0, 8)
+	tpill.position = Vector2(4, 4)
+	tpill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	btn.add_child(tpill)
 
 	var nm := _lbl(md.display_name, 64, 5, 104, 16, 12, C_TEXT)
 	nm.mouse_filter = Control.MOUSE_FILTER_IGNORE

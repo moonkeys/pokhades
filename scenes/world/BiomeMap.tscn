@@ -21,7 +21,7 @@ void fragment() {
 shader = SubResource("Shader_r33ou")
 shader_parameter/wave_t = 0.0
 
-[node name="Zone1" type="Node2D" unique_id=305349243]
+[node name="BiomeMap" type="Node2D" unique_id=305349243]
 y_sort_enabled = true
 script = ExtResource("1_71da6")
 

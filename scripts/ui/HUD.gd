@@ -1,26 +1,22 @@
 extends CanvasLayer
 
-# ── Palette Pokéchill ─────────────────────────────────────────────────
-const C_HP_HIGH   := Color(0.22, 0.68, 0.24)
-const C_HP_MED    := Color(0.90, 0.68, 0.08)
-const C_HP_LOW    := Color(0.88, 0.20, 0.14)
-const C_XP        := Color(0.25, 0.55, 0.95)
-const C_XP_BG     := Color(0.66, 0.58, 0.44)
-const C_PANEL_BG  := Color(0.91, 0.85, 0.70)
-const C_PANEL_BDR := Color(0.62, 0.50, 0.32)
-const C_BAR_BG    := Color(0.70, 0.62, 0.48)
-const C_COOLDOWN  := Color(0.76, 0.53, 0.17)
-const C_OVERLAY   := Color(0.91, 0.85, 0.70, 0.93)
-const C_SLOT_ACT  := Color(0.76, 0.53, 0.17)
-const C_SLOT_BG   := Color(0.88, 0.82, 0.67)
-const C_SLOT_BDR  := Color(0.62, 0.50, 0.32)
-const C_FAINTED   := Color(0.55, 0.50, 0.42)
-const C_TEXT      := Color(0.18, 0.13, 0.06)
-const C_TEXT_MUTED := Color(0.48, 0.38, 0.22)
-
-const SLOT_H   := 60
-const SLOT_W   := 150
-const SLOT_GAP := 4
+# ── Palette RPG parchemin ─────────────────────────────────────────────
+const C_PARCH    := Color(0.86, 0.78, 0.60)        # fond parchemin (plus chaud/saturé)
+const C_PARCH_DK := Color(0.76, 0.67, 0.48)        # parchemin foncé
+const C_WOOD     := Color(0.20, 0.12, 0.04)         # bois très sombre
+const C_WOOD_LT  := Color(0.36, 0.22, 0.08)         # bois moyen
+const C_GOLD     := Color(0.88, 0.62, 0.10)         # or vif RPG
+const C_GOLD_LT  := Color(0.98, 0.92, 0.70)         # or clair / texte
+const C_TEXT     := Color(0.14, 0.09, 0.02)         # texte quasi-noir
+const C_DIM      := Color(0.42, 0.32, 0.16)         # texte secondaire
+const C_HP_HIGH  := Color(0.22, 0.80, 0.28)
+const C_HP_MED   := Color(0.95, 0.72, 0.04)
+const C_HP_LOW   := Color(0.92, 0.16, 0.10)
+const C_ATQ      := Color(0.90, 0.56, 0.08)         # barre ATQ / cooldown
+const C_XP       := Color(0.18, 0.48, 0.96)
+const C_BAR_BG   := Color(0.30, 0.22, 0.10)         # fond de barre (sombre)
+const C_FAINTED  := Color(0.40, 0.34, 0.26)
+const C_EMPTY    := Color(0.50, 0.42, 0.30, 0.85)  # slot vide
 
 const TYPE_COLORS: Dictionary = {
 	"normal":   Color(0.62, 0.62, 0.58), "fire":     Color(0.95, 0.42, 0.12),
@@ -34,397 +30,520 @@ const TYPE_COLORS: Dictionary = {
 	"steel":    Color(0.70, 0.70, 0.78), "fairy":    Color(0.94, 0.52, 0.72),
 }
 
-var _hp_bar:       ProgressBar
-var _hp_fill:      StyleBoxFlat
-var _hp_numbers:   Label
-var _cooldown_bar: ProgressBar
-var _ready_label:  Label
-var _xp_bar:       ProgressBar
-var _level_label:  Label
-var _wave_label:   Label
-var _kill_label:   Label
-var _pokemon_name: Label
+# ── État interne ──────────────────────────────────────────────────────
+var _player_instance:  PokemonInstance = null
+var _player_type:      String          = "normal"
 
-var _player_instance:  PokemonInstance
-var _team_slots:       Array = []
-var _follow_label:     Label = null
+var _hp_fill:          StyleBoxFlat    = null
+var _hp_numbers:       Label           = null
+var _hp_bar:           ProgressBar     = null
+var _cooldown_bar:     ProgressBar     = null
+var _ready_label:      Label           = null
+var _xp_bar:           ProgressBar     = null
+var _level_label:      Label           = null
+var _pokemon_name:     Label           = null
+var _portrait_tex:     TextureRect     = null
+var _player_panel:     Panel           = null
+var _type_pill:        Control         = null
 
-var _move_bar_panel:   Panel = null
-var _move_slots:       Array = []
-var _active_move_idx:  int   = 0
+var _wave_label:       Label           = null
+var _kill_label:       Label           = null
+var _follow_label:     Label           = null
+
+var _interact_prompt:  Panel           = null
+var _interact_label:   Label           = null
+
+var _team_slots:       Array           = []
+var _move_slots:       Array           = []
+var _active_slot_idx:  int             = 0
+var _active_move_idx:  int             = 0
+var _cooldown_ratio:   float           = 1.0
+var _active_pp_bar:    ProgressBar     = null   # barre PP du slot actif
 
 
 func _ready() -> void:
-	_build_top_bar()
+	_build_top()
 	_build_player_panel()
+	_build_interact_prompt()
 
 
-# ── Construction UI ──────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════
+# CONSTRUCTION UI
+# ══════════════════════════════════════════════════════════════════════
 
-func _build_player_panel() -> void:
-	var panel := Panel.new()
-	panel.position = Vector2(12, 588)
-	panel.size = Vector2(320, 128)
-	_apply_panel_style(panel, C_PANEL_BG, C_PANEL_BDR, 10)
-	add_child(panel)
+func _build_top() -> void:
+	# ── Bannière scroll centrale ──────────────────────────────────────
+	var banner := _ScrollBanner.new()
+	banner.position = Vector2(420, 8)
+	banner.size     = Vector2(440, 50)
+	add_child(banner)
 
-	_pokemon_name = _label("PIKACHU", 12, 8, 192, 26, 19, C_TEXT, true)
-	panel.add_child(_pokemon_name)
+	_wave_label = _lbl("Chargement…", 0, 0, 440, 50, 17, C_TEXT, true)
+	banner.add_child(_wave_label)
 
-	_level_label = _label("NIV.10", 224, 8, 88, 22, 16, C_COOLDOWN, false, false, true)
-	panel.add_child(_level_label)
-
-	var pv := _label("PV", 12, 40, 32, 20, 14, C_TEXT_MUTED)
-	panel.add_child(pv)
-
-	_hp_bar = _progress_bar(48, 42, 176, 16)
-	_hp_fill = _style_fill(C_HP_HIGH, 7)
-	_hp_bar.add_theme_stylebox_override("fill", _hp_fill)
-	_hp_bar.add_theme_stylebox_override("background", _style_bg(C_BAR_BG, 7))
-	panel.add_child(_hp_bar)
-
-	_hp_numbers = _label("-- / --", 230, 39, 84, 22, 13, C_TEXT_MUTED)
-	panel.add_child(_hp_numbers)
-
-	var atq := _label("ATQ", 12, 68, 34, 18, 13, C_COOLDOWN)
-	panel.add_child(atq)
-
-	_cooldown_bar = _progress_bar(48, 70, 176, 12)
-	_cooldown_bar.add_theme_stylebox_override("fill", _style_fill(C_COOLDOWN, 5))
-	_cooldown_bar.add_theme_stylebox_override("background", _style_bg(C_BAR_BG, 5))
-	panel.add_child(_cooldown_bar)
-
-	_ready_label = _label("PRÊT !", 230, 66, 78, 18, 13, C_HP_HIGH)
-	_ready_label.visible = true
-	panel.add_child(_ready_label)
-
-	var exp_lbl := _label("EXP", 12, 104, 34, 16, 13, C_XP)
-	panel.add_child(exp_lbl)
-
-	_xp_bar = _progress_bar(48, 106, 264, 10)
-	_xp_bar.add_theme_stylebox_override("fill", _style_fill(C_XP, 4))
-	_xp_bar.add_theme_stylebox_override("background", _style_bg(C_XP_BG, 4))
-	panel.add_child(_xp_bar)
-
-
-func _build_top_bar() -> void:
-	var wave_panel := Panel.new()
-	wave_panel.position = Vector2(470, 8)
-	wave_panel.size = Vector2(340, 44)
-	_apply_panel_style(wave_panel, C_OVERLAY, C_PANEL_BDR, 14)
-	add_child(wave_panel)
-
-	_wave_label = _label("Chargement...", 0, 8, 340, 28, 18, C_TEXT, false, true)
-	wave_panel.add_child(_wave_label)
-
-	var kill_panel := Panel.new()
-	kill_panel.position = Vector2(930, 8)
-	kill_panel.size = Vector2(340, 44)
-	_apply_panel_style(kill_panel, C_OVERLAY, C_PANEL_BDR, 14)
+	# ── Compteur de kills (droite) ────────────────────────────────────
+	var kill_panel := _wood_panel(Vector2(1086, 8), Vector2(186, 50))
 	add_child(kill_panel)
 
-	_kill_label = _label("0 / 100 vaincus", 0, 8, 340, 28, 16, C_TEXT_MUTED, false, true)
+	var pkball := _lbl("⊕", 8, 8, 28, 34, 22, C_GOLD)
+	kill_panel.add_child(pkball)
+
+	_kill_label = _lbl("0 / ? vaincus", 38, 12, 142, 28, 14, C_GOLD_LT)
 	kill_panel.add_child(_kill_label)
 
-	var follow_panel := Panel.new()
-	follow_panel.position = Vector2(170, 8)
-	follow_panel.size = Vector2(140, 44)
-	_apply_panel_style(follow_panel, C_OVERLAY, C_PANEL_BDR, 14)
+	# ── Mode suivi (petit badge) ──────────────────────────────────────
+	var follow_panel := _wood_panel(Vector2(1086, 62), Vector2(186, 32))
 	add_child(follow_panel)
-
-	_follow_label = _label("[F] SUIVI", 0, 8, 140, 28, 14, C_HP_HIGH, false, true)
+	_follow_label = _lbl("[F]  SUIVI", 0, 4, 186, 24, 13, C_GOLD_LT, true)
 	follow_panel.add_child(_follow_label)
 
 
-# ── Sidebar équipe ────────────────────────────────────────────────────
+func _build_player_panel() -> void:
+	# ── Panneau infos joueur (bas-gauche) 330×130 ──────────────────────
+	_player_panel = _wood_panel(Vector2(4, 586), Vector2(330, 132))
+	add_child(_player_panel)
+	var panel := _player_panel
+
+	# Cadre intérieur sombre pour le portrait (colonne gauche)
+	var port_bg := ColorRect.new()
+	port_bg.position = Vector2(3, 3)
+	port_bg.size     = Vector2(86, 126)
+	port_bg.color    = Color(0.16, 0.10, 0.04)
+	panel.add_child(port_bg)
+
+	# Placeholder parchemin (freed dès que le sprite charge)
+	var ph := ColorRect.new()
+	ph.name     = "PH_PLAYER"
+	ph.position = Vector2(4, 4)
+	ph.size     = Vector2(84, 124)
+	ph.color    = Color(0.82, 0.74, 0.58)
+	panel.add_child(ph)
+
+	_portrait_tex = TextureRect.new()
+	_portrait_tex.position    = Vector2(4, 4)
+	_portrait_tex.size        = Vector2(84, 124)
+	_portrait_tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_portrait_tex.expand_mode  = TextureRect.EXPAND_IGNORE_SIZE
+	panel.add_child(_portrait_tex)
+
+	# Séparateur bois
+	var sep := ColorRect.new()
+	sep.position = Vector2(91, 3)
+	sep.size     = Vector2(3, 126)
+	sep.color    = C_WOOD
+	panel.add_child(sep)
+
+	# ── Colonne stats (x=98) ──
+	const SX := 98.0
+
+	# Nom Pokémon
+	_pokemon_name = _lbl("???", SX, 4, 180, 24, 16, C_TEXT, false, true)
+	panel.add_child(_pokemon_name)
+
+	# Logo de type + Niveau sur la même ligne
+	_type_pill = TypeIcon.make_pill("normal", 70.0, 19.0, 10)
+	_type_pill.position = Vector2(SX, 28)
+	panel.add_child(_type_pill)
+
+	_level_label = _lbl("NIV. 1", SX + 78, 29, 94, 17, 12, C_GOLD)
+	panel.add_child(_level_label)
+
+	# Barre PV
+	panel.add_child(_lbl("PV", SX, 50, 24, 16, 11, C_DIM))
+	_hp_bar  = _progress_bar(SX + 24, 53, 148, 13)
+	_hp_fill = _style_fill(C_HP_HIGH, 5)
+	_hp_bar.add_theme_stylebox_override("fill",       _hp_fill)
+	_hp_bar.add_theme_stylebox_override("background", _style_bg(C_BAR_BG, 5))
+	panel.add_child(_hp_bar)
+	_hp_numbers = _lbl("-- / --", SX + 24, 68, 148, 14, 10, C_DIM, true)
+	panel.add_child(_hp_numbers)
+
+	# Barre ATQ
+	panel.add_child(_lbl("ATQ", SX, 85, 24, 14, 10, C_ATQ))
+	_cooldown_bar = _progress_bar(SX + 24, 87, 120, 10)
+	_cooldown_bar.add_theme_stylebox_override("fill",       _style_fill(C_ATQ, 4))
+	_cooldown_bar.add_theme_stylebox_override("background", _style_bg(C_BAR_BG, 4))
+	panel.add_child(_cooldown_bar)
+	_ready_label = _lbl("⚡ PRÊT !", SX + 148, 83, 80, 16, 11, C_HP_HIGH)
+	panel.add_child(_ready_label)
+
+	# Barre EXP
+	panel.add_child(_lbl("EXP", SX, 101, 24, 12, 9, C_XP))
+	_xp_bar = _progress_bar(SX + 24, 103, 204, 7)
+	_xp_bar.add_theme_stylebox_override("fill",       _style_fill(C_XP, 3))
+	_xp_bar.add_theme_stylebox_override("background", _style_bg(C_BAR_BG, 3))
+	panel.add_child(_xp_bar)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SLOTS ÉQUIPE (gauche, empilés)
+# ══════════════════════════════════════════════════════════════════════
 
 func setup_team(instances: Array, active_idx: int) -> void:
 	for slot in _team_slots:
-		slot["panel"].queue_free()
+		if is_instance_valid(slot.get("panel")):
+			slot["panel"].queue_free()
 	_team_slots.clear()
 
+	const SLOT_H   := 56
+	const SLOT_W   := 182
+	const SLOT_GAP := 4
+
 	for i in instances.size():
-		var slot: Dictionary = _create_team_slot(i)
-		_team_slots.append(slot)
 		var inst: PokemonInstance = instances[i]
-		slot["name_lbl"].text = inst.data.name_fr.to_upper() if inst.data else "???"
-		slot["hp_bar"].value  = inst.hp_ratio()
-		slot["lv_lbl"].text   = "NIV.%d" % inst.level
+		var panel := _wood_panel(Vector2(8, 8 + i * (SLOT_H + SLOT_GAP)), Vector2(SLOT_W, SLOT_H))
+		add_child(panel)
+
+		# Portrait miniature
+		var ph := ColorRect.new()
+		ph.name     = "PH"
+		ph.position = Vector2(4, 4)
+		ph.size     = Vector2(44, 48)
+		ph.color    = Color(0.64, 0.56, 0.42)
+		panel.add_child(ph)
+
+		var ptex := TextureRect.new()
+		ptex.position    = Vector2(3, 2)
+		ptex.size        = Vector2(46, 52)
+		ptex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		ptex.expand_mode  = TextureRect.EXPAND_IGNORE_SIZE
+		panel.add_child(ptex)
+
+		# Nom
+		var nm := _lbl(inst.data.name_fr.to_upper() if inst.data else "???",
+			52, 3, SLOT_W - 58, 18, 12, C_TEXT, false, true)
+		panel.add_child(nm)
+
+		# Barre HP
+		var hp_fill := _style_fill(C_HP_HIGH, 4)
+		var hp_bar  := _progress_bar(52, 23, SLOT_W - 60, 10)
+		hp_bar.add_theme_stylebox_override("fill",       hp_fill)
+		hp_bar.add_theme_stylebox_override("background", _style_bg(C_BAR_BG, 4))
+		hp_bar.value = inst.hp_ratio()
+		panel.add_child(hp_bar)
+
+		# Niveau
+		var lv := _lbl("NIV.%d" % inst.level, 52, 36, 70, 14, 10, C_GOLD)
+		panel.add_child(lv)
+
+		# Mini XP
+		var xp := _progress_bar(52, 48, SLOT_W - 60, 4)
+		xp.add_theme_stylebox_override("fill",       _style_fill(C_XP, 2))
+		xp.add_theme_stylebox_override("background", _style_bg(C_BAR_BG, 2))
+		xp.value = inst.xp_ratio()
+		panel.add_child(xp)
+
+		_team_slots.append({
+			"panel": panel, "portrait_tex": ptex, "portrait_bg": ph,
+			"name_lbl": nm, "hp_bar": hp_bar, "hp_fill": hp_fill,
+			"lv_lbl": lv, "xp_bar": xp,
+		})
 
 	set_active_slot(active_idx)
 
 
-func _create_team_slot(idx: int) -> Dictionary:
-	var panel := Panel.new()
-	panel.position = Vector2(8, 8 + idx * (SLOT_H + SLOT_GAP))
-	panel.size = Vector2(SLOT_W, SLOT_H)
-	_apply_panel_style(panel, C_SLOT_BG, C_SLOT_BDR, 8)
-	add_child(panel)
-
-	# Portrait
-	var portrait_bg := ColorRect.new()
-	portrait_bg.position = Vector2(5, 5)
-	portrait_bg.size = Vector2(42, 50)
-	portrait_bg.color = Color(0.74, 0.66, 0.50)
-	panel.add_child(portrait_bg)
-
-	var portrait_tex := TextureRect.new()
-	portrait_tex.position = Vector2(5, 5)
-	portrait_tex.size = Vector2(42, 50)
-	portrait_tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	panel.add_child(portrait_tex)
-
-	# Nom
-	var name_lbl := _label("???", 52, 3, SLOT_W - 58, 18, 13, C_TEXT)
-	panel.add_child(name_lbl)
-
-	# Barre HP
-	var hp_bar := _progress_bar(52, 23, SLOT_W - 60, 9)
-	var hp_fill := _style_fill(C_HP_HIGH, 4)
-	hp_bar.add_theme_stylebox_override("fill", hp_fill)
-	hp_bar.add_theme_stylebox_override("background", _style_bg(C_BAR_BG, 4))
-	hp_bar.value = 1.0
-	panel.add_child(hp_bar)
-
-	# Niveau
-	var lv_lbl := _label("NIV.1", 52, 35, SLOT_W - 60, 14, 11, C_COOLDOWN)
-	panel.add_child(lv_lbl)
-
-	# Mini barre XP
-	var xp_bar := _progress_bar(52, 50, SLOT_W - 60, 5)
-	xp_bar.add_theme_stylebox_override("fill", _style_fill(C_XP, 2))
-	xp_bar.add_theme_stylebox_override("background", _style_bg(C_XP_BG, 2))
-	xp_bar.value = 0.0
-	panel.add_child(xp_bar)
-
-	return {
-		"panel":        panel,
-		"portrait_bg":  portrait_bg,
-		"portrait_tex": portrait_tex,
-		"name_lbl":     name_lbl,
-		"hp_bar":       hp_bar,
-		"hp_fill":      hp_fill,
-		"lv_lbl":       lv_lbl,
-		"xp_bar":       xp_bar,
-	}
-
-
 func set_active_slot(idx: int) -> void:
+	_active_slot_idx = idx
 	for i in _team_slots.size():
 		var slot: Dictionary = _team_slots[i]
 		var s := StyleBoxFlat.new()
-		s.bg_color = C_SLOT_BG
+		s.bg_color = C_PARCH
 		s.set_corner_radius_all(8)
-		s.shadow_color = Color(0, 0, 0, 0.18)
-		s.shadow_size = 3
 		if i == idx:
-			s.border_color = C_SLOT_ACT
+			s.border_color = C_GOLD
 			s.set_border_width_all(3)
 		else:
-			s.border_color = C_SLOT_BDR
-			s.set_border_width_all(1)
+			s.border_color = C_WOOD
+			s.set_border_width_all(2)
+		s.shadow_color = Color(0, 0, 0, 0.35)
+		s.shadow_size  = 4
 		slot["panel"].add_theme_stylebox_override("panel", s)
 
 
-# ── API publique ──────────────────────────────────────────────────────
-
-func setup_player(instance: PokemonInstance) -> void:
-	_player_instance    = instance
-	_pokemon_name.text  = instance.data.name_fr.to_upper()
-	_hp_numbers.text    = "%d / %d" % [instance.current_hp, instance.max_hp]
-	_hp_bar.value       = 1.0
-	_cooldown_bar.value = 1.0
-	_xp_bar.value       = instance.xp_ratio()
-	_level_label.text   = "NIV.%d" % instance.level
-
-
-func update_hp(ratio: float) -> void:
-	_hp_bar.value = ratio
-	if _player_instance:
-		_hp_numbers.text = "%d / %d" % [_player_instance.current_hp, _player_instance.max_hp]
-	if ratio > 0.5:
-		_hp_fill.bg_color = C_HP_HIGH
-	elif ratio > 0.2:
-		_hp_fill.bg_color = C_HP_MED
-	else:
-		_hp_fill.bg_color = C_HP_LOW
-
-
-func update_cooldown(ratio: float) -> void:
-	_cooldown_bar.value = ratio
-	if _ready_label:
-		_ready_label.visible = ratio >= 1.0
-
-
-func update_xp(ratio: float, level: int) -> void:
-	_xp_bar.value     = ratio
-	_level_label.text = "NIV.%d" % level
-
-
-func update_team_hp(idx: int, ratio: float) -> void:
-	if idx >= _team_slots.size():
-		return
-	var slot: Dictionary = _team_slots[idx]
-	slot["hp_bar"].value = ratio
-	if ratio <= 0.0:
-		slot["hp_fill"].bg_color = C_FAINTED
-	elif ratio > 0.5:
-		slot["hp_fill"].bg_color = C_HP_HIGH
-	elif ratio > 0.2:
-		slot["hp_fill"].bg_color = C_HP_MED
-	else:
-		slot["hp_fill"].bg_color = C_HP_LOW
-
-
-func update_team_portrait(idx: int, texture: Texture2D) -> void:
-	if idx >= _team_slots.size():
-		return
-	_team_slots[idx]["portrait_tex"].texture = texture
-
-
-func update_team_level(idx: int, level: int) -> void:
-	if idx >= _team_slots.size():
-		return
-	_team_slots[idx]["lv_lbl"].text = "NIV.%d" % level
-
-
-func update_team_xp(idx: int, ratio: float) -> void:
-	if idx >= _team_slots.size():
-		return
-	_team_slots[idx]["xp_bar"].value = ratio
-
-
-# ── Barre de capacités ────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════
+# SLOTS DE CAPACITÉS (bas, 4 colonnes)
+# ══════════════════════════════════════════════════════════════════════
 
 func setup_moves(moves: Array) -> void:
-	if is_instance_valid(_move_bar_panel):
-		_move_bar_panel.queue_free()
+	if is_instance_valid(_active_pp_bar):
+		_active_pp_bar = null
+	for slot in _move_slots:
+		if is_instance_valid(slot.get("panel")):
+			slot["panel"].queue_free()
 	_move_slots.clear()
 
-	_move_bar_panel = Panel.new()
-	_move_bar_panel.position = Vector2(338, 590)
-	_move_bar_panel.size     = Vector2(930, 126)
-	_apply_panel_style(_move_bar_panel, C_PANEL_BG, C_PANEL_BDR, 10)
-	add_child(_move_bar_panel)
-
-	var slot_w := 220
-	var gap    := 10
+	const TOTAL_W := 964
+	const SLOT_H  := 130
+	const GAP     := 4
+	const SLOT_W  := (TOTAL_W - GAP * 3) / 4
+	const START_X := 316
 
 	for i in 4:
 		var move: MoveData = null
 		if i < moves.size() and moves[i] != null:
 			move = moves[i] as MoveData
 
-		var sp := Panel.new()
-		sp.position = Vector2(6 + i * (slot_w + gap), 6)
-		sp.size     = Vector2(slot_w, 114)
-		var accent: Color = TYPE_COLORS.get(move.type, C_PANEL_BDR) if move else C_PANEL_BDR
-		_style_move_panel(sp, i == _active_move_idx, accent)
-		_move_bar_panel.add_child(sp)
+		var t_col: Color = TYPE_COLORS.get(move.type if move else "normal", C_WOOD_LT)
+		# Slot actif : teinte type plus marquée (18%) ; inactif : légère (10%) ; vide : gris-brun
+		var blend := 0.18 if (i == _active_move_idx and move != null) else 0.10
+		var slot_bg: Color = C_PARCH.lerp(t_col, blend) if move else Color(0.58, 0.50, 0.38)
 
-		# Touche (badge foncé)
-		var key_bg := ColorRect.new()
-		key_bg.position = Vector2(6, 6)
-		key_bg.size     = Vector2(30, 30)
-		key_bg.color    = Color(0.14, 0.11, 0.07, 0.92)
-		sp.add_child(key_bg)
-		var key_lbl := _label(str(i + 1), 6, 6, 30, 30, 16, Color(0.94, 0.88, 0.72), false, true)
-		sp.add_child(key_lbl)
+		var panel := Panel.new()
+		panel.position = Vector2(START_X + i * (SLOT_W + GAP), 586)
+		panel.size     = Vector2(SLOT_W, SLOT_H)
+		_slot_style(panel, slot_bg, t_col if move else C_WOOD, i == _active_move_idx and move != null)
+		add_child(panel)
+
+		# Touche clavier — façon "keycap" : claire = active, grise = verrouillée
+		var nbg := Panel.new()
+		nbg.position = Vector2(5, 5)
+		nbg.size     = Vector2(28, 28)
+		var nb_style := StyleBoxFlat.new()
+		if move:
+			nb_style.bg_color     = C_GOLD if i == _active_move_idx else C_WOOD_LT
+			nb_style.border_color = C_GOLD_LT
+			nb_style.set_border_width_all(2)
+		else:
+			nb_style.bg_color     = Color(0.40, 0.36, 0.30)
+			nb_style.border_color = Color(0.30, 0.27, 0.22)
+			nb_style.set_border_width_all(2)
+		nb_style.set_corner_radius_all(5)
+		nbg.add_theme_stylebox_override("panel", nb_style)
+		panel.add_child(nbg)
+		var nb_col := (C_WOOD if i == _active_move_idx else C_TEXT) if move else Color(0.62, 0.58, 0.50)
+		panel.add_child(_lbl(str(i + 1), 5, 5, 28, 28, 15, nb_col, true))
+
+		var pp_bar: ProgressBar = null
 
 		if move:
-			# Nom
-			var name_lbl := _label(move.display_name, 42, 4, slot_w - 50, 34, 15, C_TEXT)
-			sp.add_child(name_lbl)
+			# Nom + étoile
+			panel.add_child(_lbl(move.display_name, 38, 4, SLOT_W - 52, 22, 14, C_TEXT, false, true))
+			panel.add_child(_lbl("✦", SLOT_W - 20, 4, 18, 22, 12, C_GOLD))
 
-			# Type badge (fond coloré)
-			var t_col: Color = TYPE_COLORS.get(move.type, C_PANEL_BDR)
-			var tbg    := ColorRect.new()
-			tbg.position = Vector2(42, 42)
-			tbg.size     = Vector2(76, 20)
-			tbg.color    = t_col
-			sp.add_child(tbg)
-			sp.add_child(_label(move.type.to_upper(), 42, 42, 76, 20, 11, Color.WHITE, false, true))
+			# Logo de type
+			var tpill := TypeIcon.make_pill(move.type, 73.0, 18.0, 9)
+			tpill.position = Vector2(38, 29)
+			panel.add_child(tpill)
 
-			# Catégorie
-			var cat := "PHY" if move.damage_class == "
-			physical" else \
-					   ("SPÉ" if move.damage_class == "special" else "EFF")
-			sp.add_child(_label(cat, 124, 43, 36, 18, 11, C_TEXT_MUTED, false, true))
+			# Badge catégorie
+			var cat   := "PHY" if move.damage_class == "physical" else \
+						 ("SPÉ" if move.damage_class == "special"  else "EFF")
+			var cbg   := ColorRect.new()
+			cbg.position = Vector2(112, 29)
+			cbg.size     = Vector2(38, 18)
+			cbg.color    = C_WOOD_LT
+			panel.add_child(cbg)
+			panel.add_child(_lbl(cat, 112, 29, 38, 18, 10, C_GOLD_LT, true))
 
-			# Puissance (dots + chiffre)
+			# Puissance
 			if move.power > 0:
-				var filled := clampi(int(ceil(float(move.power) / 30.0)), 0, 5)
-				var dots   := ""
-				for d in 5:
-					dots += "●" if d < filled else "○"
-				sp.add_child(_label(dots, 42, 68, 118, 22, 14, t_col))
-				sp.add_child(_label(str(move.power), 162, 67, 48, 24, 14, C_TEXT_MUTED,
-								false, false, true))
+				panel.add_child(_lbl("Puissance  %d" % move.power, 38, 52, SLOT_W - 46, 18, 12, C_DIM))
 			else:
-				sp.add_child(_label("Effet", 42, 70, slot_w - 52, 22, 12, C_TEXT_MUTED))
-		else:
-			sp.add_child(_label("— vide —", 42, 44, slot_w - 52, 28, 13,
-							Color(0.55, 0.50, 0.40), false, true))
+				panel.add_child(_lbl("Puissance  —", 38, 52, SLOT_W - 46, 18, 12, C_DIM))
 
-		_move_slots.append({"panel": sp, "move": move})
+			# PP (barre + texte)
+			panel.add_child(_lbl("PP", 38, 74, 24, 16, 11, C_DIM))
+			pp_bar = _progress_bar(62, 77, SLOT_W - 72, 11)
+			pp_bar.add_theme_stylebox_override("fill",       _style_fill(t_col, 4))
+			pp_bar.add_theme_stylebox_override("background", _style_bg(C_BAR_BG, 4))
+			pp_bar.value = 1.0
+			panel.add_child(pp_bar)
+
+			if i == _active_move_idx:
+				_active_pp_bar = pp_bar
+				_active_pp_bar.value = _cooldown_ratio
+
+			# Dots cosmétiques (puissance relative)
+			var filled := clampi(int(ceil(float(move.power) / 25.0)), 1, 8) if move.power > 0 else 4
+			var dots   := ""
+			for d in 8:
+				dots += "●" if d < filled else "○"
+			panel.add_child(_lbl(dots, 38, 92, SLOT_W - 46, 18, 11, t_col.lightened(0.1)))
+		else:
+			# Slot verrouillé — la touche ne fait rien tant qu'il n'est pas débloqué
+			panel.add_child(_lbl("Verrouillé", 0, 46, SLOT_W, 22, 13, C_EMPTY, true))
+			var lock_hint := _lbl("Débloquer chez le Tuteur", 4, 68, SLOT_W - 8, 32, 10, C_EMPTY, true)
+			lock_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			panel.add_child(lock_hint)
+
+			# Ligne PP grisée (non fonctionnelle, juste cosmétique)
+			pp_bar = _progress_bar(38, 90, SLOT_W - 46, 8)
+			pp_bar.add_theme_stylebox_override("fill",       _style_fill(C_BAR_BG, 3))
+			pp_bar.add_theme_stylebox_override("background", _style_bg(C_BAR_BG, 3))
+			pp_bar.value = 0.0
+			panel.add_child(pp_bar)
+			pp_bar = null  # ne pas tracker la barre vide
+
+		_move_slots.append({"panel": panel, "move": move, "pp_bar": pp_bar})
 
 	set_active_move(_active_move_idx)
 
 
 func set_active_move(idx: int) -> void:
 	_active_move_idx = idx
+	_active_pp_bar   = null
 	for i in _move_slots.size():
 		var slot: Dictionary = _move_slots[i]
-		var move: MoveData = slot.get("move")
-		var accent: Color = TYPE_COLORS.get(move.type, C_PANEL_BDR) if move else C_PANEL_BDR
-		_style_move_panel(slot["panel"], i == idx, accent)
+		var move: MoveData   = slot.get("move")
+		var t_col: Color     = TYPE_COLORS.get(move.type if move else "normal", C_WOOD_LT)
+		var blend2 := 0.18 if (i == idx and move != null) else 0.10
+		var bg2: Color = C_PARCH.lerp(t_col, blend2) if move else Color(0.58, 0.50, 0.38)
+		_slot_style(slot["panel"], bg2, t_col if move else C_WOOD, i == idx and move != null)
+		if i == idx and slot.get("pp_bar") != null:
+			_active_pp_bar = slot["pp_bar"]
+			_active_pp_bar.value = _cooldown_ratio
 
 
-func _style_move_panel(p: Panel, active: bool, accent: Color) -> void:
+func _slot_style(p: Panel, bg: Color, border: Color, active: bool) -> void:
 	var s := StyleBoxFlat.new()
-	s.bg_color     = Color(0.87, 0.81, 0.66) if active else Color(0.83, 0.77, 0.62, 0.75)
-	s.border_color = accent if active else C_PANEL_BDR
-	s.set_border_width_all(3 if active else 1)
+	s.bg_color = bg
+	if active:
+		s.border_color = border.lightened(0.15)
+		s.set_border_width_all(4)
+		s.shadow_color = border
+		s.shadow_size  = 6
+	else:
+		s.border_color = C_WOOD
+		s.set_border_width_all(3)
+		s.shadow_color = Color(0, 0, 0, 0.40)
+		s.shadow_size  = 4
 	s.set_corner_radius_all(8)
-	s.shadow_color = Color(0, 0, 0, 0.14)
-	s.shadow_size  = 3
 	p.add_theme_stylebox_override("panel", s)
 
 
-func set_follow_mode(active: bool) -> void:
-	if _follow_label:
-		if active:
-			_follow_label.text = "[F] SUIVI"
-			_follow_label.add_theme_color_override("font_color", C_HP_HIGH)
-		else:
-			_follow_label.text = "[F] INDÉP."
-			_follow_label.add_theme_color_override("font_color", C_TEXT_MUTED)
+# ══════════════════════════════════════════════════════════════════════
+# API PUBLIQUE
+# ══════════════════════════════════════════════════════════════════════
+
+func setup_player(instance: PokemonInstance) -> void:
+	_player_instance     = instance
+	_player_type         = instance.data.types[0] if not instance.data.types.is_empty() else "normal"
+	_pokemon_name.text   = instance.data.name_fr.to_upper()
+	_level_label.text    = "NIV. %d" % instance.level
+	_hp_numbers.text     = "%d / %d" % [instance.current_hp, instance.max_hp]
+	_hp_bar.value        = instance.hp_ratio()
+	_cooldown_bar.value  = 1.0
+	_xp_bar.value        = instance.xp_ratio()
+	_ready_label.visible = true
+	if is_instance_valid(_type_pill):
+		var new_pill := TypeIcon.make_pill(_player_type, 70.0, 19.0, 10)
+		new_pill.position = _type_pill.position
+		_type_pill.get_parent().add_child(new_pill)
+		_type_pill.queue_free()
+		_type_pill = new_pill
+	if is_instance_valid(_portrait_tex) and instance.portrait_texture != null:
+		_portrait_tex.texture = instance.portrait_texture
+
+
+func update_hp(ratio: float) -> void:
+	if is_instance_valid(_hp_bar):
+		_hp_bar.value = ratio
+	if _player_instance:
+		_hp_numbers.text = "%d / %d" % [_player_instance.current_hp, _player_instance.max_hp]
+	if is_instance_valid(_hp_fill):
+		_hp_fill.bg_color = C_HP_HIGH if ratio > 0.5 else (C_HP_MED if ratio > 0.2 else C_HP_LOW)
+
+
+func update_cooldown(ratio: float) -> void:
+	_cooldown_ratio = ratio
+	if is_instance_valid(_cooldown_bar):
+		_cooldown_bar.value = ratio
+	if is_instance_valid(_ready_label):
+		_ready_label.visible = ratio >= 1.0
+	if is_instance_valid(_active_pp_bar):
+		_active_pp_bar.value = ratio
+
+
+func update_xp(ratio: float, level: int) -> void:
+	if is_instance_valid(_xp_bar):
+		_xp_bar.value = ratio
+	if is_instance_valid(_level_label):
+		_level_label.text = "NIV. %d" % level
+
+
+func update_team_hp(idx: int, ratio: float) -> void:
+	if idx >= _team_slots.size(): return
+	var slot: Dictionary = _team_slots[idx]
+	slot["hp_bar"].value = ratio
+	var c := C_HP_HIGH if ratio > 0.5 else (C_HP_MED if ratio > 0.2 else (C_HP_LOW if ratio > 0.0 else C_FAINTED))
+	(slot["hp_fill"] as StyleBoxFlat).bg_color = c
+
+
+func update_team_portrait(idx: int, texture: Texture2D) -> void:
+	if idx >= _team_slots.size(): return
+	var slot: Dictionary = _team_slots[idx]
+	var ptex: TextureRect = slot["portrait_tex"]
+	ptex.texture = texture
+	var ph: Node = (slot["panel"] as Panel).get_node_or_null("PH")
+	if ph: ph.queue_free()
+	if idx == _active_slot_idx and is_instance_valid(_portrait_tex):
+		_portrait_tex.texture = texture
+		if is_instance_valid(_player_panel):
+			var ph2: Node = _player_panel.get_node_or_null("PH_PLAYER")
+			if ph2: ph2.queue_free()
+
+
+func update_team_level(idx: int, level: int) -> void:
+	if idx >= _team_slots.size(): return
+	_team_slots[idx]["lv_lbl"].text = "NIV.%d" % level
+
+
+func update_team_xp(idx: int, ratio: float) -> void:
+	if idx >= _team_slots.size(): return
+	_team_slots[idx]["xp_bar"].value = ratio
+
+
+func _build_interact_prompt() -> void:
+	_interact_prompt = _wood_panel(Vector2(490, 510), Vector2(300, 38))
+	_interact_prompt.visible = false
+	add_child(_interact_prompt)
+	_interact_label = _lbl("", 0, 7, 300, 24, 14, C_GOLD_LT, true, true)
+	_interact_prompt.add_child(_interact_label)
+
+
+## Affiche/masque le prompt d'interaction (ex : "Appuyer sur [E] pour ouvrir")
+## quand le joueur est à portée d'un objet interactif (coffre, etc).
+func set_interact_prompt(show: bool, text: String = "") -> void:
+	if not is_instance_valid(_interact_prompt):
+		return
+	_interact_prompt.visible = show
+	if show:
+		_interact_label.text = text
 
 
 func set_wave(text: String) -> void:
-	if _wave_label:
+	if is_instance_valid(_wave_label):
 		_wave_label.text = text
 
 
 func set_kills(current: int, total: int) -> void:
-	if _kill_label:
+	if is_instance_valid(_kill_label):
 		_kill_label.text = "%d / %d vaincus" % [current, total]
+
+
+func set_follow_mode(active: bool) -> void:
+	if not is_instance_valid(_follow_label): return
+	_follow_label.text = "[F]  SUIVI" if active else "[F]  INDÉP."
+	_follow_label.add_theme_color_override("font_color",
+		C_HP_HIGH if active else C_DIM)
 
 
 func show_levelup(level: int) -> void:
 	var lbl := Label.new()
 	lbl.text = "Niveau %d !" % level
-	lbl.position = Vector2(520, 540)
-	lbl.size = Vector2(240, 40)
-	lbl.add_theme_font_size_override("font_size", 28)
-	lbl.add_theme_color_override("font_color", C_COOLDOWN)
+	lbl.position = Vector2(500, 480)
+	lbl.size     = Vector2(280, 48)
+	lbl.add_theme_font_size_override("font_size", 32)
+	lbl.add_theme_color_override("font_color", C_GOLD)
+	lbl.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.60))
+	lbl.add_theme_constant_override("shadow_offset_x", 2)
+	lbl.add_theme_constant_override("shadow_offset_y", 2)
 	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	add_child(lbl)
-
-	var tween := create_tween()
-	tween.tween_property(lbl, "position:y", 480.0, 1.8).set_ease(Tween.EASE_OUT)
-	tween.parallel().tween_property(lbl, "modulate:a", 0.0, 1.8).set_delay(0.5)
-	tween.tween_callback(lbl.queue_free)
+	var tw := create_tween()
+	tw.tween_property(lbl, "position:y", 420.0, 1.8).set_ease(Tween.EASE_OUT)
+	tw.parallel().tween_property(lbl, "modulate:a", 0.0, 1.8).set_delay(0.6)
+	tw.tween_callback(lbl.queue_free)
 
 
 func show_evolution(name_fr: String) -> void:
@@ -432,80 +551,136 @@ func show_evolution(name_fr: String) -> void:
 	overlay.size  = Vector2(1280, 720)
 	overlay.color = Color(0.91, 0.85, 0.70, 0)
 	add_child(overlay)
-
 	var lbl := Label.new()
 	lbl.text     = "%s évolue !" % name_fr.to_upper()
 	lbl.position = Vector2(290, 308)
-	lbl.size     = Vector2(700, 60)
-	lbl.add_theme_font_size_override("font_size", 44)
-	lbl.add_theme_color_override("font_color", C_COOLDOWN)
+	lbl.size     = Vector2(700, 64)
+	lbl.add_theme_font_size_override("font_size", 46)
+	lbl.add_theme_color_override("font_color", C_GOLD)
 	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lbl.modulate.a = 0.0
 	add_child(lbl)
-
-	var tween := create_tween()
-	tween.tween_property(overlay, "color:a", 0.88, 0.25)
-	tween.parallel().tween_property(lbl, "modulate:a", 1.0, 0.25)
-	tween.tween_interval(1.6)
-	tween.tween_property(overlay, "color:a", 0.0, 0.55)
-	tween.parallel().tween_property(lbl, "modulate:a", 0.0, 0.55)
-	tween.tween_callback(func():
-		overlay.queue_free()
-		lbl.queue_free()
-	)
+	var tw := create_tween()
+	tw.tween_property(overlay, "color:a", 0.88, 0.25)
+	tw.parallel().tween_property(lbl, "modulate:a", 1.0, 0.25)
+	tw.tween_interval(1.6)
+	tw.tween_property(overlay, "color:a", 0.0, 0.55)
+	tw.parallel().tween_property(lbl, "modulate:a", 0.0, 0.55)
+	tw.tween_callback(func() -> void: overlay.queue_free(); lbl.queue_free())
 
 
-# ── Helpers ────────────────────────────────────────────────────────────
+## Bandeau discret (n'interrompt pas le combat) annonçant un nouveau Pokémon recrutable.
+func show_unlock(name_fr: String) -> void:
+	var panel := _wood_panel(Vector2(340, 110), Vector2(600, 56))
+	panel.modulate.a = 0.0
+	add_child(panel)
 
-func _apply_panel_style(panel: Panel, bg: Color, border: Color, radius: int) -> void:
+	var lbl := Label.new()
+	lbl.text     = "⊕  %s rejoint la Rébellion !" % name_fr.to_upper()
+	lbl.size     = Vector2(600, 56)
+	lbl.add_theme_font_size_override("font_size", 18)
+	lbl.add_theme_color_override("font_color", C_GOLD_LT)
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.vertical_alignment   = VERTICAL_ALIGNMENT_CENTER
+	panel.add_child(lbl)
+
+	var tw := create_tween()
+	tw.tween_property(panel, "modulate:a", 1.0, 0.3).set_ease(Tween.EASE_OUT)
+	tw.tween_interval(2.0)
+	tw.tween_property(panel, "modulate:a", 0.0, 0.4)
+	tw.tween_callback(panel.queue_free)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# BANNIÈRE SCROLL (forme pointue gauche/droite)
+# ══════════════════════════════════════════════════════════════════════
+
+class _ScrollBanner extends Control:
+	func _draw() -> void:
+		var w  := size.x
+		var h  := size.y
+		var pt := 22.0   # longueur de la pointe
+
+		# Fond parchemin (forme scroll)
+		var pts := PackedVector2Array([
+			Vector2(0,     h * 0.5),
+			Vector2(pt,    0),
+			Vector2(w - pt, 0),
+			Vector2(w,     h * 0.5),
+			Vector2(w - pt, h),
+			Vector2(pt,    h),
+		])
+		draw_polygon(pts, PackedColorArray([Color(0.91, 0.85, 0.70)]))
+
+		# Bord bois
+		for i in pts.size():
+			draw_line(pts[i], pts[(i + 1) % pts.size()], Color(0.28, 0.18, 0.08), 2.0)
+
+		# Ligne décorative intérieure
+		var inset := 5.0
+		var inner := PackedVector2Array([
+			Vector2(inset,        h * 0.5),
+			Vector2(pt + inset,   inset),
+			Vector2(w - pt - inset, inset),
+			Vector2(w - inset,   h * 0.5),
+			Vector2(w - pt - inset, h - inset),
+			Vector2(pt + inset,   h - inset),
+		])
+		for i in inner.size():
+			draw_line(inner[i], inner[(i + 1) % inner.size()],
+				Color(0.44, 0.30, 0.14, 0.50), 1.0)
+
+		# Icône boussole
+		draw_circle(Vector2(pt + 14, h * 0.5), 9, Color(0.28, 0.18, 0.08, 0.60))
+		draw_circle(Vector2(pt + 14, h * 0.5), 6, Color(0.91, 0.85, 0.70))
+
+
+# ══════════════════════════════════════════════════════════════════════
+# HELPERS
+# ══════════════════════════════════════════════════════════════════════
+
+func _wood_panel(pos: Vector2, sz: Vector2) -> Panel:
+	var p := Panel.new()
+	p.position = pos; p.size = sz
 	var s := StyleBoxFlat.new()
-	s.bg_color = bg
-	s.border_color = border
-	s.set_border_width_all(2 if border != Color.TRANSPARENT else 0)
-	s.set_corner_radius_all(radius)
-	s.shadow_color = Color(0, 0, 0, 0.18)
-	s.shadow_size = 4
-	panel.add_theme_stylebox_override("panel", s)
+	s.bg_color     = C_PARCH
+	s.border_color = C_WOOD
+	s.set_border_width_all(4)
+	s.set_corner_radius_all(8)
+	# Double-bord : inner highlight doré
+	s.border_color = C_WOOD
+	s.shadow_color = Color(0, 0, 0, 0.55)
+	s.shadow_size  = 7
+	p.add_theme_stylebox_override("panel", s)
+	# Liseré doré intérieur via contenu enfant (ajouté par l'appelant si besoin)
+	return p
 
 
-func _style_fill(color: Color, radius: int) -> StyleBoxFlat:
-	var s := StyleBoxFlat.new()
-	s.bg_color = color
-	s.set_corner_radius_all(radius)
-	return s
-
-
-func _style_bg(color: Color, radius: int) -> StyleBoxFlat:
-	var s := StyleBoxFlat.new()
-	s.bg_color = color
-	s.set_corner_radius_all(radius)
-	return s
+func _lbl(text: String, x: float, y: float, w: float, h: float,
+		fs: int, col: Color, centered: bool = false,
+		bold: bool = false, right: bool = false) -> Label:
+	var l := Label.new()
+	l.text = text; l.position = Vector2(x, y); l.size = Vector2(w, h)
+	l.add_theme_font_size_override("font_size", fs)
+	l.add_theme_color_override("font_color", col)
+	l.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.40))
+	l.add_theme_constant_override("shadow_offset_x", 1)
+	l.add_theme_constant_override("shadow_offset_y", 1)
+	if centered: l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	elif right:  l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	return l
 
 
 func _progress_bar(x: float, y: float, w: float, h: float) -> ProgressBar:
-	var bar := ProgressBar.new()
-	bar.position = Vector2(x, y)
-	bar.size     = Vector2(w, h)
-	bar.max_value = 1.0
-	bar.value     = 0.0
-	bar.step      = 0.001
-	bar.show_percentage = false
-	return bar
+	var b := ProgressBar.new()
+	b.position = Vector2(x, y); b.size = Vector2(w, h)
+	b.max_value = 1.0; b.value = 0.0; b.step = 0.001
+	b.show_percentage = false
+	return b
 
 
-func _label(
-	text: String, x: float, y: float, w: float, h: float,
-	font_size: int, color: Color,
-	bold: bool = false, centered: bool = false, right_align: bool = false
-) -> Label:
-	var lbl := Label.new()
-	lbl.text = text
-	lbl.position = Vector2(x, y)
-	lbl.size     = Vector2(w, h)
-	lbl.add_theme_font_size_override("font_size", font_size)
-	lbl.add_theme_color_override("font_color", color)
-	if centered:
-		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	elif right_align:
-		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	return lbl
+func _style_fill(col: Color, r: int) -> StyleBoxFlat:
+	var s := StyleBoxFlat.new(); s.bg_color = col; s.set_corner_radius_all(r); return s
+
+func _style_bg(col: Color, r: int) -> StyleBoxFlat:
+	var s := StyleBoxFlat.new(); s.bg_color = col; s.set_corner_radius_all(r); return s

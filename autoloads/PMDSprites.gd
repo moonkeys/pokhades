@@ -1,6 +1,7 @@
 extends Node
 
 const _BASE_URL := "https://raw.githubusercontent.com/PMDCollab/SpriteCollab/master/sprite"
+const _CACHE_DIR := "user://cache/pmd/"
 
 # Rangées cardinales d'abord (fallback source), puis diagonales
 const _DIR_ROWS := {
@@ -42,9 +43,18 @@ func get_walk_sprites(dex_id: int, _node: Node, callback: Callable) -> void:
 	_load_xml(dex_id)
 
 
-# ── Chargement en deux étapes : XML puis PNG ──────────────────────
+# ── Chargement en deux étapes : XML puis PNG (avec cache disque) ──
 
 func _load_xml(dex_id: int) -> void:
+	var path := _cache_path(dex_id, "AnimData.xml")
+	if FileAccess.file_exists(path):
+		var f := FileAccess.open(path, FileAccess.READ)
+		var xml_text := f.get_as_text()
+		f.close()
+		print("PMD: XML depuis cache disque id=%d" % dex_id)
+		_load_png(dex_id, _parse_xml(xml_text))
+		return
+
 	var padded := "%04d" % dex_id
 	var url := "%s/%s/AnimData.xml" % [_BASE_URL, padded]
 	print("PMD: chargement XML id=%d → %s" % [dex_id, url])
@@ -56,7 +66,9 @@ func _load_xml(dex_id: int) -> void:
 		if result != OK or code != 200:
 			_resolve(dex_id, {})
 			return
-		var info := _parse_xml(body.get_string_from_utf8())
+		var xml_text: String = body.get_string_from_utf8()
+		_write_cache_text(path, xml_text)
+		var info := _parse_xml(xml_text)
 		print("PMD: XML parsé id=%d  frame=%dx%d  frames=%d  fps=%.1f" % [dex_id, info.frame_w, info.frame_h, info.num_frames, info.fps])
 		_load_png(dex_id, info)
 	)
@@ -64,6 +76,15 @@ func _load_xml(dex_id: int) -> void:
 
 
 func _load_png(dex_id: int, info: Dictionary) -> void:
+	var path := _cache_path(dex_id, "Walk-Anim.png")
+	if FileAccess.file_exists(path):
+		var f := FileAccess.open(path, FileAccess.READ)
+		var bytes := f.get_buffer(f.get_length())
+		f.close()
+		print("PMD: PNG depuis cache disque id=%d" % dex_id)
+		_finish_png(dex_id, bytes, info)
+		return
+
 	var padded := "%04d" % dex_id
 	var url := "%s/%s/Walk-Anim.png" % [_BASE_URL, padded]
 	print("PMD: chargement PNG id=%d → %s" % [dex_id, url])
@@ -75,20 +96,46 @@ func _load_png(dex_id: int, info: Dictionary) -> void:
 		if result != OK or code != 200:
 			_resolve(dex_id, {})
 			return
-		var img := Image.new()
-		if img.load_png_from_buffer(body) != OK:
-			print("PMD: échec décodage PNG id=%d" % dex_id)
-			_resolve(dex_id, {})
-			return
-		print("PMD: PNG OK id=%d  taille image=%dx%d" % [dex_id, img.get_width(), img.get_height()])
-		var texture := ImageTexture.create_from_image(img)
-		var frames := _build_frames(texture, info, img.get_height())
-		_resolve(dex_id, {
-			"frames": frames,
-			"frame_size": Vector2i(info.get("frame_w", 32), info.get("frame_h", 32))
-		})
+		_write_cache_bytes(path, body)
+		_finish_png(dex_id, body, info)
 	)
 	http.request(url)
+
+
+func _finish_png(dex_id: int, bytes: PackedByteArray, info: Dictionary) -> void:
+	var img := Image.new()
+	if img.load_png_from_buffer(bytes) != OK:
+		print("PMD: échec décodage PNG id=%d" % dex_id)
+		_resolve(dex_id, {})
+		return
+	var texture := ImageTexture.create_from_image(img)
+	var frames := _build_frames(texture, info, img.get_height())
+	_resolve(dex_id, {
+		"frames": frames,
+		"frame_size": Vector2i(info.get("frame_w", 32), info.get("frame_h", 32))
+	})
+
+
+# ── Cache disque (user://) — évite de retélécharger d'une session à l'autre ──
+
+func _cache_path(dex_id: int, filename: String) -> String:
+	return "%s%04d/%s" % [_CACHE_DIR, dex_id, filename]
+
+
+func _write_cache_text(path: String, text: String) -> void:
+	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	if f == null: return
+	f.store_string(text)
+	f.close()
+
+
+func _write_cache_bytes(path: String, bytes: PackedByteArray) -> void:
+	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	if f == null: return
+	f.store_buffer(bytes)
+	f.close()
 
 
 func _resolve(dex_id: int, result: Dictionary) -> void:

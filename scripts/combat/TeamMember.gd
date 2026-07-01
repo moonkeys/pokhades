@@ -1,7 +1,7 @@
 extends CharacterBody2D
 
 const SPEED        := 150.0
-const ATTACK_RANGE    := 100.0
+const ATTACK_RANGE    := 65.0
 const ATTACK_COOLDOWN := 0.7
 const DISPLAY_SIZE    := 28.0
 
@@ -12,6 +12,7 @@ const DISPLAY_SIZE    := 28.0
 const AI_SPEED        := 120.0
 const AI_SEEK_RADIUS  := 300.0   # cherche un ennemi dans ce rayon
 const AI_FOLLOW_DIST  := 90.0    # se rapproche du leader si plus loin que ça
+const REPATH_INTERVAL  := 0.4
 
 var pokemon_instance: PokemonInstance
 var team_index: int  = 0
@@ -24,6 +25,11 @@ var _current_anim:       String = "idle"
 var _has_directional:    bool = false
 var _evolving:           bool = false
 var _selected_move_idx:  int  = 0   # capacité active (touches 1-4)
+
+# Pathfinding (contournement d'obstacles, mode compagnon)
+var _map:               MapBase = null
+var _path_repath_timer: float   = 0.0
+var _path_waypoint:     Vector2 = Vector2.ZERO
 
 signal hp_changed(ratio: float)
 signal cooldown_changed(ratio: float)
@@ -45,6 +51,7 @@ func setup(instance: PokemonInstance, idx: int, active: bool) -> void:
 	var col := Color(1.0, 0.55, 0.0) if active else Color(0.35, 0.55, 1.0)
 	_add_placeholder(col)
 	PMDSprites.get_walk_sprites(instance.data.id, self, _on_pmd_loaded)
+	_map = get_tree().get_first_node_in_group("combat_map") as MapBase
 	if active:
 		_register_move_keys()
 
@@ -140,7 +147,7 @@ func _physics_process(delta: float) -> void:
 		_player_process()
 		cooldown_changed.emit(1.0 - (_attack_timer / ATTACK_COOLDOWN))
 	else:
-		_companion_process()
+		_companion_process(delta)
 
 
 # ── Mode joueur ───────────────────────────────────────────────────────
@@ -172,7 +179,7 @@ func _player_process() -> void:
 
 # ── IA compagnon ──────────────────────────────────────────────────────
 
-func _companion_process() -> void:
+func _companion_process(delta: float) -> void:
 	var nearest := _nearest_enemy(AI_SEEK_RADIUS)
 
 	if nearest:
@@ -183,14 +190,16 @@ func _companion_process() -> void:
 			if _attack_timer <= 0.0 and not _evolving:
 				_attack()
 		else:
-			var dir := (nearest.global_position - global_position).normalized()
+			var steer_pos := _get_steer_target(nearest.global_position, delta)
+			var dir := (steer_pos - global_position).normalized()
 			velocity = dir * AI_SPEED
 			_update_anim(dir)
 			move_and_slide()
 	elif is_instance_valid(_leader):
 		var dist_leader := global_position.distance_to(_leader.global_position)
 		if dist_leader > AI_FOLLOW_DIST:
-			var dir := (_leader.global_position - global_position).normalized()
+			var steer_pos := _get_steer_target(_leader.global_position, delta)
+			var dir := (steer_pos - global_position).normalized()
 			velocity = dir * AI_SPEED
 			_update_anim(dir)
 			move_and_slide()
@@ -200,6 +209,36 @@ func _companion_process() -> void:
 	else:
 		velocity = Vector2.ZERO
 		_update_anim(Vector2.ZERO)
+
+
+## Renvoie le point vers lequel diriger le compagnon : ligne droite si la vue
+## est dégagée, sinon le prochain point de détour via la grille A* de la map.
+func _get_steer_target(target_pos: Vector2, delta: float) -> Vector2:
+	_path_repath_timer -= delta
+	if _has_clear_line_of_sight(target_pos):
+		_path_repath_timer = 0.0
+		return target_pos
+
+	if not is_instance_valid(_map):
+		return target_pos
+
+	if _path_repath_timer <= 0.0:
+		_path_repath_timer = REPATH_INTERVAL
+		_path_waypoint = _map.get_next_path_point(global_position, target_pos)
+
+	if global_position.distance_to(_path_waypoint) < 10.0:
+		return target_pos
+
+	return _path_waypoint
+
+
+func _has_clear_line_of_sight(target_pos: Vector2) -> bool:
+	var space := get_world_2d().direct_space_state
+	var query := PhysicsRayQueryParameters2D.create(global_position, target_pos)
+	query.collision_mask = 1
+	query.exclude        = [self]
+	var result := space.intersect_ray(query)
+	return result.is_empty()
 
 
 func _nearest_enemy(max_dist: float) -> CharacterBody2D:

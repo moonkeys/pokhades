@@ -6,6 +6,10 @@ enum Terrain { GRASS = 0, PATH = 1, WATER = 2, TREE = 3 }
 enum GatingType { NONE = 0, SURF = 1, COUPE = 2, FORCE = 3 }
 enum MapTheme { FOREST = 0, SWAMP = 1, MEADOW = 2, ROCKY = 3 }
 
+## Couche physique dédiée à l'eau — séparée des autres obstacles pour que
+## seule la CS Surf puisse l'ignorer (cf. CombatArena._apply_cs_unlocks).
+const WATER_LAYER := 4
+
 ## ─────────────────────────────────────────────────────────────────
 ## EXPORTS SPÉCIFIQUES AU GÉNÉRATEUR PROCÉDURAL
 ## (tile_*, source_id, flower_density, entry_tile, exit_A/B/C, etc.
@@ -89,10 +93,21 @@ var _grid: Array = []
 var _rng:  RandomNumberGenerator = RandomNumberGenerator.new()
 var _flower_mat: ShaderMaterial = null
 
+## Cases accessibles à pied depuis l'entrée sans franchir d'eau (cf.
+## _compute_reachable). Empêche de faire spawn un ennemi sur une île
+## accessible uniquement à la nage (CS Surf) — il serait impossible à
+## vaincre sans la CS, bloquant la progression.
+var _reachable: Dictionary = {}
+
+## Obstacles CS, exposés à CombatArena pour l'interaction en run.
+var _force_boulders: Dictionary = {}   # case rocher → case d'approche
+var _coupe_trees:     Array     = []   # [{"cells": Array[Vector2i], "approach": Vector2i}, ...]
+var _cell_collision:  Dictionary = {}  # case → CollisionShape2D (cf. _build_map_collision)
+
 ## ── État du thème courant (rempli par _apply_theme) ──────────────
 var _ground_tile:  Vector2i = Vector2i(56, 33)
 var _water_tile:   Vector2i = Vector2i(46, 26)
-var _path_tile:    Vector2i = Vector2i(2,  16)
+var _path_tiles:   Array[Vector2i] = [Vector2i(2, 16)]   # variantes — tirées au hasard par case
 var _tree_origins: Array    = [Vector2i(1, 0)]   # 3×3, tirés au hasard par arbre
 var _tg_threshold: float    = 0.65
 
@@ -177,6 +192,14 @@ func _generate() -> void:
 	_gen_tall_grass()
 	_gen_decorations()
 	_place_chest_gated()
+	# Le placement du coffre peut creuser une nouvelle douve (île CS Surf) —
+	# rejoue les jointures boue/eau pour qu'elle s'intègre proprement.
+	if theme == MapTheme.SWAMP:
+		_apply_blob(_ground, tile_sol_boueux - Vector2i(1, 1),
+			func(t: int) -> bool: return t != Terrain.WATER and t != Terrain.PATH)
+		_apply_blob(_water, tile_eau_sale - Vector2i(1, 1),
+			func(t: int) -> bool: return t == Terrain.WATER)
+	_compute_reachable()
 	_clear_portal_zones()
 	_objects.y_sort_enabled = true
 	print("MapGenerator: génération terminée.")
@@ -237,6 +260,7 @@ func _generate_arena() -> void:
 				tiles_cailloux[_rng.randi() % tiles_cailloux.size()])
 		placed += 1
 
+	_compute_reachable()
 	_objects.y_sort_enabled = true
 	print("MapGenerator: arène générée.")
 
@@ -251,13 +275,14 @@ func _apply_theme() -> void:
 	var cfg := _theme_config(theme)
 	_ground_tile    = cfg["ground_tile"]
 	_water_tile     = cfg["water_tile"]
-	_path_tile      = cfg["path_tile"]
+	_path_tiles.assign(cfg["path_tiles"])   # Array générique → Array[Vector2i]
 	_tree_origins   = cfg["tree_origins"]
 	_tg_threshold   = cfg["tg_threshold"]
 	tree_density    = cfg["tree_density"]
 	water_threshold = cfg["water_threshold"]
 	min_water_pools = cfg["min_water_pools"]
 	flower_density  = cfg["flower_density"]
+	path_width      = cfg["path_width"]
 	if random_gating:
 		gating_type = cfg["gating"]
 	print("MapGenerator: thème=%s  gating=%s" % [
@@ -270,55 +295,71 @@ func _theme_config(t: MapTheme) -> Dictionary:
 			return {
 				"ground_tile": tile_grass,
 				"water_tile":   tile_water,
-				"path_tile":    tile_chemin_terre,
+				"path_tiles":   [tile_chemin_terre],
 				"tree_origins": [tile_sapin_origin, tile_tree_origin],
 				"tree_density":    0.50,
 				"water_threshold": 0.62,
 				"min_water_pools": 1,
 				"tg_threshold":    0.55,
 				"flower_density":  0.03,
+				"path_width":      3,
 				"gating":          GatingType.COUPE,
 			}
 		MapTheme.SWAMP:
 			return {
 				"ground_tile": tile_sol_boueux,
 				"water_tile":   tile_eau_sale,
-				"path_tile":    tile_chemin_terre,
+				"path_tiles":   [tile_chemin_terre],
 				"tree_origins": [tile_arbre_mort_orig, tile_tree_origin],
-				"tree_density":    0.22,
-				"water_threshold": 0.38,
-				"min_water_pools": 4,
+				# Allégé par rapport à l'original : trop dense/obstrué, ne laissait
+				# quasiment aucun espace marchable hors des 3 chemins principaux.
+				"tree_density":    0.14,
+				"water_threshold": 0.47,
+				"min_water_pools": 3,
 				"tg_threshold":    0.68,
 				"flower_density":  0.02,
+				"path_width":      4,   # corridors plus larges — marécage plus praticable
 				"gating":          GatingType.SURF,
 			}
 		MapTheme.MEADOW:
 			return {
 				"ground_tile": tile_grass,
 				"water_tile":   tile_water,
-				"path_tile":    tile_chemin_terre,
+				"path_tiles":   [tile_chemin_terre],
 				"tree_origins": [tile_tree_origin],
 				"tree_density":    0.12,
 				"water_threshold": 0.58,
 				"min_water_pools": 1,
 				"tg_threshold":    0.55,
 				"flower_density":  0.16,
+				"path_width":      3,
 				"gating":          GatingType.FORCE,
 			}
 		MapTheme.ROCKY:
 			return {
 				"ground_tile": tile_grass,
 				"water_tile":   tile_water,
-				"path_tile":    tile_chemin_terre,
+				# Chemin pierre — 8 variantes (bloc 2×4) tirées au hasard par
+				# case pour casser la répétition d'une tuile unique.
+				"path_tiles":   _stone_path_variants(),
 				"tree_origins": [tile_tree_origin],
 				"tree_density":    0.20,
 				"water_threshold": 0.60,
 				"min_water_pools": 1,
 				"tg_threshold":    0.70,
 				"flower_density":  0.02,
+				"path_width":      3,
 				"gating":          GatingType.FORCE,
 			}
 	return {}
+
+
+func _stone_path_variants() -> Array[Vector2i]:
+	var result: Array[Vector2i] = []
+	for dy in 4:
+		for dx in 2:
+			result.append(tile_chemin_pierre_orig + Vector2i(dx, dy))
+	return result
 
 
 ## ─────────────────────────────────────────────────────────────────
@@ -542,10 +583,19 @@ func _apply_to_tilemap() -> void:
 				Terrain.WATER:
 					_water.set_cell(cell, source_id, _water_tile)
 				Terrain.PATH:
-					_ground.set_cell(cell, source_id, _path_tile)
+					_ground.set_cell(cell, source_id, _path_tiles[_rng.randi() % _path_tiles.size()])
 				_:
 					if _ground.get_cell_source_id(cell) == -1:
 						_ground.set_cell(cell, source_id, _ground_tile)
+
+	# Marécage : jointures centre+bords entre boue/eau sale et le reste du
+	# terrain — sinon la tuile centre plaquée partout fait une coupure nette
+	# moche aux bords de l'eau et des chemins.
+	if theme == MapTheme.SWAMP:
+		_apply_blob(_ground, tile_sol_boueux - Vector2i(1, 1),
+			func(t: int) -> bool: return t != Terrain.WATER and t != Terrain.PATH)
+		_apply_blob(_water, tile_eau_sale - Vector2i(1, 1),
+			func(t: int) -> bool: return t == Terrain.WATER)
 
 
 func _can_stamp_tree(c: int, r: int) -> bool:
@@ -655,6 +705,7 @@ func _decor_forest() -> void:
 		if champi >= 12 and stump >= 14: break
 		if _objects.get_cell_source_id(cell)    != -1: continue
 		if _tall_grass.get_cell_source_id(cell) != -1: continue
+		if _grid[cell.y][cell.x] == Terrain.PATH:      continue
 		if _is_near_portal(cell.x, cell.y, 4):         continue
 		var roll := _rng.randf()
 		if champi < 12 and roll < 0.05 and _champi_fits(cell):
@@ -679,52 +730,68 @@ func _decor_swamp() -> void:
 
 
 func _decor_rocky() -> void:
-	var cells := _get_walkable_cells(6)
+	var cells := _get_walkable_cells(7)
 	cells.shuffle()
 
-	# 1) Falaises 3×3 (formations rocheuses solides). La première reçoit une
-	#    entrée de grotte creusée dans sa base.
+	# 1) Falaises — formations rocheuses allongées (taille variable, 9-slice
+	#    centre+bords). La première reçoit une entrée de grotte dans sa base.
 	var cliffs := 0
 	var cave_done := false
 	for cell: Vector2i in cells:
-		if cliffs >= 4: break
-		if _is_near_portal(cell.x, cell.y, 7):     continue
-		if not _can_place_block(cell, 3, 3):       continue
-		_place_cliff(cell, not cave_done)
+		if cliffs >= 3: break
+		if _is_near_portal(cell.x, cell.y, 8): continue
+		var w: int = _rng.randi_range(3, 7)
+		var h: int = _rng.randi_range(3, 5)
+		if not _can_place_block(cell, w, h): continue
+		_place_cliff_rect(cell, w, h, not cave_done)
 		cave_done = true
 		cliffs   += 1
 
-	# 2) Gros cailloux 2×2 + petits cailloux épars
+	# 2) Gros cailloux 2×2 (parfois groupés en amas) + petits cailloux épars
 	var small := 0
 	var big   := 0
 	for cell: Vector2i in cells:
-		if small >= 30 and big >= 5: break
+		if small >= 26 and big >= 9: break
 		if _objects.get_cell_source_id(cell)    != -1: continue
 		if _tall_grass.get_cell_source_id(cell) != -1: continue
+		if _grid[cell.y][cell.x] == Terrain.PATH:      continue
 		if _is_near_portal(cell.x, cell.y, 4):         continue
 		var roll := _rng.randf()
-		if big < 5 and roll < 0.03 and _can_place_block(cell, 2, 2):
+		if big < 9 and roll < 0.05 and _can_place_block(cell, 2, 2):
 			for dy in 2:
 				for dx in 2:
 					_objects.set_cell(cell + Vector2i(dx, dy), source_id,
 						tile_gros_caillou_orig + Vector2i(dx, dy))
 			big += 1
-		elif small < 30 and roll < 0.14:
+			# Amas : tente un second gros caillou collé pour un bloc plus imposant
+			var neighbor := cell + Vector2i(2, 0)
+			if big < 9 and _rng.randf() < 0.4 and _can_place_block(neighbor, 2, 2):
+				for dy in 2:
+					for dx in 2:
+						_objects.set_cell(neighbor + Vector2i(dx, dy), source_id,
+							tile_gros_caillou_orig + Vector2i(dx, dy))
+				big += 1
+		elif small < 26 and roll < 0.14:
 			_objects.set_cell(cell, source_id,
 				tiles_cailloux[_rng.randi() % tiles_cailloux.size()])
 			small += 1
 
 
-## Pose une falaise 3×3 pleine. Si `with_cave`, creuse une entrée de grotte
-## (1×2) dans la colonne centrale de la base → seule case traversable du bloc.
-func _place_cliff(top_left: Vector2i, with_cave: bool) -> void:
-	for dy in 3:
-		for dx in 3:
+## Pose une falaise rectangulaire w×h via 9-slice (coins/bords/centre tirés
+## du bloc 3×3 d'atlas `tile_cliff_origin`). Permet des formations allongées
+## bien plus grandes qu'un simple 3×3. Si `with_cave`, creuse une entrée de
+## grotte (1×2) dans la colonne centrale de la base.
+func _place_cliff_rect(top_left: Vector2i, w: int, h: int, with_cave: bool) -> void:
+	for dy in h:
+		var row_class: int = 0 if dy == 0 else (2 if dy == h - 1 else 1)
+		for dx in w:
+			var col_class: int = 0 if dx == 0 else (2 if dx == w - 1 else 1)
 			_objects.set_cell(top_left + Vector2i(dx, dy), source_id,
-				tile_cliff_origin + Vector2i(dx, dy))
+				tile_cliff_origin + Vector2i(col_class, row_class))
 	if with_cave:
-		_objects.set_cell(top_left + Vector2i(1, 1), source_id, tile_grotte_haut)
-		_objects.set_cell(top_left + Vector2i(1, 2), source_id, tile_grotte_bas)
+		var mid := w / 2
+		_objects.set_cell(top_left + Vector2i(mid, h - 2), source_id, tile_grotte_haut)
+		_objects.set_cell(top_left + Vector2i(mid, h - 1), source_id, tile_grotte_bas)
 
 
 func _champi_fits(cell: Vector2i) -> bool:
@@ -733,6 +800,7 @@ func _champi_fits(cell: Vector2i) -> bool:
 		if c.y < 4: return false
 		if _objects.get_cell_source_id(c) != -1: return false
 		if _water.get_cell_source_id(c)   != -1: return false
+		if _grid[c.y][c.x] == Terrain.PATH: return false
 	return true
 
 
@@ -761,6 +829,8 @@ func _gen_logs() -> void:
 		if _objects.get_cell_source_id(pos)   != -1: continue
 		if _objects.get_cell_source_id(right) != -1: continue
 		if _water.get_cell_source_id(pos)     != -1: continue
+		if _grid[pos.y][pos.x] == Terrain.PATH:        continue
+		if right.x < map_size.x and _grid[right.y][right.x] == Terrain.PATH: continue
 		_objects.set_cell(pos,   source_id, tile_rondin_g)
 		_objects.set_cell(right, source_id, tile_rondin_d)
 		placed += 1
@@ -788,98 +858,126 @@ func _place_chest_free() -> void:
 	push_warning("MapGenerator: aucun emplacement pour coffre libre.")
 
 
+## Île marchable de 6 cases (bloc 3×2) entourée d'une douve de 2 cases —
+## assez grande pour se déplacer une fois arrivé à la nage, au lieu d'un
+## coffre planté sur une tuile unique entourée d'eau de tous côtés.
+const _ISLAND_CELLS: Array[Vector2i] = [
+	Vector2i(-1, 0), Vector2i(0, 0), Vector2i(1, 0),
+	Vector2i(-1, 1), Vector2i(0, 1), Vector2i(1, 1),
+]
+
+
 func _place_chest_surf() -> void:
-	var W := map_size.x
-	var H := map_size.y
-	var water_cells: Array[Vector2i] = []
-	for r in range(6, H - 6):
-		for c in range(6, W - 6):
-			water_cells.append(Vector2i(c, r))
-	water_cells.shuffle()
-	for cell: Vector2i in water_cells:
-		if _water.get_cell_source_id(cell) == -1: continue
-		var all_water := true
-		for d: Vector2i in [Vector2i(1,0), Vector2i(-1,0), Vector2i(0,1), Vector2i(0,-1)]:
-			if _water.get_cell_source_id(cell + d) == -1:
-				all_water = false
-				break
-		if all_water:
-			_water.erase_cell(cell)
-			_ground.set_cell(cell, source_id, _ground_tile)
-			_objects.set_cell(cell, source_id, tile_chest_closed)
-			return
 	_create_water_island_chest()
 
 
 func _create_water_island_chest() -> void:
-	var candidates := _get_walkable_cells(12)
+	var candidates := _get_walkable_cells(14)
 	candidates.shuffle()
 	for center: Vector2i in candidates:
-		if not _can_place_ring(center, 2): continue
-		for dy in range(-2, 3):
-			for dx in range(-2, 3):
-				if dx == 0 and dy == 0: continue
-				var cell := center + Vector2i(dx, dy)
-				_water.set_cell(cell, source_id, _water_tile)
-				_ground.erase_cell(cell)
-				_objects.erase_cell(cell)
-				_tall_grass.erase_cell(cell)
-				_grid[cell.y][cell.x] = Terrain.WATER
+		if _is_near_portal(center.x, center.y, 10): continue
+		if not _can_place_island(center): continue
+		_carve_water_island(center)
 		_objects.set_cell(center, source_id, tile_chest_closed)
 		return
 	_place_chest_free()
 
 
+func _can_place_island(center: Vector2i) -> bool:
+	var W := map_size.x
+	var H := map_size.y
+	for dy in range(-2, 4):
+		for dx in range(-3, 4):
+			var c := center + Vector2i(dx, dy)
+			if c.x < 4 or c.x >= W - 4 or c.y < 4 or c.y >= H - 4: return false
+	return true
+
+
+func _carve_water_island(center: Vector2i) -> void:
+	# 1) Douve : inonde toute la zone (île + marge)
+	for dy in range(-2, 4):
+		for dx in range(-3, 4):
+			var cell := center + Vector2i(dx, dy)
+			_water.set_cell(cell, source_id, _water_tile)
+			_ground.erase_cell(cell)
+			_objects.erase_cell(cell)
+			_tall_grass.erase_cell(cell)
+			_grid[cell.y][cell.x] = Terrain.WATER
+	# 2) Recreuse l'île marchable (6 cases) par-dessus la douve
+	for off: Vector2i in _ISLAND_CELLS:
+		var cell := center + off
+		_water.erase_cell(cell)
+		_ground.set_cell(cell, source_id, _ground_tile)
+		_grid[cell.y][cell.x] = Terrain.GRASS
+
+
+## Arbre coupable 1×3 (haut → tronc) + alcôve scellée par des rochers sur
+## les côtés et le fond — sinon le coffre est contournable sans jamais
+## couper l'arbre. La seule issue est la colonne d'arbre.
+## Variante SUD  (col 7) : coffre au nord, arbre au sud,  approche depuis le bas.
+## Variante NORD (col 8) : coffre au sud,  arbre au nord, approche depuis le haut.
 func _place_chest_coupe() -> void:
-	# Arbre coupable 1×3 (haut → tronc) entre le coffre et le joueur.
-	# Variante SUD  (col 7) : coffre au nord,  arbre au sud,  approche depuis le bas.
-	# Variante NORD (col 8) : coffre au sud,   arbre au nord, approche depuis le haut.
-	var candidates := _get_walkable_cells(12)
+	var candidates := _get_walkable_cells(14)
 	candidates.shuffle()
 	for chest: Vector2i in candidates:
 		if _is_near_portal(chest.x, chest.y, 10): continue
-		# ── Approche par le SUD (joueur monte vers le nord)
-		#    haut(7,12) à chest+1, milieu(7,13) à chest+2, tronc(7,14) à chest+3, accès à chest+4
-		var t0s := chest + Vector2i(0, 1)  # sommet arbre (tile row 12)
-		var t1s := chest + Vector2i(0, 2)  # milieu       (tile row 13)
-		var t2s := chest + Vector2i(0, 3)  # tronc        (tile row 14)
-		var aps := chest + Vector2i(0, 4)  # case d'approche
-		if _can_place_cut_tree([t0s, t1s, t2s], aps):
-			_objects.set_cell(chest, source_id, tile_chest_closed)
-			_objects.set_cell(t0s, source_id, tile_coupe_gauche + Vector2i(0, 0))
-			_objects.set_cell(t1s, source_id, tile_coupe_gauche + Vector2i(0, 1))
-			_objects.set_cell(t2s, source_id, tile_coupe_gauche + Vector2i(0, 2))
+		var tree_s: Array[Vector2i] = [chest + Vector2i(0, 1), chest + Vector2i(0, 2), chest + Vector2i(0, 3)]
+		if _try_place_coupe_pocket(chest, tree_s, chest + Vector2i(0, 4), chest + Vector2i(0, -1), tile_coupe_gauche):
 			return
-		# ── Approche par le NORD (joueur descend vers le sud)
-		#    tronc(8,14) à chest-1, milieu(8,13) à chest-2, haut(8,12) à chest-3, accès à chest-4
-		var t0n := chest + Vector2i(0, -3)  # sommet arbre
-		var t1n := chest + Vector2i(0, -2)  # milieu
-		var t2n := chest + Vector2i(0, -1)  # tronc
-		var apn := chest + Vector2i(0, -4)  # case d'approche
-		if _can_place_cut_tree([t0n, t1n, t2n], apn):
-			_objects.set_cell(chest, source_id, tile_chest_closed)
-			_objects.set_cell(t0n, source_id, tile_coupe_droit + Vector2i(0, 0))
-			_objects.set_cell(t1n, source_id, tile_coupe_droit + Vector2i(0, 1))
-			_objects.set_cell(t2n, source_id, tile_coupe_droit + Vector2i(0, 2))
+		var tree_n: Array[Vector2i] = [chest + Vector2i(0, -3), chest + Vector2i(0, -2), chest + Vector2i(0, -1)]
+		if _try_place_coupe_pocket(chest, tree_n, chest + Vector2i(0, -4), chest + Vector2i(0, 1), tile_coupe_droit):
 			return
 	_place_chest_free()
 
 
-func _can_place_cut_tree(tree_cells: Array, approach: Vector2i) -> bool:
+## Tente de sceller le coffre dans une alcôve : rochers sur les flancs et
+## le fond, colonne d'arbre coupable (3 cases) comme seule issue vers
+## `approach`. `tree_origin` choisit la variante d'art (sud/nord).
+func _try_place_coupe_pocket(chest: Vector2i, tree_cells: Array[Vector2i],
+		approach: Vector2i, back_wall: Vector2i, tree_origin: Vector2i) -> bool:
+	var perp := Vector2i(1, 0)
+	var flank_rows: Array[Vector2i] = [chest, back_wall]
+	flank_rows.append_array(tree_cells)
+	var wall_cells: Array[Vector2i] = []
+	for row: Vector2i in flank_rows:
+		wall_cells.append(row + perp)
+		wall_cells.append(row - perp)
+
+	if not _can_place_coupe_pocket(approach, tree_cells, wall_cells, back_wall):
+		return false
+
+	for cell: Vector2i in wall_cells:
+		_clear_cell(cell)
+		_objects.set_cell(cell, source_id, tile_rocher)
+	_clear_cell(back_wall)
+	_objects.set_cell(back_wall, source_id, tile_rocher)
+	for i in 3:
+		_clear_cell(tree_cells[i])
+		_objects.set_cell(tree_cells[i], source_id, tree_origin + Vector2i(0, i))
+	_clear_cell(chest)
+	_objects.set_cell(chest, source_id, tile_chest_closed)
+	_coupe_trees.append({"cells": tree_cells.duplicate(), "approach": approach})
+	return true
+
+
+func _can_place_coupe_pocket(approach: Vector2i, tree_cells: Array[Vector2i],
+		wall_cells: Array[Vector2i], back_wall: Vector2i) -> bool:
 	var W := map_size.x
 	var H := map_size.y
-	# L'approche doit être une case sol marchable libre
 	if approach.x < 5 or approach.x >= W - 5 or approach.y < 5 or approach.y >= H - 5:
 		return false
 	if _water.get_cell_source_id(approach)   != -1: return false
 	if _objects.get_cell_source_id(approach) != -1: return false
 	if _ground.get_cell_source_id(approach)  == -1: return false
-	# Les 3 cases de l'arbre doivent être dans les limites et libres
 	for cell: Vector2i in tree_cells:
-		if cell.x < 5 or cell.x >= W - 5 or cell.y < 5 or cell.y >= H - 5:
-			return false
-		if _water.get_cell_source_id(cell)   != -1: return false
-		if _objects.get_cell_source_id(cell) != -1: return false
+		if cell.x < 5 or cell.x >= W - 5 or cell.y < 5 or cell.y >= H - 5: return false
+		if _water.get_cell_source_id(cell) != -1: return false
+	if back_wall.x < 5 or back_wall.x >= W - 5 or back_wall.y < 5 or back_wall.y >= H - 5:
+		return false
+	if _water.get_cell_source_id(back_wall) != -1: return false
+	for cell: Vector2i in wall_cells:
+		if cell.x < 5 or cell.x >= W - 5 or cell.y < 5 or cell.y >= H - 5: return false
+		if _water.get_cell_source_id(cell) != -1: return false
 	return true
 
 
@@ -890,7 +988,9 @@ func _place_chest_force() -> void:
 		if _is_near_portal(center.x, center.y, 8): continue
 		if not _can_place_ring(center, 1): continue
 		for d: Vector2i in [Vector2i(1,0), Vector2i(-1,0), Vector2i(0,1), Vector2i(0,-1)]:
-			_objects.set_cell(center + d, source_id, tile_boulder)
+			var bcell := center + d
+			_objects.set_cell(bcell, source_id, tile_boulder)
+			_force_boulders[bcell] = center + d * 2
 		_objects.set_cell(center, source_id, tile_chest_closed)
 		return
 	_place_chest_free()
@@ -966,11 +1066,36 @@ func is_valid_spawn_cell(cell: Vector2i) -> bool:
 	if _water.get_cell_source_id(cell)   != -1: return false
 	if _objects.get_cell_source_id(cell) != -1: return false
 	if _ground.get_cell_source_id(cell)  == -1: return false
+	if not _reachable.get(cell, false):  return false
 	for dy in range(-1, 2):
 		for dx in range(-1, 2):
 			if _objects.get_cell_source_id(cell + Vector2i(dx, dy)) != -1:
 				return false
 	return true
+
+
+## BFS 4-directions depuis l'entrée, bloqué uniquement par l'eau (seul
+## terrain réellement infranchissable sans CS — les arbres ne bloquent
+## que leur case de tronc, le reste de leur emprise est traversable).
+## Toute case non atteinte est une île CS Surf ou une poche isolée :
+## aucun ennemi ne doit y spawn (impossible à vaincre sans la CS).
+func _compute_reachable() -> void:
+	_reachable.clear()
+	var W := map_size.x
+	var H := map_size.y
+	if entry_tile.x < 0 or entry_tile.x >= W or entry_tile.y < 0 or entry_tile.y >= H:
+		return
+	var queue: Array[Vector2i] = [entry_tile]
+	_reachable[entry_tile] = true
+	while not queue.is_empty():
+		var cur: Vector2i = queue.pop_back()
+		for d: Vector2i in [Vector2i(1,0), Vector2i(-1,0), Vector2i(0,1), Vector2i(0,-1)]:
+			var n := cur + d
+			if n.x < 0 or n.x >= W or n.y < 0 or n.y >= H: continue
+			if n in _reachable: continue
+			if _grid[n.y][n.x] == Terrain.WATER: continue
+			_reachable[n] = true
+			queue.append(n)
 
 
 # Override de MapBase.is_valid_spawn — prend en compte la taille variable.
@@ -999,6 +1124,49 @@ func get_cave_cells() -> Array[Vector2i]:
 		if _objects.get_cell_atlas_coords(cell) == tile_grotte_bas:
 			result.append(cell)
 	return result
+
+
+## ─────────────────────────────────────────────────────────────────
+## API PUBLIQUE — OBSTACLES CS (interaction en run, cf. CombatArena)
+## ─────────────────────────────────────────────────────────────────
+
+## Case rocher (monde) → case d'approche (là où le joueur doit se tenir
+## pour déclencher l'interaction CS Force).
+func get_force_boulder_approaches() -> Dictionary:
+	return _force_boulders
+
+
+## Liste des arbres coupables restants : [{"cells": Array[Vector2i], "approach": Vector2i}, ...]
+func get_coupe_tree_approaches() -> Array:
+	return _coupe_trees.duplicate()
+
+
+## Casse le rocher CS Force à `cell` — efface la tuile et sa collision.
+func break_rock_at(cell: Vector2i) -> void:
+	if not _force_boulders.has(cell):
+		return
+	_objects.erase_cell(cell)
+	_clear_cell_collision(cell)
+	_force_boulders.erase(cell)
+
+
+## Coupe l'arbre CS Coupe dont les 3 cases sont `cells` — efface les tuiles
+## et leur collision, dégageant l'accès au coffre.
+func cut_tree_group(cells: Array) -> void:
+	for c: Vector2i in cells:
+		_objects.erase_cell(c)
+		_clear_cell_collision(c)
+	_coupe_trees = _coupe_trees.filter(func(entry: Dictionary) -> bool:
+		return entry["cells"] != cells
+	)
+
+
+func _clear_cell_collision(cell: Vector2i) -> void:
+	if _cell_collision.has(cell):
+		var cs: CollisionShape2D = _cell_collision[cell]
+		if is_instance_valid(cs):
+			cs.queue_free()
+		_cell_collision.erase(cell)
 
 
 func get_entry_world_pos() -> Vector2:
@@ -1048,6 +1216,8 @@ func _build_map_collision() -> void:
 	_tall_grass.collision_enabled = false
 	_objects.collision_enabled    = false
 
+	_cell_collision.clear()
+
 	var body := StaticBody2D.new()
 	body.collision_layer = 1
 	body.collision_mask  = 0
@@ -1067,6 +1237,14 @@ func _build_map_collision() -> void:
 		cs.position = _objects.map_to_local(cell)
 		cs.shape    = sh
 		body.add_child(cs)
+		_cell_collision[cell] = cs
+
+	# L'eau est sur sa propre couche physique : seule la CS Surf permet de
+	# l'ignorer (cf. CombatArena), sans affecter les autres obstacles.
+	var water_body := StaticBody2D.new()
+	water_body.collision_layer = WATER_LAYER
+	water_body.collision_mask  = 0
+	add_child(water_body)
 
 	for cell: Vector2i in _water.get_used_cells():
 		var cs := CollisionShape2D.new()
@@ -1074,7 +1252,7 @@ func _build_map_collision() -> void:
 		sh.size     = Vector2(10, 10)
 		cs.position = _water.map_to_local(cell)
 		cs.shape    = sh
-		body.add_child(cs)
+		water_body.add_child(cs)
 
 	_fill_border_walls(body)
 
@@ -1113,6 +1291,37 @@ func _setup_flower_shader() -> void:
 ## ─────────────────────────────────────────────────────────────────
 ## UTILITAIRES INTERNES
 ## ─────────────────────────────────────────────────────────────────
+
+## Système de blob 9-slice générique (coins/bords/centre — bloc 3×3 d'atlas
+## à `origin`). Repeint toutes les cases de `_grid` où `is_member(terrain)`
+## est vrai ET qui ont au moins un voisin cardinal hors-groupe, avec la
+## tuile de bordure adaptée. Les cases intérieures (entourées du même
+## groupe) gardent la tuile centre déjà posée par l'appelant.
+func _apply_blob(layer: TileMapLayer, origin: Vector2i, is_member: Callable) -> void:
+	var W := map_size.x
+	var H := map_size.y
+	for r in H:
+		for c in W:
+			if not is_member.call(_grid[r][c]):
+				continue
+			var bn: bool = r == 0     or not is_member.call(_grid[r - 1][c])
+			var bs: bool = r == H - 1 or not is_member.call(_grid[r + 1][c])
+			var bw: bool = c == 0     or not is_member.call(_grid[r][c - 1])
+			var be: bool = c == W - 1 or not is_member.call(_grid[r][c + 1])
+			if not (bn or bs or bw or be):
+				continue
+			var row_class := _blob_axis_class(bn, bs)
+			var col_class := _blob_axis_class(bw, be)
+			layer.set_cell(Vector2i(c, r), source_id, origin + Vector2i(col_class, row_class))
+
+
+## 0 si le bord négatif (haut/gauche) est bloqué, 2 si c'est le positif
+## (bas/droite), 1 sinon (intérieur sur cet axe).
+func _blob_axis_class(blocked_neg: bool, blocked_pos: bool) -> int:
+	if blocked_neg: return 0
+	if blocked_pos: return 2
+	return 1
+
 
 func _get_walkable_cells(margin: int) -> Array[Vector2i]:
 	var W := map_size.x
@@ -1162,11 +1371,14 @@ func _col_size(atlas: Vector2i) -> Vector2:
 	# Arbres coupables (CS Coupe) — tous bloquants jusqu'à la coupe
 	if (atlas.x == 7 or atlas.x == 8) and atlas.y >= 12 and atlas.y <= 14:
 		return Vector2(12, 14)
+	# Champignon — seule la base bloque (cf. _is_theme_decor : sommet/milieu traversables)
+	if _champi_row(atlas) == 2:
+		return Vector2(10, 10)
 	# Gros caillou 2×2 (rocailleux) — chaque quart bloque
 	if _in_block(atlas, tile_gros_caillou_orig, 2, 2):
 		return Vector2(14, 14)
-	# Falaise 3×3 — bloc rocheux plein
-	if _in_block(atlas, tile_cliff_origin, 3, 3):
+	# Falaise — bloc rocheux plein (formations agrandies, voir _col_size_cliff)
+	if _is_cliff_tile(atlas):
 		return Vector2(16, 16)
 	return Vector2(10, 10)
 
@@ -1184,11 +1396,13 @@ func _is_decor_tile(a: Vector2i) -> bool:
 	return false
 
 
-## Décors thématiques traversables (champignons, souches, cailloux, nénuphars).
+## Décors thématiques traversables (souches, cailloux, nénuphars).
+## Les champignons NE sont PAS traversables sur leur base — voir _champi_row.
 func _is_theme_decor(a: Vector2i) -> bool:
-	# Champignon 3×1 (col fixe, 3 lignes)
-	if a.x == tile_champi_origin.x \
-			and a.y >= tile_champi_origin.y and a.y <= tile_champi_origin.y + 2:
+	# Champignon 3×1 : sommet + milieu traversables (comme la canopée d'un
+	# arbre), la base bloque — gérée séparément via _col_size / _champi_row.
+	var champi_row := _champi_row(a)
+	if champi_row == 0 or champi_row == 1:
 		return true
 	if a == tile_souche_sombre or a == tile_souche_claire: return true
 	if a == tile_nenuphar or a == tile_petit_nenuphar:     return true
@@ -1200,7 +1414,21 @@ func _is_theme_decor(a: Vector2i) -> bool:
 	return false
 
 
+## Ligne du champignon 3×1 si `a` en fait partie : 0=sommet, 1=milieu, 2=base. Sinon -1.
+func _champi_row(a: Vector2i) -> int:
+	if a.x == tile_champi_origin.x and a.y >= tile_champi_origin.y and a.y <= tile_champi_origin.y + 2:
+		return a.y - tile_champi_origin.y
+	return -1
+
+
 ## Vrai si `a` est dans le bloc w×h dont le coin haut-gauche est `origin`.
 func _in_block(a: Vector2i, origin: Vector2i, w: int, h: int) -> bool:
 	return a.x >= origin.x and a.x < origin.x + w \
 		and a.y >= origin.y and a.y < origin.y + h
+
+
+## Vrai si `a` est l'une des 9 variantes (coins/bords/centre) de la falaise.
+## Les formations falaise peuvent être agrandies (_place_cliff_rect) mais
+## réutilisent toujours ces 9 tuiles d'atlas.
+func _is_cliff_tile(a: Vector2i) -> bool:
+	return _in_block(a, tile_cliff_origin, 3, 3)

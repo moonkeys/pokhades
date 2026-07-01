@@ -3,6 +3,8 @@ extends CanvasLayer
 
 signal starter_chosen(pokemon_id: int)
 
+const BG_PATH := "res://assets/ui/starter_bg.jpeg"
+
 # ── Casting des starters ──────────────────────────────────────────────
 const STARTERS: Array[Dictionary] = [
 	{"id": 25,  "name_fr": "Pikachu",      "role": "L'Icône absolue",
@@ -25,20 +27,31 @@ const STARTERS: Array[Dictionary] = [
 	 "desc": "Ressent la douleur des Pokémon emprisonnés. Se bat par empathie."},
 ]
 
-# ── Palette rébellion ─────────────────────────────────────────────────
-const C_BG       := Color(0.17, 0.15, 0.11)
-const C_ACCENT   := Color(0.76, 0.53, 0.17)
-const C_GOLD     := Color(0.76, 0.53, 0.17)
-const C_TEXT     := Color(0.18, 0.13, 0.06)
-const C_DIM      := Color(0.48, 0.38, 0.22)
-const C_CARD_NRM := Color(0.88, 0.82, 0.67)
-const C_CARD_SEL := Color(0.96, 0.90, 0.75)
-const C_BDR_NRM  := Color(0.60, 0.50, 0.33)
-const C_BDR_SEL  := Color(0.76, 0.53, 0.17)
-const C_DETAIL   := Color(0.85, 0.78, 0.62)
-const C_STAT_BG  := Color(0.80, 0.72, 0.55)
-const C_XP       := Color(0.25, 0.55, 0.95)
-const C_HP_COL   := Color(0.22, 0.68, 0.24)
+# ── Palette rébellion (bois / parchemin / or) ─────────────────────────
+const C_BG        := Color(0.20, 0.16, 0.12)        # fallback fond
+const C_WOOD_DK   := Color(0.18, 0.11, 0.05)        # bois très sombre
+const C_WOOD      := Color(0.32, 0.20, 0.09)        # bois moyen
+const C_WOOD_LT   := Color(0.48, 0.31, 0.14)        # bois clair (liseré)
+const C_GOLD      := Color(0.90, 0.64, 0.16)        # or vif
+const C_GOLD_LT   := Color(0.99, 0.92, 0.72)        # or clair / texte titre
+const C_PARCH     := Color(0.87, 0.78, 0.60)        # parchemin
+const C_PARCH_DK  := Color(0.78, 0.68, 0.49)        # parchemin foncé
+const C_TEXT      := Color(0.16, 0.10, 0.03)        # texte sombre
+const C_DIM       := Color(0.42, 0.32, 0.18)        # texte secondaire
+const C_CARD      := Color(0.30, 0.19, 0.09, 0.94)  # caisse normale
+const C_CARD_SEL  := Color(0.42, 0.27, 0.11, 0.98)  # caisse sélectionnée
+const C_BAR_BG    := Color(0.30, 0.22, 0.11)        # fond barre stat
+
+# Couleurs par stat (icône + barre)
+const STAT_COLORS: Array[Color] = [
+	Color(0.85, 0.24, 0.18),  # PV       rouge
+	Color(0.88, 0.52, 0.14),  # Attaque  orange
+	Color(0.80, 0.62, 0.18),  # Défense  or
+	Color(0.62, 0.36, 0.80),  # Atq. Sp. violet
+	Color(0.26, 0.56, 0.86),  # Déf. Sp. bleu
+	Color(0.20, 0.74, 0.78),  # Vitesse  cyan
+]
+const STAT_NAMES: Array[String] = ["PV base", "Attaque", "Défense", "Atq. Sp.", "Déf. Sp.", "Vitesse"]
 
 # ── État ─────────────────────────────────────────────────────────────
 var _selected_id:  int         = 25
@@ -47,99 +60,98 @@ var _portraits:    Dictionary  = {}   # int -> Texture2D
 var _card_panels:  Dictionary  = {}   # int -> Panel
 var _card_tex:     Dictionary  = {}   # int -> TextureRect
 var _card_ph:      Dictionary  = {}   # int -> ColorRect
-var _detail_root:  Control     = null
-var _btn_start:    Button      = null
-var _large_tex:    TextureRect = null
+var _card_icons:   Dictionary  = {}   # int -> bool (icônes déjà posées)
+
+var _detail_root:   Control          = null
+var _center_sprite: AnimatedSprite2D = null
+var _btn_start:     Button           = null
 
 
 func _ready() -> void:
 	_build_ui()
 	_fetch_all()
+	_load_center_sprite(_selected_id)
 
 
-# ── Construction de l'UI ──────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════
+# CONSTRUCTION UI
+# ══════════════════════════════════════════════════════════════════════
 
 func _build_ui() -> void:
-	var bg := ColorRect.new()
-	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	bg.color = C_BG
-	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE   # fond décoratif — ne bloque pas les clics
-	add_child(bg)
-
-	# Titre
-	var title_bar := Panel.new()
-	title_bar.position = Vector2(0, 0)
-	title_bar.size     = Vector2(1280, 84)
-	title_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_panel_style(title_bar, Color(0.14, 0.11, 0.07), C_ACCENT, 0)
-	add_child(title_bar)
-	var t1: Label = _lbl("★  LA RÉBELLION  ★", 0, 4, 1280, 44, 34, Color(0.94, 0.88, 0.72), true)
-	title_bar.add_child(t1)
-	var t2: Label = _lbl(
-		"Choisissez le Pokémon qui mènera la révolte — celui qui refusera de vivre enchaîné.",
-		0, 52, 1280, 24, 14, C_DIM, true)
-	title_bar.add_child(t2)
-
-	# Panneau gauche — grille 3×3
-	var left := Panel.new()
-	left.position = Vector2(8, 92)
-	left.size     = Vector2(454, 576)
-	left.mouse_filter = Control.MOUSE_FILTER_PASS   # laisse passer vers les cartes enfants
-	_panel_style(left, Color(0.84, 0.77, 0.61), C_BDR_NRM, 8)
-	add_child(left)
-	for idx in STARTERS.size():
-		_build_card(left, idx)
-
-	# Panneau droit — détail
-	var right := Panel.new()
-	right.position = Vector2(470, 92)
-	right.size     = Vector2(802, 576)
-	right.mouse_filter = Control.MOUSE_FILTER_PASS
-	_panel_style(right, C_DETAIL, C_BDR_NRM, 8)
-	add_child(right)
-	_detail_root = Control.new()
-	_detail_root.position = Vector2(0, 0)
-	_detail_root.size     = Vector2(802, 576)
-	_detail_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	right.add_child(_detail_root)
-
-	# Bouton Commencer
-	_btn_start = Button.new()
-	_btn_start.position = Vector2(880, 670)
-	_btn_start.size     = Vector2(392, 48)
-	_btn_start.text     = "COMMENCER LA RÉBELLION  ▶"
-	_btn_start.disabled = false   # toujours actif — pas besoin des données API pour démarrer
-	var sn := StyleBoxFlat.new()
-	sn.bg_color = C_ACCENT
-	sn.set_corner_radius_all(8)
-	sn.set_border_width_all(0)
-	var sh := StyleBoxFlat.new()
-	sh.bg_color = C_ACCENT.lightened(0.15)
-	sh.set_corner_radius_all(8)
-	sh.set_border_width_all(0)
-	var sd := StyleBoxFlat.new()
-	sd.bg_color = Color(0.60, 0.54, 0.42)
-	sd.set_corner_radius_all(8)
-	_btn_start.add_theme_stylebox_override("normal",   sn)
-	_btn_start.add_theme_stylebox_override("hover",    sh)
-	_btn_start.add_theme_stylebox_override("disabled", sd)
-	_btn_start.add_theme_color_override("font_color", Color(0.96, 0.90, 0.75))
-	_btn_start.add_theme_color_override("font_disabled_color", Color(0.70, 0.64, 0.52))
-	_btn_start.add_theme_font_size_override("font_size", 18)
-	_btn_start.pressed.connect(func() -> void: starter_chosen.emit(_selected_id))
-	add_child(_btn_start)
-
+	_build_background()
+	_build_title()
+	_build_left_board()
+	_build_center_showcase()
+	_build_right_scroll()
+	_build_start_button()
 	_refresh_detail()
 
 
-func _build_card(parent: Panel, idx: int) -> void:
-	var col: int  = idx % 3
-	var row: int  = idx / 3
-	var card_w: int = 138
-	var card_h: int = 178
-	var gap:    int = 6
-	var px: int = 8 + col * (card_w + gap)
-	var py: int = 8 + row * (card_h + gap)
+func _build_background() -> void:
+	if ResourceLoader.exists(BG_PATH):
+		var tr := TextureRect.new()
+		tr.texture = load(BG_PATH)
+		tr.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		tr.stretch_mode = TextureRect.STRETCH_SCALE
+		tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(tr)
+	else:
+		var flat := ColorRect.new()
+		flat.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		flat.color = C_BG
+		flat.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(flat)
+
+	# Vignette sombre haut/bas pour lisibilité titre et bouton
+	var top_grad := ColorRect.new()
+	top_grad.position = Vector2(0, 0)
+	top_grad.size     = Vector2(1280, 96)
+	top_grad.color    = Color(0, 0, 0, 0.32)
+	top_grad.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(top_grad)
+
+
+func _build_title() -> void:
+	# Chaînes décoratives
+	var chains := _TitleChains.new()
+	chains.position = Vector2(0, 0)
+	chains.size     = Vector2(1280, 90)
+	chains.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(chains)
+
+	# Plaque bois
+	var banner := _wood_panel(Vector2(388, 12), Vector2(504, 66), C_WOOD, 10)
+	banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(banner)
+	# Liseré or intérieur
+	var inner := _wood_panel(Vector2(394, 18), Vector2(492, 54), Color(0.24, 0.15, 0.06), 8)
+	inner.add_theme_stylebox_override("panel", _liseré_style(Color(0.24, 0.15, 0.06), C_GOLD, 8))
+	inner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(inner)
+
+	add_child(_lbl("★  LA RÉBELLION  ★", 388, 22, 504, 32, 26, C_GOLD_LT, true, true))
+	add_child(_lbl("Choisissez le Pokémon qui mènera la révolte — celui qui refusera de vivre enchaîné.",
+		340, 82, 600, 20, 12, Color(0.92, 0.86, 0.74), true))
+
+
+func _build_left_board() -> void:
+	# Board sombre derrière la grille
+	var board := _wood_panel(Vector2(16, 110), Vector2(470, 598), C_WOOD_DK, 12)
+	board.mouse_filter = Control.MOUSE_FILTER_PASS
+	add_child(board)
+
+	for idx in STARTERS.size():
+		_build_card(idx)
+
+
+func _build_card(idx: int) -> void:
+	var col: int = idx % 3
+	var row: int = idx / 3
+	const CARD_W := 140
+	const CARD_H := 182
+	const GAP    := 10
+	var px: int = 30 + col * (CARD_W + GAP)
+	var py: int = 124 + row * (CARD_H + GAP)
 
 	var s:       Dictionary = STARTERS[idx]
 	var sid:     int        = int(s.get("id", 0))
@@ -148,48 +160,53 @@ func _build_card(parent: Panel, idx: int) -> void:
 
 	var card := Panel.new()
 	card.position = Vector2(px, py)
-	card.size     = Vector2(card_w, card_h)
-	card.mouse_filter = Control.MOUSE_FILTER_STOP   # capture les clics directement sur la carte
+	card.size     = Vector2(CARD_W, CARD_H)
+	card.mouse_filter = Control.MOUSE_FILTER_STOP
+	_apply_card_style(card, sid == _selected_id)
 	_card_panels[sid] = card
+	add_child(card)
 
-	if sid == _selected_id:
-		_panel_style(card, C_CARD_SEL, C_BDR_SEL, 7)
-	else:
-		_panel_style(card, C_CARD_NRM, C_BDR_NRM, 7)
+	# Cadre intérieur sombre du portrait (style niche de caisse)
+	var niche := ColorRect.new()
+	niche.position = Vector2(16, 10)
+	niche.size     = Vector2(108, 92)
+	niche.color    = Color(0.12, 0.08, 0.04)
+	niche.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card.add_child(niche)
 
-	# Placeholder coloré centré en haut
 	var ph := ColorRect.new()
-	ph.position = Vector2(29, 6)
-	ph.size     = Vector2(80, 80)
-	ph.color    = Color(0.22, 0.22, 0.40)
+	ph.position = Vector2(18, 12)
+	ph.size     = Vector2(104, 88)
+	ph.color    = Color(0.20, 0.16, 0.12)
 	ph.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_card_ph[sid] = ph
 	card.add_child(ph)
 
-	# TextureRect portrait (caché jusqu'au chargement)
 	var tex := TextureRect.new()
-	tex.position     = Vector2(29, 6)
-	tex.size         = Vector2(80, 80)
+	tex.position     = Vector2(18, 8)
+	tex.size         = Vector2(104, 92)
 	tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	tex.expand_mode  = TextureRect.EXPAND_IGNORE_SIZE
-	tex.visible = false
+	tex.visible      = false
 	tex.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_card_tex[sid] = tex
 	card.add_child(tex)
 
-	var nm: Label = _lbl(name_fr.to_upper(), 4, 90, card_w - 8, 20, 13, C_TEXT, true)
-	card.add_child(nm)
-
-	var rl: Label = _lbl(role, 4, 114, card_w - 8, 46, 10, C_DIM, true)
-	rl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	# Nom
+	card.add_child(_lbl(name_fr.to_upper(), 4, 104, CARD_W - 8, 20, 13, C_GOLD_LT, true, true))
+	# Rôle (centré, 2 lignes max)
+	var rl := _lbl(role, 4, 126, CARD_W - 8, 30, 10, Color(0.82, 0.74, 0.60), true)
+	rl.autowrap_mode      = TextServer.AUTOWRAP_WORD_SMART
+	rl.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	card.add_child(rl)
+	# Ruban NIV. 5
+	var ribbon := _wood_panel(Vector2(34, 159), Vector2(72, 18), C_WOOD, 4)
+	ribbon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card.add_child(ribbon)
+	card.add_child(_lbl("NIV. 5", 34, 159, 72, 18, 11, C_GOLD, true))
 
-	var lv: Label = _lbl("NIV. 5", 4, 160, card_w - 8, 16, 11, C_GOLD, true)
-	card.add_child(lv)
-
-	# Clic géré via gui_input (plus fiable que flat Button dans une CanvasLayer)
-	var capture_id: int = sid
-	parent.add_child(card)   # doit être dans le scène tree avant de connecter gui_input
+	# Clic
+	var capture_id := sid
 	card.gui_input.connect(func(event: InputEvent) -> void:
 		if event is InputEventMouseButton:
 			var mbe := event as InputEventMouseButton
@@ -199,172 +216,192 @@ func _build_card(parent: Panel, idx: int) -> void:
 	)
 
 
-# ── Sélection ─────────────────────────────────────────────────────────
+func _build_center_showcase() -> void:
+	# Sprite PMD animé (sans ombre)
+	_center_sprite = AnimatedSprite2D.new()
+	_center_sprite.position = Vector2(730, 430)
+	_center_sprite.scale    = Vector2(5.0, 5.0)
+	add_child(_center_sprite)
+
+
+func _build_right_scroll() -> void:
+	# Parchemin
+	var scroll := _wood_panel(Vector2(898, 104), Vector2(366, 446), C_PARCH, 14)
+	scroll.add_theme_stylebox_override("panel", _liseré_style(C_PARCH, C_WOOD, 14, 4))
+	scroll.mouse_filter = Control.MOUSE_FILTER_PASS
+	add_child(scroll)
+
+	_detail_root = Control.new()
+	_detail_root.position = Vector2(898, 104)
+	_detail_root.size     = Vector2(366, 446)
+	_detail_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_detail_root)
+
+
+func _build_start_button() -> void:
+	_btn_start = Button.new()
+	_btn_start.position = Vector2(898, 660)
+	_btn_start.size     = Vector2(366, 50)
+	_btn_start.text     = "COMMENCER LA RÉBELLION  ▶"
+	var sn := _liseré_style(C_WOOD, C_GOLD, 10, 3)
+	var sh := _liseré_style(C_WOOD_LT, C_GOLD_LT, 10, 3)
+	_btn_start.add_theme_stylebox_override("normal", sn)
+	_btn_start.add_theme_stylebox_override("hover",  sh)
+	_btn_start.add_theme_stylebox_override("pressed", sn)
+	_btn_start.add_theme_color_override("font_color", C_GOLD_LT)
+	_btn_start.add_theme_color_override("font_hover_color", Color.WHITE)
+	_btn_start.add_theme_font_size_override("font_size", 18)
+	_btn_start.pressed.connect(func() -> void: starter_chosen.emit(_selected_id))
+	add_child(_btn_start)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SÉLECTION
+# ══════════════════════════════════════════════════════════════════════
 
 func _select(id: int) -> void:
+	if id == _selected_id: return
 	_selected_id = id
 	for s: Dictionary in STARTERS:
-		var sid: int = int(s.get("id", 0))
+		var sid := int(s.get("id", 0))
 		if _card_panels.has(sid):
-			var p: Panel = _card_panels[sid] as Panel
-			if sid == id:
-				_panel_style(p, C_CARD_SEL, C_BDR_SEL, 7)
-			else:
-				_panel_style(p, C_CARD_NRM, C_BDR_NRM, 7)
+			_apply_card_style(_card_panels[sid] as Panel, sid == id)
 	_refresh_detail()
+	_load_center_sprite(id)
 
 
-# ── Panneau détail ────────────────────────────────────────────────────
+func _apply_card_style(card: Panel, selected: bool) -> void:
+	if selected:
+		card.add_theme_stylebox_override("panel", _liseré_style(C_CARD_SEL, C_GOLD, 8, 3))
+	else:
+		card.add_theme_stylebox_override("panel", _liseré_style(C_CARD, C_WOOD_LT, 8, 2))
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SPRITE CENTRAL PMD
+# ══════════════════════════════════════════════════════════════════════
+
+func _load_center_sprite(id: int) -> void:
+	PMDSprites.get_walk_sprites(id, self, func(result: Dictionary) -> void:
+		if result.is_empty() or id != _selected_id: return
+		if not is_instance_valid(_center_sprite): return
+		var frames: SpriteFrames = result.get("frames")
+		if frames == null: return
+		_center_sprite.sprite_frames = frames
+		if frames.has_animation("idle"):
+			_center_sprite.play("idle")
+		elif frames.has_animation("walk_down"):
+			_center_sprite.play("walk_down")
+	)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# PANNEAU DÉTAIL (parchemin)
+# ══════════════════════════════════════════════════════════════════════
 
 func _refresh_detail() -> void:
-	for ch: Node in _detail_root.get_children():
+	for ch in _detail_root.get_children():
 		ch.queue_free()
-	_large_tex = null
 
 	if not _loaded_data.has(_selected_id):
-		var wait_lbl: Label = _lbl("Chargement des données…", 0, 272, 802, 30, 17, C_DIM, true)
-		_detail_root.add_child(wait_lbl)
+		_detail_root.add_child(_lbl("Chargement des données…", 0, 200, 366, 30, 16, C_DIM, true))
 		return
 
-	var pd: PokemonData  = _loaded_data[_selected_id]
-	var sd: Dictionary   = _get_starter_dict(_selected_id)
-
-	# ── Portrait + nom/rôle côte à côte ──
-	var p_bg := ColorRect.new()
-	p_bg.position = Vector2(16, 16)
-	p_bg.size     = Vector2(148, 148)
-	p_bg.color    = C_STAT_BG
-	_detail_root.add_child(p_bg)
-
-	_large_tex = TextureRect.new()
-	_large_tex.position     = Vector2(16, 16)
-	_large_tex.size         = Vector2(148, 148)
-	_large_tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	_large_tex.expand_mode  = TextureRect.EXPAND_IGNORE_SIZE
-	if _portraits.has(_selected_id):
-		var portrait_tex: Texture2D = _portraits[_selected_id] as Texture2D
-		_large_tex.texture = portrait_tex
-	_detail_root.add_child(_large_tex)
+	var pd: PokemonData = _loaded_data[_selected_id]
+	var sd: Dictionary  = _get_starter_dict(_selected_id)
 
 	# Nom
-	var name_lbl: Label = _lbl(pd.name_fr.to_upper(), 178, 16, 608, 38, 28, C_GOLD)
-	_detail_root.add_child(name_lbl)
+	_detail_root.add_child(_lbl(pd.name_fr.to_upper(), 0, 18, 366, 38, 30, C_GOLD, true, true))
 
-	# Rôle
-	var role: String     = str(sd.get("role", ""))
-	var role_lbl: Label  = _lbl("« %s »" % role, 178, 58, 608, 24, 16, C_ACCENT)
-	_detail_root.add_child(role_lbl)
-
-	# Types
-	var tx: int = 178
+	# Logos de type, centrés
+	var pill_w := 120.0
+	var pill_gap := 12.0
+	var total_w := pd.types.size() * pill_w + (pd.types.size() - 1) * pill_gap
+	var px := (366 - total_w) / 2.0
 	for t: String in pd.types:
-		var badge := Panel.new()
-		badge.position = Vector2(tx, 82)
-		badge.size     = Vector2(70, 19)
-		_panel_style_col(badge, _type_color(t), 4)
-		_detail_root.add_child(badge)
-		var tlbl: Label = _lbl(t.to_upper(), 0, 2, 70, 15, 11, Color.WHITE, true)
-		badge.add_child(tlbl)
-		tx += 76
+		var pill := TypeIcon.make_pill(t, pill_w, 30.0, 15)
+		pill.position = Vector2(px, 60)
+		_detail_root.add_child(pill)
+		px += pill_w + pill_gap
 
-	# Description
-	var desc: String     = str(sd.get("desc", ""))
-	var desc_lbl: Label  = _lbl(desc, 178, 108, 608, 60, 13, C_DIM)
-	desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_detail_root.add_child(desc_lbl)
+	# Flavor (centré, multi-lignes)
+	var desc := str(sd.get("desc", ""))
+	var dl := _lbl("« %s »" % desc, 24, 102, 318, 64, 13, C_DIM, true)
+	dl.autowrap_mode      = TextServer.AUTOWRAP_WORD_SMART
+	dl.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	_detail_root.add_child(dl)
 
-	# ── Séparateur ──
-	_sep(16, 174, 770)
+	# Séparateur
+	_sep(28, 174, 310)
 
-	# ── Stats (2 colonnes × 3 lignes) ──
-	var stat_names:  Array[String] = ["PV base", "Attaque", "Défense", "Atq. Sp.", "Déf. Sp.", "Vitesse"]
-	var stat_values: Array[int]    = [pd.hp, pd.attack, pd.defense,
-									  pd.sp_attack, pd.sp_defense, pd.speed]
-	var stat_max:    Array[int]    = [125, 190, 190, 190, 190, 190]
-	var col_w: int = 383
-	for si in 6:
-		var ci: int = si % 2
-		var ri: int = si / 2
-		var sx: int = 16 + ci * col_w
-		var sy: int = 184 + ri * 38
+	# Stats — 6 lignes pleine largeur
+	var values: Array[int] = [pd.hp, pd.attack, pd.defense, pd.sp_attack, pd.sp_defense, pd.speed]
+	var maxes:  Array[int] = [140, 190, 190, 190, 190, 190]
+	for i in 6:
+		var sy := 188 + i * 40
+		var col := STAT_COLORS[i]
 
-		var sl: Label = _lbl(stat_names[si], sx, sy + 2, 78, 16, 12, C_DIM)
-		_detail_root.add_child(sl)
-		var sv: Label = _lbl(str(stat_values[si]), sx + 82, sy + 2, 40, 16, 14, C_TEXT)
-		_detail_root.add_child(sv)
+		# Pastille colorée (code couleur par stat)
+		var ic := _wood_panel(Vector2(28, sy + 2), Vector2(18, 18), col, 5)
+		ic.add_theme_stylebox_override("panel", _liseré_style(col, col.darkened(0.35), 5, 2))
+		_detail_root.add_child(ic)
 
-		var sb := ProgressBar.new()
-		sb.position        = Vector2(sx + 122, sy + 5)
-		sb.size            = Vector2(col_w - 124, 12)
-		sb.max_value       = stat_max[si]
-		sb.value           = stat_values[si]
-		sb.show_percentage = false
-		var fill_s := StyleBoxFlat.new()
-		fill_s.bg_color = C_HP_COL if si == 0 else C_XP
-		fill_s.set_corner_radius_all(3)
-		var bg_s := StyleBoxFlat.new()
-		bg_s.bg_color = C_STAT_BG
-		sb.add_theme_stylebox_override("fill",       fill_s)
-		sb.add_theme_stylebox_override("background", bg_s)
-		_detail_root.add_child(sb)
+		# Nom stat
+		_detail_root.add_child(_lbl(STAT_NAMES[i], 56, sy + 2, 88, 20, 13, C_TEXT))
 
-	# ── Séparateur ──
-	_sep(16, 302, 770)
+		# Valeur (sans ombre — sinon effet "doublé")
+		_detail_root.add_child(_lbl(str(values[i]), 146, sy + 2, 40, 20, 14, C_TEXT, true))
 
-	# ── Attaques connues au niveau 5 ──
-	var mhdr: Label = _lbl("── Attaques disponibles au niveau 5 ──", 16, 310, 770, 20, 13, C_DIM)
-	_detail_root.add_child(mhdr)
-
-	var moves_at_5: Array[String] = []
-	for lm: Dictionary in pd.level_up_moves:
-		var lv: int = int(lm.get("level", 99))
-		if lv <= 5:
-			var mn: String = str(lm.get("name", "")).replace("-", " ").capitalize()
-			if mn not in moves_at_5:
-				moves_at_5.append(mn)
-		if moves_at_5.size() >= 4:
-			break
-
-	if moves_at_5.is_empty():
-		# Fallback : premières attaques disponibles quelle que soit le niveau
-		for lm: Dictionary in pd.level_up_moves:
-			var mn: String = str(lm.get("name", "")).replace("-", " ").capitalize()
-			if mn not in moves_at_5:
-				moves_at_5.append(mn)
-			if moves_at_5.size() >= 4:
-				break
-
-	if moves_at_5.is_empty():
-		var no_m: Label = _lbl("Aucune attaque connue", 16, 332, 770, 22, 13, C_DIM)
-		_detail_root.add_child(no_m)
-	else:
-		var mx: int = 16
-		for mn: String in moves_at_5:
-			var mp := Panel.new()
-			mp.position = Vector2(mx, 332)
-			mp.size     = Vector2(182, 26)
-			_panel_style(mp, Color(0.08, 0.10, 0.22), C_BDR_NRM, 5)
-			_detail_root.add_child(mp)
-			var mlbl: Label = _lbl(mn, 6, 4, 170, 18, 12, C_TEXT)
-			mp.add_child(mlbl)
-			mx += 188
+		# Barre
+		var bar := ProgressBar.new()
+		bar.position = Vector2(192, sy + 4)
+		bar.size     = Vector2(150, 16)
+		bar.max_value = maxes[i]
+		bar.value     = values[i]
+		bar.show_percentage = false
+		var fill := StyleBoxFlat.new()
+		fill.bg_color = col
+		fill.set_corner_radius_all(4)
+		var bg := StyleBoxFlat.new()
+		bg.bg_color = C_BAR_BG
+		bg.set_corner_radius_all(4)
+		bar.add_theme_stylebox_override("fill", fill)
+		bar.add_theme_stylebox_override("background", bg)
+		_detail_root.add_child(bar)
 
 
-# ── Chargement API ────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════
+# CHARGEMENT API (cartes)
+# ══════════════════════════════════════════════════════════════════════
 
 func _fetch_all() -> void:
 	for s: Dictionary in STARTERS:
-		var sid: int = int(s.get("id", 0))
+		var sid := int(s.get("id", 0))
 		PokemonAPI.get_pokemon(sid, func(api_data: Dictionary) -> void:
-			if api_data.is_empty():
-				return
-			var pd: PokemonData = PokemonData.from_api(api_data)
+			if api_data.is_empty(): return
+			var pd := PokemonData.from_api(api_data)
 			_loaded_data[sid] = pd
+			_add_card_type_icons(sid, pd.types)
 			if sid == _selected_id:
 				_refresh_detail()
 			if not pd.sprite_url.is_empty():
 				_fetch_portrait(sid, pd.sprite_url)
 		)
+
+
+func _add_card_type_icons(sid: int, types: Array) -> void:
+	if _card_icons.has(sid) or not _card_panels.has(sid): return
+	_card_icons[sid] = true
+	var card: Panel = _card_panels[sid]
+	# Bandeau pilule(s) superposé au bas du portrait (niche : x16-124, y10-102)
+	var n := types.size()
+	var pill_w := 104.0 / n - (2.0 if n > 1 else 0.0)
+	var px := 16.0
+	for t in types:
+		var pill := TypeIcon.make_pill(str(t), pill_w, 16.0, 9)
+		pill.position = Vector2(px, 84)
+		card.add_child(pill)
+		px += pill_w + 2.0
 
 
 func _fetch_portrait(sid: int, url: String) -> void:
@@ -373,30 +410,40 @@ func _fetch_portrait(sid: int, url: String) -> void:
 	http.request_completed.connect(
 		func(result: int, code: int, _h: PackedStringArray, body: PackedByteArray) -> void:
 			http.queue_free()
-			if result != HTTPRequest.RESULT_SUCCESS or code != 200:
-				return
+			if result != HTTPRequest.RESULT_SUCCESS or code != 200: return
 			var img := Image.new()
-			if img.load_png_from_buffer(body) != OK:
-				return
-			img.resize(128, 128, Image.INTERPOLATE_NEAREST)
+			if img.load_png_from_buffer(body) != OK: return
+			img.resize(96, 96, Image.INTERPOLATE_NEAREST)
 			var new_tex: Texture2D = ImageTexture.create_from_image(img)
 			_portraits[sid] = new_tex
-			# Mise à jour carte
 			if _card_tex.has(sid):
-				var ct: TextureRect = _card_tex[sid] as TextureRect
+				var ct: TextureRect = _card_tex[sid]
 				ct.texture = new_tex
 				ct.visible = true
 				if _card_ph.has(sid):
-					var cp: ColorRect = _card_ph[sid] as ColorRect
-					cp.visible = false
-			# Mise à jour grand portrait si sélectionné
-			if sid == _selected_id and is_instance_valid(_large_tex):
-				_large_tex.texture = new_tex
+					(_card_ph[sid] as ColorRect).visible = false
 	)
 	http.request(url)
 
 
-# ── Utilitaires ───────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════
+# DÉCORATIONS DESSINÉES
+# ══════════════════════════════════════════════════════════════════════
+
+class _TitleChains extends Control:
+	func _draw() -> void:
+		# Deux chaînes descendant des coins haut vers la plaque (x≈420 et x≈860)
+		for cx in [430.0, 850.0]:
+			var y := 0.0
+			while y < 14.0:
+				draw_circle(Vector2(cx, y + 4), 4.5, Color(0.14, 0.10, 0.06))
+				draw_circle(Vector2(cx, y + 4), 3.0, Color(0.34, 0.28, 0.20))
+				y += 9.0
+
+
+# ══════════════════════════════════════════════════════════════════════
+# HELPERS
+# ══════════════════════════════════════════════════════════════════════
 
 func _get_starter_dict(sid: int) -> Dictionary:
 	for s: Dictionary in STARTERS:
@@ -408,57 +455,50 @@ func _get_starter_dict(sid: int) -> Dictionary:
 func _sep(x: int, y: int, w: int) -> void:
 	var line := ColorRect.new()
 	line.position = Vector2(x, y)
-	line.size     = Vector2(w, 1)
-	line.color    = C_BDR_NRM
+	line.size     = Vector2(w, 2)
+	line.color    = C_WOOD_LT
 	_detail_root.add_child(line)
 
 
 func _lbl(text: String, x: float, y: float, w: float, h: float,
-		fs: int, color: Color, centered: bool = false) -> Label:
+		fs: int, color: Color, centered: bool = false, shadow: bool = false) -> Label:
 	var l := Label.new()
 	l.text     = text
 	l.position = Vector2(x, y)
 	l.size     = Vector2(w, h)
 	l.add_theme_font_size_override("font_size", fs)
 	l.add_theme_color_override("font_color", color)
+	if shadow:
+		l.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.55))
+		l.add_theme_constant_override("shadow_offset_x", 1)
+		l.add_theme_constant_override("shadow_offset_y", 2)
 	if centered:
 		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return l
 
 
-func _panel_style(p: Panel, bg: Color, border: Color, radius: int) -> void:
+func _wood_panel(pos: Vector2, sz: Vector2, bg: Color, radius: int) -> Panel:
+	var p := Panel.new()
+	p.position = pos; p.size = sz
+	var s := StyleBoxFlat.new()
+	s.bg_color     = bg
+	s.border_color = C_WOOD_DK
+	s.set_border_width_all(3)
+	s.set_corner_radius_all(radius)
+	s.shadow_color = Color(0, 0, 0, 0.45)
+	s.shadow_size  = 5
+	p.add_theme_stylebox_override("panel", s)
+	return p
+
+
+func _liseré_style(bg: Color, border: Color, radius: int, width: int = 2) -> StyleBoxFlat:
 	var s := StyleBoxFlat.new()
 	s.bg_color     = bg
 	s.border_color = border
-	s.set_border_width_all(2)
+	s.set_border_width_all(width)
 	s.set_corner_radius_all(radius)
-	p.add_theme_stylebox_override("panel", s)
-
-
-func _panel_style_col(p: Panel, bg: Color, radius: int) -> void:
-	var s := StyleBoxFlat.new()
-	s.bg_color = bg
-	s.set_corner_radius_all(radius)
-	p.add_theme_stylebox_override("panel", s)
-
-
-static func _type_color(t: String) -> Color:
-	match t:
-		"fire":     return Color(0.95, 0.40, 0.10)
-		"water":    return Color(0.20, 0.45, 0.95)
-		"grass":    return Color(0.20, 0.70, 0.20)
-		"electric": return Color(0.96, 0.80, 0.08)
-		"poison":   return Color(0.65, 0.20, 0.75)
-		"flying":   return Color(0.50, 0.72, 0.92)
-		"bug":      return Color(0.50, 0.72, 0.12)
-		"rock":     return Color(0.72, 0.60, 0.38)
-		"ground":   return Color(0.88, 0.72, 0.40)
-		"ice":      return Color(0.55, 0.88, 0.92)
-		"fighting": return Color(0.88, 0.22, 0.22)
-		"psychic":  return Color(0.95, 0.28, 0.52)
-		"ghost":    return Color(0.42, 0.28, 0.62)
-		"dragon":   return Color(0.38, 0.22, 0.90)
-		"dark":     return Color(0.32, 0.22, 0.22)
-		"steel":    return Color(0.68, 0.68, 0.78)
-		"fairy":    return Color(0.92, 0.52, 0.72)
-		_:          return Color(0.62, 0.62, 0.62)
+	s.shadow_color = Color(0, 0, 0, 0.40)
+	s.shadow_size  = 4
+	return s
