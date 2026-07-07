@@ -86,7 +86,11 @@ func _pool_for_act(act: int) -> Array[int]:
 		_: return [MapGenerator.MapTheme.ROCKY, MapGenerator.MapTheme.SWAMP]
 
 
-## UN biome par acte, jamais deux actes identiques d'affilée.
+## UN biome par acte (jamais deux actes identiques d'affilée) + UN CHAMPION
+## d'arène par acte (jamais le même deux fois dans la run) — chaque boss
+## d'acte est un combat de dresseur, de plus en plus dur.
+var _champion_sequence: Array[int] = []   # index dans PokePools.CHAMPION_TEAMS
+
 func _build_biome_sequence() -> void:
 	var rng := RandomNumberGenerator.new()
 	# Multijoueur : séquence identique sur tous les pairs (dérivée de la
@@ -105,6 +109,21 @@ func _build_biome_sequence() -> void:
 		var pick: int = pool[rng.randi() % pool.size()]
 		_biome_sequence.append(pick)
 		prev = pick
+	# Champions d'acte : tirage sans remise (Fisher-Yates avec le même rng
+	# pour rester déterministe en multijoueur)
+	var idxs: Array[int] = []
+	for i in PokePools.CHAMPION_TEAMS.size():
+		idxs.append(i)
+	for i in range(idxs.size() - 1, 0, -1):
+		var j := rng.randi_range(0, i)
+		var tmp := idxs[i]; idxs[i] = idxs[j]; idxs[j] = tmp
+	_champion_sequence = idxs.slice(0, ACTS)
+
+
+## Compo de champion (PokePools.CHAMPION_TEAMS) affrontée au boss de `act`.
+func champion_for_act(act: int) -> Dictionary:
+	_ensure_sequence()
+	return PokePools.CHAMPION_TEAMS[_champion_sequence[clampi(act, 0, ACTS - 1)]]
 
 
 ## Biome (MapGenerator.MapTheme) de la zone courante — celui de l'ACTE.

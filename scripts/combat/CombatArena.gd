@@ -32,7 +32,6 @@ const POOL_BUGS          := PokePools.BUGS
 const POOL_FLYERS        := PokePools.FLYERS
 const POOL_ELEM          := PokePools.ELEM
 const POOL_SEMI_BOSS     := PokePools.SEMI_BOSS
-const POOL_BOSSES        := PokePools.BOSSES
 const POOL_CAVE_ELITE    := PokePools.CAVE_ELITE
 const POOL_CAVE_DEMIBOSS := PokePools.CAVE_DEMIBOSS
 const POOL_BIOME         := PokePools.BIOME
@@ -382,7 +381,6 @@ func _preload_all() -> void:
 	background.append_array(POOL_FLYERS)
 	background.append_array(POOL_ELEM)
 	background.append_array(POOL_SEMI_BOSS)
-	background.append_array(POOL_BOSSES)
 	background.append_array(PokePools.all_champion_ids())   # compos du Dresseur Final
 	background.append_array(POOL_CAVE_ELITE)
 	background.append_array(POOL_CAVE_DEMIBOSS)
@@ -838,13 +836,18 @@ func _spawn_room_enemies() -> void:
 	_wave_num    = 0
 	_waves_total = 1
 
-	if _is_final_boss_room(room):
-		# ── DRESSEUR FINAL : une COMPO DE CHAMPION D'ARÈNE (6 Pokémon
-		# mono-type, cf. PokePools.CHAMPION_TEAMS) tirée au hasard — 6 vagues,
-		# un Pokémon par vague dans l'ordre de la compo, l'AS du champion en
-		# dernier (anneau doré), niveaux croissants.
-		var comp: Dictionary = PokePools.CHAMPION_TEAMS[randi() % PokePools.CHAMPION_TEAMS.size()]
-		var comp_ids: Array = comp["ids"]
+	if _is_boss_room(room):
+		# ── BOSS D'ACTE = COMBAT DE DRESSEUR : la compo du champion de
+		# l'acte (cf. RunManager.champion_for_act, jamais le même deux fois
+		# par run) envoyée en vagues — un Pokémon par vague, l'AS du champion
+		# en dernier (anneau doré). L'équipe GRANDIT avec les actes :
+		# 3, 4, 5 puis 6 Pokémon au Dresseur Final, niveaux croissants.
+		var act := RunManager.inst().act_of(room)
+		var comp: Dictionary = RunManager.inst().champion_for_act(act)
+		var all_ids: Array = comp["ids"]
+		var n_waves := clampi(3 + act, 3, all_ids.size())
+		var comp_ids: Array = all_ids.slice(0, n_waves - 1)
+		comp_ids.append(all_ids[all_ids.size() - 1])   # l'as ferme toujours la marche
 		_waves_total = comp_ids.size()
 		for w in _waves_total:
 			var is_ace := w == _waves_total - 1
@@ -856,23 +859,14 @@ func _spawn_room_enemies() -> void:
 			_wave_queue.append(specs)
 		_room_total = _waves_total
 		hud.set_kills(0, _room_total)
-		hud.set_wave("☠☠ CHAMPION %s (%s) — son équipe de %d t'attend !"
-			% [str(comp["name"]).to_upper(), comp["type"], _waves_total])
+		var title := "DRESSEUR FINAL" if _is_final_boss_room(room) else "CHAMPION"
+		hud.set_wave("☠☠ %s %s (%s) — son équipe de %d t'attend !"
+			% [title, str(comp["name"]).to_upper(), comp["type"], _waves_total])
 		get_tree().call_group("combat_arena", "add_camera_shake", 0.15)
 		await get_tree().create_timer(1.8).timeout   # temps de lire l'annonce
 		if _game_over_triggered or _victory_triggered:
 			return
 		_spawn_next_wave()
-		return
-
-	if _is_boss_room(room):
-		# Salle de boss intermédiaire : vague unique — un colosse
-		# (POOL_BOSSES, anneau doré, 1.7×) escorté d'une poignée de sbires.
-		_spawn_from_pool(POOL_BOSSES, 1, BOSS_LEVEL + room, false, true)
-		_spawn_from_pool(pool, maxi(3, count / 2), lv)
-		_room_total = _alive
-		hud.set_kills(0, _room_total)
-		hud.set_wave("☠ BOSS — %s · Niv. %d" % [_zone_label(), BOSS_LEVEL + room])
 		return
 
 	# Champions : 1 dès la salle 3, 2 dès la salle 6 — tirés de la faune du

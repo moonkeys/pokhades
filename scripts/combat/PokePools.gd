@@ -20,8 +20,7 @@ const FLYERS:    Array[int] = [16, 396, 661, 519]
 const ELEM:      Array[int] = [403, 261, 191, 43]
 # Semi-boss (évolutions) — salles 5+
 const SEMI_BOSS: Array[int] = [20, 400, 17, 404, 402, 262, 55, 162]
-# Boss de palier — toutes les 5 salles
-const BOSSES:    Array[int] = [143, 123, 128, 24, 22, 862]
+# (Les boss d'acte sont des combats de dresseur : cf. CHAMPION_TEAMS.)
 
 # ── Grotte (arène de demi-boss) ──────────────────────────────────────────
 # Sbires d'élite (plus faibles que le demi-boss)
