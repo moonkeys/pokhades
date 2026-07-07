@@ -99,23 +99,23 @@ func _build_environment() -> void:
 	e.sky = sky
 
 	e.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	e.ambient_light_energy = 0.32   # aligné sur BiomeAmbiance._BASE_AMBIANCE
+	e.ambient_light_energy = 0.22   # aligné sur BiomeAmbiance._BASE_AMBIANCE
 	e.fog_enabled     = true
 	e.fog_light_color = Color(0.68, 0.66, 0.60)
-	e.fog_density     = 0.012
-	e.fog_sun_scatter = 0.15
+	e.fog_density     = 0.014
+	e.fog_sun_scatter = 0.12
 	e.glow_enabled    = true
 	e.glow_intensity  = 0.20
 	e.glow_bloom      = 0.05
 	e.tonemap_mode    = Environment.TONE_MAPPER_FILMIC
-	e.tonemap_exposure = 0.90       # aligné sur BiomeAmbiance._BASE_AMBIANCE
+	e.tonemap_exposure = 0.74       # aligné sur BiomeAmbiance._BASE_AMBIANCE
 	env.environment = e
 	add_child(env)
 
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-52, -32, 0)   # même direction d'ombres qu'en run
 	sun.light_color    = Color(1.0, 0.90, 0.75)
-	sun.light_energy   = 0.72       # aligné sur BiomeAmbiance._BASE_AMBIANCE
+	sun.light_energy   = 0.52       # aligné sur BiomeAmbiance._BASE_AMBIANCE
 	sun.shadow_enabled = true
 	# Ombres STABLES en mouvement : une seule tranche orthogonale bornée à la
 	# portée de vue réelle (caméra fixe) — fini le tremblement des bords

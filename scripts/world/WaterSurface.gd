@@ -42,26 +42,44 @@ void vertex() {
 	VERTEX.y += w * wave_amp * (0.35 + 0.65 * v_shore);
 }
 
+float hash2(vec2 p) {
+	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
 void fragment() {
+	// Look PIXEL-ART (façon « 2d pixel water shader ») : tout est échantillonné
+	// sur une grille fixe de 8 texels/unité puis POSTERISÉ en bandes de
+	// couleur — des aplats nets qui clapotent, plus de dégradés lisses.
+	vec2 gp = floor(v_pos * 8.0) / 8.0;
+
 	float depth_t = clamp(v_shore * 1.2, 0.0, 1.0);
 	vec3 col = mix(shallow_color.rgb, deep_color.rgb, depth_t);
 
-	// Houle : bandes de surbrillance qui traversent la surface + crêtes
-	float band = sin(v_pos.x * 1.8 - TIME * 1.4) * sin(v_pos.y * 1.5 + TIME * 1.0);
-	col += smoothstep(0.55, 0.95, band) * 0.09;
-	col += smoothstep(0.60, 1.0, v_wave) * 0.12;
+	// Houle : bandes de surbrillance NETTES (step) qui traversent la surface
+	float band = sin(gp.x * 1.8 - TIME * 1.4) * sin(gp.y * 1.5 + TIME * 1.0);
+	col += step(0.62, band) * 0.10;
+	col += step(0.65, v_wave) * 0.10;
 
-	// Écume de rive : bande claire dont la largeur respire (clapotis)
-	float lap    = sin(TIME * 1.8 + v_pos.x * 1.7 + v_pos.y * 1.3) * 0.5 + 0.5;
-	float foam_w = 0.22 + lap * 0.14;
-	float foam   = 1.0 - smoothstep(foam_w * 0.5, foam_w, v_shore);
-	col = mix(col, foam_color.rgb, foam * 0.8);
+	// Étincelles pixel : de rares cellules de la grille scintillent
+	float n  = hash2(gp);
+	float tw = step(0.992, fract(n + TIME * (0.05 + n * 0.10)));
+	col = mix(col, foam_color.rgb, tw);
+
+	// Écume de rive : bande claire dont la largeur respire (clapotis), au
+	// bord intérieur DENTELÉ par la grille — une rive pixel, pas une ligne lisse
+	float lap    = sin(TIME * 1.8 + gp.x * 1.7 + gp.y * 1.3) * 0.5 + 0.5;
+	float foam_w = 0.22 + lap * 0.14 + (hash2(gp * 3.0) - 0.5) * 0.10;
+	float foam   = 1.0 - step(foam_w, v_shore);
+	col = mix(col, foam_color.rgb, foam * 0.85);
+
+	// Posterisation : 6 niveaux par canal — la signature pixel-art
+	col = floor(col * 6.0 + 0.5) / 6.0;
 
 	float fresnel = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 3.0);
-	ALBEDO = col + fresnel * 0.10;
+	ALBEDO = col + fresnel * 0.08;
 	ALPHA  = max(mix(shallow_color.a, deep_color.a, depth_t), foam * 0.9);
-	ROUGHNESS = 0.15;
-	SPECULAR  = 0.6;
+	ROUGHNESS = 0.2;
+	SPECULAR  = 0.5;
 }
 """
 

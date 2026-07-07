@@ -60,6 +60,7 @@ func build(map: Node2D) -> void:
 	_build_cliff_formations()
 	_build_props()
 	_build_grass()
+	_build_pixel_grass()
 	_build_flowers()
 	_build_berry_trees()
 	if _map.arena_mode:
@@ -456,6 +457,56 @@ func _build_grass() -> void:
 	var tints := _grass_tints_for_theme()
 	_build_kit_flora_layer(_map.tile_tg, ["grass_large.glb", "grass_leafsLarge.glb"], 1.7, tints)
 	_build_kit_flora_layer(_map.tile_petite_herbe, ["grass.glb", "grass_leafs.glb", "plant_flatShort.glb"], 1.5, tints)
+
+
+## ── Touffes d'herbe PIXEL-ART (cf. GrassPatch) — la « texture » du sol :
+## dispersées sur les cases d'herbe NUES (le sol baké seul faisait très
+## plat), en un seul MultiMesh ondulant au vent. La haute herbe garde ses
+## meshes Kenney (_build_grass), c'est la couche de remplissage en dessous.
+const _PIXEL_GRASS_TINTS := {
+	MapGenerator.MapTheme.FOREST: Color(0.88, 1.0, 0.85),
+	MapGenerator.MapTheme.MEADOW: Color(1.0, 1.1, 0.9),
+	MapGenerator.MapTheme.SWAMP:  Color(0.72, 0.82, 0.68),
+	MapGenerator.MapTheme.AUTUMN: Color(1.5, 1.05, 0.5),
+	MapGenerator.MapTheme.ROCKY:  Color(1.1, 1.0, 0.68),
+	MapGenerator.MapTheme.LAKE:   Color(0.92, 1.08, 0.88),
+}
+const _PIXEL_GRASS_MAX := 5000   # plafond d'instances (perf)
+
+func _build_pixel_grass() -> void:
+	var sz: Vector2i = _map.get_map_cell_size()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(sz) * 31 + 7
+	var bridge: Dictionary = {}
+	if _map.has_method("get_bridge_cells"):
+		for bc: Vector2i in _map.get_bridge_cells():
+			bridge[bc] = true
+
+	var transforms: Array = []
+	for r in range(2, sz.y - 2):
+		for c in range(2, sz.x - 2):
+			if transforms.size() >= _PIXEL_GRASS_MAX:
+				break
+			var cell := Vector2i(c, r)
+			if _map._ground.get_cell_source_id(cell)     == -1: continue
+			if _map._water.get_cell_source_id(cell)      != -1: continue
+			if _map._objects.get_cell_source_id(cell)    != -1: continue
+			if _map._tall_grass.get_cell_source_id(cell) != -1: continue
+			if _map._grid[r][c] != MapGenerator.Terrain.GRASS:  continue
+			if bridge.has(cell):                                continue
+			if rng.randf() > 0.45: continue   # densité : ~1 case sur 2
+			for t in rng.randi_range(1, 2):
+				var px := float(c) + rng.randf_range(0.15, 0.85)
+				var pz := float(r) + rng.randf_range(0.15, 0.85)
+				var y: float = _map.get_height_at_cell(cell) if _map.has_method("get_height_at_cell") else 0.0
+				var xf := Transform3D(Basis(Vector3.UP, rng.randf_range(0.0, TAU))
+					.scaled(Vector3.ONE * rng.randf_range(0.8, 1.25)), Vector3(px, y, pz))
+				transforms.append(xf)
+
+	if transforms.is_empty():
+		return
+	var tint: Color = _PIXEL_GRASS_TINTS.get(_map.theme, Color(0.9, 1.0, 0.85))
+	add_child(GrassPatch.build(transforms, tint))
 
 
 ## Teintes de l'herbe par thème — clés = noms des matériaux glTF Kenney

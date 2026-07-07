@@ -77,15 +77,19 @@ func _theme_ambiance(theme: int, is_cave: bool) -> Dictionary:
 ## = toucher uniquement cette table.
 
 const _BASE_AMBIANCE := {
-	"ambient_energy": 0.32,
-	"fog_density":    0.005,
-	"fog_scatter":    0.12,
+	# Ambiance volontairement SOMBRE et voilée (retour joueur : trop clair =
+	# illisible) : exposition et soleil baissés, brume légère PARTOUT par
+	# défaut — chaque palette ne fait qu'accentuer ou teinter.
+	"ambient_energy": 0.22,
+	"fog_density":    0.010,
+	"fog_scatter":    0.10,
 	"glow_intensity": 0.22,
 	"glow_bloom":     0.06,
-	"sun_energy":     0.72,
+	"sun_energy":     0.52,
 	"sun_angles":     Vector3(-52, -32, 0),
-	"exposure":       0.90,
-	"mist":           false,
+	"exposure":       0.74,
+	"mist":           true,   # nappe discrète au ras du sol, partout
+	"mist_color":     Color(0.70, 0.72, 0.68, 0.05),
 	"cloud_alpha":    0.55,
 	"cloud_tint":     Color(1.0, 1.0, 1.0),
 }
@@ -114,7 +118,7 @@ const _SWAMP_PALETTE := {
 	"sky_top":      Color(0.48, 0.55, 0.58),
 	"sky_horizon":  Color(0.68, 0.70, 0.62),
 	"fog_color":    Color(0.55, 0.60, 0.52),
-	"fog_density":  0.011,
+	"fog_density":  0.014,
 	"sun_color":    Color(0.90, 0.94, 0.82),
 	"hill_a":       Color(0.36, 0.42, 0.38),
 	"hill_b":       Color(0.30, 0.36, 0.34),
@@ -131,7 +135,7 @@ const _ROCKY_PALETTE := {
 	"sky_top":      Color(0.44, 0.60, 0.82),
 	"sky_horizon":  Color(0.84, 0.76, 0.62),
 	"fog_color":    Color(0.72, 0.66, 0.56),
-	"fog_density":  0.003,
+	"fog_density":  0.007,
 	"sun_color":    Color(1.0, 0.90, 0.74),
 	"hill_a":       Color(0.52, 0.46, 0.40),
 	"hill_b":       Color(0.44, 0.40, 0.36),
@@ -159,7 +163,7 @@ const _LAKE_PALETTE := {
 	"sky_top":      Color(0.38, 0.62, 0.94),
 	"sky_horizon":  Color(0.78, 0.88, 0.94),
 	"fog_color":    Color(0.70, 0.82, 0.90),
-	"fog_density":  0.003,
+	"fog_density":  0.007,
 	"sun_color":    Color(1.0, 0.96, 0.86),
 	"hill_a":       Color(0.42, 0.58, 0.66),
 	"hill_b":       Color(0.36, 0.52, 0.62),
@@ -172,7 +176,7 @@ const _MEADOW_PALETTE := {
 	"sky_top":      Color(0.44, 0.66, 0.92),
 	"sky_horizon":  Color(0.84, 0.82, 0.68),
 	"fog_color":    Color(0.72, 0.72, 0.64),
-	"fog_density":  0.003,
+	"fog_density":  0.007,
 	"sun_color":    Color(1.0, 0.93, 0.80),
 	"hill_a":       Color(0.46, 0.60, 0.58),
 	"hill_b":       Color(0.40, 0.54, 0.56),
