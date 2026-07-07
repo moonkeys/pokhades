@@ -95,6 +95,103 @@ static func _get_mesh() -> ArrayMesh:
 	return _mesh
 
 
+## ── HAUTE HERBE : touffes buissonneuses pixel-art (référence utilisateur :
+## touffes denses de brins arqués vert vif, variante à cœur sombre creux).
+## Billboards en MultiMesh — 1 draw call par variante, ancrés au sol. ──────
+
+static var _tuft_tex: Array = [null, null]   # [pleine, creuse]
+
+## MultiMeshInstance3D de touffes de haute herbe. `hollow` = variante à
+## centre creux (cœur d'ombre), `tint` = teinte du biome.
+static func build_tufts(transforms: Array, tint: Color, hollow: bool) -> MultiMeshInstance3D:
+	var quad := QuadMesh.new()
+	quad.size = Vector2(1.45, 1.15)
+	quad.center_offset = Vector3(0, 0.55, 0)   # pied au sol
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture   = _get_tuft_texture(hollow)
+	mat.albedo_color     = tint
+	mat.transparency     = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+	mat.alpha_scissor_threshold = 0.5
+	mat.billboard_mode   = BaseMaterial3D.BILLBOARD_FIXED_Y
+	mat.texture_filter   = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	mat.shading_mode     = BaseMaterial3D.SHADING_MODE_PER_PIXEL
+	mat.roughness        = 1.0
+	quad.material = mat
+
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.mesh = quad
+	mm.instance_count = transforms.size()
+	for i in transforms.size():
+		mm.set_instance_transform(i, transforms[i])
+	var mmi := MultiMeshInstance3D.new()
+	mmi.multimesh = mm
+	mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return mmi
+
+
+## Texture 28×22 : ~13 brins arqués depuis la base centrale, courbés vers
+## l'extérieur, 3 verts + liseré sombre en périphérie — le style de la
+## référence. `hollow` : cœur d'ombre au centre (touffe « habitée »).
+static func _get_tuft_texture(hollow: bool) -> ImageTexture:
+	var idx := 1 if hollow else 0
+	if _tuft_tex[idx] != null:
+		return _tuft_tex[idx]
+	var w := 28; var h := 22
+	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	var dark  := Color(0.08, 0.19, 0.07)
+	var mid   := Color(0.20, 0.44, 0.13)
+	var light := Color(0.36, 0.66, 0.21)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 77 if hollow else 42
+
+	# Dôme de masse sombre : la touffe est PLEINE à la base (référence :
+	# touffes denses et bombées), les brins se détachent par-dessus.
+	for y in range(h - 11, h):
+		var dy := (float(y) - float(h - 1)) / 10.0
+		var half := (w * 0.42) * sqrt(maxf(0.0, 1.0 - dy * dy))
+		for x in range(int(w * 0.5 - half), int(w * 0.5 + half) + 1):
+			if x >= 0 and x < w:
+				img.set_pixel(x, y, dark)
+
+	# Cœur d'ombre (variante creuse) — plus noir au centre
+	if hollow:
+		for y in range(h - 8, h):
+			for x in range(8, w - 8):
+				var dx := (float(x) - w * 0.5) / (w * 0.24)
+				var dy2 := (float(y) - (h - 3.0)) / 5.0
+				if dx * dx + dy2 * dy2 < 1.0:
+					img.set_pixel(x, y, Color(0.03, 0.08, 0.03))
+
+	# Brins arqués DENSES : deux rangées entremêlées, courbés vers l'extérieur
+	var blades := 22
+	for b in blades:
+		var t0 := (float(b) + 0.5) / float(blades)          # 0 → 1 sur la largeur
+		var spread := (t0 - 0.5) * 2.0
+		var x0 := w * 0.5 + spread * 7.5 + rng.randf_range(-1.0, 1.0)
+		var blade_h := rng.randi_range(11, 18)
+		if hollow and absf(spread) < 0.35:
+			blade_h = rng.randi_range(6, 9)                # centre plus court (creux)
+		var curve := spread * rng.randf_range(4.0, 8.0)     # arc vers l'extérieur
+		var shade := rng.randf() < 0.35                     # brins arrière plus sombres
+		for s in blade_h:
+			var t := float(s) / float(blade_h - 1)
+			var px := int(x0 + curve * t * t)
+			var py := (h - 1) - s
+			if px < 0 or px >= w or py < 0 or py >= h:
+				continue
+			var col := mid if t < 0.55 else light
+			if shade:
+				col = dark if t < 0.55 else mid
+			img.set_pixel(px, py, col)
+			# base plus épaisse (2 px)
+			if t < 0.5 and px + 1 < w:
+				img.set_pixel(px + 1, py, mid if not shade else dark)
+	_tuft_tex[idx] = ImageTexture.create_from_image(img)
+	return _tuft_tex[idx]
+
+
 ## Texture pixel-art procédurale 16×16 : 5 brins verticaux de hauteurs
 ## variées, 3 bandes de vert (sombre au pied → clair en pointe) — le rendu
 ## « pixel art » vient du NEAREST + alpha net.

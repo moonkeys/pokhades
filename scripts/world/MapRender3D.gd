@@ -452,11 +452,40 @@ func _is_flat_decor(atlas: Vector2i) -> bool:
 # de croix de quads, juste avec de vrais volumes à la place.
 
 func _build_grass() -> void:
-	# Haute herbe (tile_tg) : touffes hautes. Petite herbe : touffes basses.
-	# Teinte par biome (herbe dorée en automne, glauque au marécage…).
-	var tints := _grass_tints_for_theme()
-	_build_kit_flora_layer(_map.tile_tg, ["grass_large.glb", "grass_leafsLarge.glb"], 1.7, tints)
-	_build_kit_flora_layer(_map.tile_petite_herbe, ["grass.glb", "grass_leafs.glb", "plant_flatShort.glb"], 1.5, tints)
+	# Haute herbe (tile_tg) : TOUFFES BUISSONNEUSES pixel-art (cf. GrassPatch,
+	# style de la référence utilisateur — brins arqués, variante à cœur creux),
+	# c'est la zone de FURTIVITÉ (joueur éclairci, ennemis invisibles).
+	# Petite herbe : touffes basses Kenney, purement décoratives.
+	_build_tall_grass_tufts()
+	_build_kit_flora_layer(_map.tile_petite_herbe, ["grass.glb", "grass_leafs.glb", "plant_flatShort.glb"], 1.5, _grass_tints_for_theme())
+
+
+## Une touffe billboard par case de haute herbe (léger jitter/échelle) —
+## ~70 % pleines, ~30 % à cœur creux, teintées par biome. 2 MultiMesh.
+func _build_tall_grass_tufts() -> void:
+	if not is_instance_valid(_map._tall_grass):
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(_map.get_map_cell_size()) * 13 + 5
+	var full: Array = []
+	var hollow: Array = []
+	for cell: Vector2i in _map._tall_grass.get_used_cells():
+		if _map._tall_grass.get_cell_atlas_coords(cell) != _map.tile_tg:
+			continue
+		var px := float(cell.x) + rng.randf_range(0.35, 0.65)
+		var pz := float(cell.y) + rng.randf_range(0.35, 0.65)
+		var y: float = _map.get_height_at_cell(cell) if _map.has_method("get_height_at_cell") else 0.0
+		var xf := Transform3D(Basis().scaled(Vector3.ONE * rng.randf_range(0.9, 1.2)),
+			Vector3(px, y, pz))
+		if rng.randf() < 0.3:
+			hollow.append(xf)
+		else:
+			full.append(xf)
+	var tint: Color = _PIXEL_GRASS_TINTS.get(_map.theme, Color(0.9, 1.0, 0.85))
+	if not full.is_empty():
+		add_child(GrassPatch.build_tufts(full, tint, false))
+	if not hollow.is_empty():
+		add_child(GrassPatch.build_tufts(hollow, tint, true))
 
 
 ## ── Touffes d'herbe PIXEL-ART (cf. GrassPatch) — la « texture » du sol :

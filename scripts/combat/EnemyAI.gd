@@ -276,6 +276,8 @@ func _physics_process(delta: float) -> void:
 		velocity = Vector3.ZERO
 		return
 
+	_update_grass_hiding()
+
 	# Recul en cours : l'IA lâche les commandes, le corps glisse (move_and_slide
 	# gère les collisions) puis la vitesse s'amortit.
 	if _knockback_timer > 0.0:
@@ -555,6 +557,31 @@ func _play_attack_lunge(target_pos: Vector3) -> void:
 		if is_instance_valid(self):
 			sprite.modulate = Color.WHITE
 	)
+
+
+# ── Furtivité dans la haute herbe (embuscade) ─────────────────────────
+# Un ennemi dans une case de haute herbe est TOTALEMENT invisible (sprite,
+# barre de PV, statut) tant qu'aucun joueur n'est proche — il se révèle en
+# approche (GRASS_REVEAL_DIST > portée d'attaque : on le voit toujours
+# AVANT qu'il ne frappe, l'embuscade reste équitable). Les boss/champions
+# ne se cachent pas (lisibilité des menaces majeures).
+const GRASS_REVEAL_DIST := 3.6
+var _grass_hidden: bool = false
+
+func _update_grass_hiding() -> void:
+	var hidden := false
+	if not is_champion and not is_boss \
+			and is_instance_valid(_map) and _map.has_method("is_tall_grass_3d") \
+			and _map.is_tall_grass_3d(global_position):
+		hidden = true
+		for p in get_tree().get_nodes_in_group("players"):
+			if is_instance_valid(p) \
+					and global_position.distance_to(p.global_position) < GRASS_REVEAL_DIST:
+				hidden = false
+				break
+	if hidden != _grass_hidden:
+		_grass_hidden = hidden
+		visible = not hidden
 
 
 func take_damage(amount: int, source_pos: Vector3 = Vector3(INF, INF, INF),

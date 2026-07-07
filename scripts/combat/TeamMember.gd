@@ -281,6 +281,7 @@ func _physics_process(delta: float) -> void:
 	_attack_flash = max(0.0, _attack_flash - delta * 4.0)
 	_action_lock  = max(0.0, _action_lock - delta)
 	_update_range_ring()
+	_update_grass_hiding()
 
 	# Diffusion de notre état aux autres joueurs (membre contrôlé localement)
 	if is_active and Net.in_run:
@@ -624,6 +625,24 @@ func _play_attack_lunge(target_pos: Vector3, anim_prefixes: Array = ["attack"]) 
 		if is_instance_valid(self) and not _evolving:
 			sprite.modulate = Color.WHITE
 	)
+
+
+# ── Furtivité dans la haute herbe ─────────────────────────────────────
+# Dans une case de haute herbe, le sprite devient PLUS CLAIR et translucide :
+# le joueur voit qu'il est caché. Réappliqué chaque frame car les flashes de
+# combat (dégâts, attaque, dash) réécrivent modulate puis restaurent WHITE.
+const GRASS_HIDDEN_TINT := Color(1.4, 1.45, 1.35, 0.55)
+
+func _update_grass_hiding() -> void:
+	if _evolving or not is_instance_valid(sprite):
+		return
+	var hidden: bool = is_instance_valid(_map) and _map.has_method("is_tall_grass_3d") \
+		and _map.is_tall_grass_3d(global_position)
+	if hidden:
+		if sprite.modulate == Color.WHITE:
+			sprite.modulate = GRASS_HIDDEN_TINT
+	elif sprite.modulate == GRASS_HIDDEN_TINT:
+		sprite.modulate = Color.WHITE
 
 
 func take_damage(amount: int, source_pos: Vector3 = Vector3(INF, INF, INF)) -> void:

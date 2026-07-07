@@ -530,6 +530,15 @@ func is_tall_grass(world_pos: Vector2) -> bool:
 	return _tall_grass.get_cell_atlas_coords(cell) == tile_tg
 
 
+## Version 3D — la case sous `pos` est-elle de la HAUTE HERBE (cachette) ?
+## Furtivité : joueur éclairci, ennemis invisibles à distance (cf.
+## TeamMember/EnemyAI._update_grass_hiding).
+func is_tall_grass_3d(pos: Vector3) -> bool:
+	if not is_instance_valid(_tall_grass):
+		return false
+	return _tall_grass.get_cell_atlas_coords(world3_to_cell(pos)) == tile_tg
+
+
 # ── Pathfinding (contournement d'obstacles pour l'IA) ──────────────────────
 
 var _astar: AStarGrid2D = null
