@@ -76,20 +76,22 @@ func _ensure_sequence() -> void:
 		_seq_run_id = GameManager.run_count
 
 
-## Pool de biomes autorisés pour un ACTE donné — se durcit au fil des actes
-## (départ doux, fin rude).
+## Pool de biomes autorisés pour un ACTE donné — se durcit au fil des actes.
+## L'acte 1 est TOUJOURS la Prairie : faune de type Normal, la plus douce
+## pour démarrer une run (et son champion, Blanche, est de type Normal).
 func _pool_for_act(act: int) -> Array[int]:
 	match act:
-		0: return [MapGenerator.MapTheme.MEADOW, MapGenerator.MapTheme.FOREST]
+		0: return [MapGenerator.MapTheme.MEADOW]
 		1: return [MapGenerator.MapTheme.FOREST, MapGenerator.MapTheme.AUTUMN, MapGenerator.MapTheme.LAKE]
 		2: return [MapGenerator.MapTheme.SWAMP, MapGenerator.MapTheme.LAKE, MapGenerator.MapTheme.AUTUMN]
 		_: return [MapGenerator.MapTheme.ROCKY, MapGenerator.MapTheme.SWAMP]
 
 
-## UN biome par acte (jamais deux actes identiques d'affilée) + UN CHAMPION
-## d'arène par acte (jamais le même deux fois dans la run) — chaque boss
-## d'acte est un combat de dresseur, de plus en plus dur.
-var _champion_sequence: Array[int] = []   # index dans PokePools.CHAMPION_TEAMS
+## UN biome par acte (jamais deux actes identiques d'affilée) + le CHAMPION
+## de chaque acte est ASSORTI AU TYPE de son biome (Prairie → Blanche/Normal,
+## Lac → Ondine/Eau… cf. PokePools.BIOME_CHAMPIONS), en évitant de revoir le
+## même champion deux fois dans la run quand c'est possible.
+var _champion_sequence: Array[String] = []   # nom de compo par acte
 
 func _build_biome_sequence() -> void:
 	var rng := RandomNumberGenerator.new()
@@ -100,6 +102,7 @@ func _build_biome_sequence() -> void:
 	else:
 		rng.randomize()
 	_biome_sequence.clear()
+	_champion_sequence.clear()
 	var prev := -1
 	for act in ACTS:
 		var pool := _pool_for_act(act).duplicate()
@@ -109,21 +112,20 @@ func _build_biome_sequence() -> void:
 		var pick: int = pool[rng.randi() % pool.size()]
 		_biome_sequence.append(pick)
 		prev = pick
-	# Champions d'acte : tirage sans remise (Fisher-Yates avec le même rng
-	# pour rester déterministe en multijoueur)
-	var idxs: Array[int] = []
-	for i in PokePools.CHAMPION_TEAMS.size():
-		idxs.append(i)
-	for i in range(idxs.size() - 1, 0, -1):
-		var j := rng.randi_range(0, i)
-		var tmp := idxs[i]; idxs[i] = idxs[j]; idxs[j] = tmp
-	_champion_sequence = idxs.slice(0, ACTS)
+		# Champion du biome — un candidat pas encore affronté si possible
+		var cands: Array = (PokePools.BIOME_CHAMPIONS.get(pick, ["Blanche"]) as Array).duplicate()
+		var fresh := cands.filter(func(n: String) -> bool: return n not in _champion_sequence)
+		if not fresh.is_empty():
+			cands = fresh
+		_champion_sequence.append(cands[rng.randi() % cands.size()])
 
 
-## Compo de champion (PokePools.CHAMPION_TEAMS) affrontée au boss de `act`.
+## Compo de champion (PokePools.CHAMPION_TEAMS) affrontée au boss de `act` —
+## toujours du type de la région.
 func champion_for_act(act: int) -> Dictionary:
 	_ensure_sequence()
-	return PokePools.CHAMPION_TEAMS[_champion_sequence[clampi(act, 0, ACTS - 1)]]
+	var team := PokePools.team_by_name(_champion_sequence[clampi(act, 0, ACTS - 1)])
+	return team if not team.is_empty() else PokePools.CHAMPION_TEAMS[0]
 
 
 ## Biome (MapGenerator.MapTheme) de la zone courante — celui de l'ACTE.

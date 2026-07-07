@@ -44,7 +44,29 @@ const CHAMPION_TEAMS: Array[Dictionary] = [
 	{"name": "Morgane",   "type": "Psy",      "ids": [96, 122, 64, 97, 80, 65]},      # Soporifik, M. Mime, Kadabra, Hypnomade, Flagadoss, Alakazam
 	{"name": "Auguste",   "type": "Feu",      "ids": [77, 58, 126, 78, 38, 59]},      # Ponyta, Caninos, Magmar, Galopa, Feunard, Arcanin
 	{"name": "Giovanni",  "type": "Sol",      "ids": [51, 111, 31, 105, 34, 112]},    # Triopikeur, Rhinocorne, Nidoqueen, Ossatueur, Nidoking, Rhinoféros
+	{"name": "Blanche",   "type": "Normal",   "ids": [162, 20, 128, 217, 143, 241]},  # Fouinar, Rattatac, Tauros, Ursaring, Ronflex, Écrémeuh
 ]
+
+# ── Champion(s) plausibles par BIOME — le boss d'acte est TOUJOURS assorti
+# au type de sa région (Prairie → Normal, Lac → Eau, Marécage → Poison…).
+# Plusieurs candidats = un peu de variété d'une run à l'autre. Les champions
+# hors table (Major Bob, Morgane, Auguste) restent dispo pour de futurs
+# contenus (arène spéciale, grotte…).
+const BIOME_CHAMPIONS := {
+	MapGenerator.MapTheme.MEADOW: ["Blanche"],
+	MapGenerator.MapTheme.FOREST: ["Erika"],
+	MapGenerator.MapTheme.AUTUMN: ["Blanche", "Erika"],
+	MapGenerator.MapTheme.SWAMP:  ["Koga"],
+	MapGenerator.MapTheme.LAKE:   ["Ondine"],
+	MapGenerator.MapTheme.ROCKY:  ["Pierre", "Giovanni"],
+}
+
+## Compo de champion par nom ("Blanche" → Dictionary), {} si introuvable.
+static func team_by_name(champ_name: String) -> Dictionary:
+	for t: Dictionary in CHAMPION_TEAMS:
+		if t["name"] == champ_name:
+			return t
+	return {}
 
 ## Tous les ids des compos de champions (préchargement du cache).
 static func all_champion_ids() -> Array[int]:
