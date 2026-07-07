@@ -134,6 +134,10 @@ func _ready() -> void:
 	add_child(_ambiance)
 	_apply_ambiance()
 
+	# Pré-découpe des planches d'animation d'attaque — pendant le chargement,
+	# pas au premier coup en plein combat (à-coup).
+	AttackAnim.warm()
+
 	_cam = Camera3D.new()
 	_cam.fov = CAM_FOV
 	add_child(_cam)

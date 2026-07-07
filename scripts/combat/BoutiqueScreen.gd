@@ -55,7 +55,33 @@ func setup(team: Array, offers: Array, kind: String = "vendor") -> void:
 	_kind   = kind
 	_sel_member = -1
 	_sel_option = -1
+	# Navigation clavier : Échap = retour/fermer ; flèches = focus natif.
+	add_child(MenuNav.make(_on_cancel_pressed))
 	_rebuild()
+
+
+## Le jeu est en PAUSE tant que l'écran est ouvert — sinon les flèches de
+## navigation du menu déplaceraient aussi le Pokémon derrière.
+func _ready() -> void:
+	process_mode = Node.PROCESS_MODE_ALWAYS
+	get_tree().paused = true
+
+
+func _exit_tree() -> void:
+	get_tree().paused = false
+
+
+## Échap : remonte d'une étape (choix remplacement → choix attaque → parcours),
+## sinon ferme l'écran.
+func _on_cancel_pressed() -> void:
+	if _sel_option >= 0:
+		_sel_option = -1
+		_rebuild()
+	elif _sel_member >= 0:
+		_sel_member = -1
+		_rebuild()
+	else:
+		closed.emit()
 
 
 func refresh() -> void:
@@ -67,6 +93,8 @@ func refresh() -> void:
 
 func _rebuild() -> void:
 	for c in get_children():
+		if c is MenuNav:
+			continue   # le gestionnaire clavier survit aux reconstructions
 		c.queue_free()
 	_root = _bg_panel()
 
@@ -86,6 +114,8 @@ func _rebuild() -> void:
 		_build_pick_attack()
 	else:
 		_build_pick_replace()
+
+	MenuNav.focus_first(_root)   # flèches → navigation entre les boutons
 
 
 # ── Phase 1 : parcours (choix du Pokémon + CS + Baies) ─────────────────

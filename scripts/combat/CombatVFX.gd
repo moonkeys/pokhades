@@ -59,30 +59,30 @@ static func spawn_damage_number(parent: Node, pos: Vector3, amount: int, kind: S
 ## Éclat additif qui gonfle + gerbe d'étincelles projetées vers l'extérieur.
 ## Appelé au moment où un coup porte (cf. EnemyAI/TeamMember.take_damage) —
 ## `tint` colore l'éclat selon le type de l'attaque.
+## PERF : meshes/matériaux PARTAGÉS et mis en cache par teinte — un impact
+## par coup à cadence élevée ne doit rien allouer côté GPU ; le fondu passe
+## par GeometryInstance3D.transparency (par instance), jamais par le matériau
+## partagé.
+static var _impact_mesh:  QuadMesh = null
+static var _impact_pm:    ParticleProcessMaterial = null
+static var _impact_mats:  Dictionary = {}   # tint(Color) -> StandardMaterial3D (éclat)
+static var _spark_meshes: Dictionary = {}   # tint(Color) -> QuadMesh avec matériau étincelle
+
 static func spawn_impact(parent: Node, pos: Vector3, tint: Color = Color(1.0, 0.95, 0.72)) -> void:
 	if not is_instance_valid(parent) or not parent.is_inside_tree():
 		return
 
 	# Éclat central : quad additif face-caméra qui grossit et s'efface vite
-	var quad := QuadMesh.new()
-	quad.size = Vector2(1, 1)
-	var mat := StandardMaterial3D.new()
-	mat.albedo_texture  = _get_soft_texture()
-	mat.albedo_color    = tint
-	mat.transparency    = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mat.blend_mode      = BaseMaterial3D.BLEND_MODE_ADD
-	mat.shading_mode    = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.billboard_mode  = BaseMaterial3D.BILLBOARD_ENABLED
 	var mi := MeshInstance3D.new()
-	mi.mesh             = quad
-	mi.material_override = mat
-	mi.position         = pos
-	mi.scale            = Vector3.ONE * 0.45
+	mi.mesh              = _get_impact_mesh()
+	mi.material_override = _get_impact_mat(tint)
+	mi.position          = pos
+	mi.scale             = Vector3.ONE * 0.45
 	parent.add_child(mi)
 	var tw := mi.create_tween().set_parallel(true)
 	tw.tween_property(mi, "scale", Vector3.ONE * 1.7, 0.18) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-	tw.tween_property(mat, "albedo_color:a", 0.0, 0.18).set_ease(Tween.EASE_IN)
+	tw.tween_property(mi, "transparency", 1.0, 0.18).set_ease(Tween.EASE_IN)
 	tw.chain().tween_callback(mi.queue_free)
 
 	# Gerbe d'étincelles — burst rapide et serré, additif, teinté
@@ -93,19 +93,56 @@ static func spawn_impact(parent: Node, pos: Vector3, tint: Color = Color(1.0, 0.
 	p.lifetime      = 0.30
 	p.explosiveness = 1.0
 	p.position      = pos
-	var pm := ParticleProcessMaterial.new()
-	pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
-	pm.emission_sphere_radius = 0.06
-	pm.direction     = Vector3(0, 0.25, 0)
-	pm.spread        = 170.0
-	pm.initial_velocity_min = 2.6
-	pm.initial_velocity_max = 5.2
-	pm.gravity       = Vector3(0, -5.0, 0)
-	pm.damping_min   = 1.0
-	pm.damping_max   = 2.5
-	pm.scale_min     = 0.5
-	pm.scale_max     = 1.1
-	p.process_material = pm
+	p.process_material = _get_impact_pm()
+	p.draw_pass_1      = _get_spark_mesh(tint)
+	parent.add_child(p)
+	parent.get_tree().create_timer(0.7).timeout.connect(func() -> void:
+		if is_instance_valid(p):
+			p.queue_free()
+	)
+
+
+static func _get_impact_mesh() -> QuadMesh:
+	if _impact_mesh == null:
+		_impact_mesh = QuadMesh.new()
+		_impact_mesh.size = Vector2(1, 1)
+	return _impact_mesh
+
+
+static func _get_impact_mat(tint: Color) -> StandardMaterial3D:
+	if _impact_mats.has(tint):
+		return _impact_mats[tint]
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture  = _get_soft_texture()
+	mat.albedo_color    = tint
+	mat.transparency    = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.blend_mode      = BaseMaterial3D.BLEND_MODE_ADD
+	mat.shading_mode    = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.billboard_mode  = BaseMaterial3D.BILLBOARD_ENABLED
+	_impact_mats[tint] = mat
+	return mat
+
+
+static func _get_impact_pm() -> ParticleProcessMaterial:
+	if _impact_pm == null:
+		_impact_pm = ParticleProcessMaterial.new()
+		_impact_pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
+		_impact_pm.emission_sphere_radius = 0.06
+		_impact_pm.direction     = Vector3(0, 0.25, 0)
+		_impact_pm.spread        = 170.0
+		_impact_pm.initial_velocity_min = 2.6
+		_impact_pm.initial_velocity_max = 5.2
+		_impact_pm.gravity       = Vector3(0, -5.0, 0)
+		_impact_pm.damping_min   = 1.0
+		_impact_pm.damping_max   = 2.5
+		_impact_pm.scale_min     = 0.5
+		_impact_pm.scale_max     = 1.1
+	return _impact_pm
+
+
+static func _get_spark_mesh(tint: Color) -> QuadMesh:
+	if _spark_meshes.has(tint):
+		return _spark_meshes[tint]
 	var pquad := QuadMesh.new()
 	pquad.size = Vector2(0.14, 0.14)
 	var pmat := StandardMaterial3D.new()
@@ -116,12 +153,8 @@ static func spawn_impact(parent: Node, pos: Vector3, tint: Color = Color(1.0, 0.
 	pmat.shading_mode   = BaseMaterial3D.SHADING_MODE_UNSHADED
 	pmat.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
 	pquad.material = pmat
-	p.draw_pass_1 = pquad
-	parent.add_child(p)
-	parent.get_tree().create_timer(0.7).timeout.connect(func() -> void:
-		if is_instance_valid(p):
-			p.queue_free()
-	)
+	_spark_meshes[tint] = pquad
+	return pquad
 
 
 ## Couleur d'impact d'un type d'attaque (repli : blanc chaud).

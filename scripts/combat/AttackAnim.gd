@@ -38,6 +38,14 @@ const TYPE_SHEETS := {
 static var _frames_cache: Dictionary = {}   # file -> SpriteFrames (ou null si illisible)
 
 
+## Pré-découpe TOUTES les planches (à appeler au chargement de l'arène) :
+## sans ça, le premier coup de chaque type payait le décompress + découpe de
+## sa planche EN PLEIN COMBAT → à-coup visible à l'impact.
+static func warm() -> void:
+	for t in TYPE_SHEETS:
+		_get_frames(TYPE_SHEETS[t]["file"])
+
+
 ## Joue l'animation du type `move_type` à `pos` (position monde de la cible).
 static func play(parent: Node, pos: Vector3, move_type: String) -> void:
 	if not is_instance_valid(parent) or not parent.is_inside_tree():

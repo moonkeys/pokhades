@@ -8,15 +8,15 @@ const SPEED         := 9.4    # unités/s (cf. TeamMember.SPEED)
 const DASH_SPEED    := 26.0
 const DASH_TIME     := 0.16
 const DASH_RECHARGE := 2.5    # secondes pour regagner une charge
-const DASH_MAX      := 1
 const FOOT_LIFT     := 0.06
 
 var _sprite:   AnimatedSprite3D = null
 var _anim:     String = "idle"
 var _has_dirs: bool   = false
 
-# Dash (esquive/burst) — même logique qu'en combat
-var _dash_charges:  int     = DASH_MAX
+# Dash (esquive/burst) — même logique qu'en combat ; le nombre de charges
+# vient des achats du hub (GameManager.dash_charges_bought, 0 au départ).
+var _dash_charges:  int     = GameManager.dash_charges_bought
 var _dash_recharge: float   = 0.0
 var _dash_timer:    float   = 0.0
 var _dash_dir:      Vector3 = Vector3.ZERO
@@ -64,7 +64,7 @@ func _on_sprites(result: Dictionary) -> void:
 
 func move_tick(delta: float, blocked: bool) -> void:
 	# Recharge du dash même à l'arrêt / en dialogue (comme en combat)
-	if _dash_charges < DASH_MAX:
+	if _dash_charges < GameManager.dash_charges_bought:
 		_dash_recharge += delta
 		if _dash_recharge >= DASH_RECHARGE:
 			_dash_recharge = 0.0

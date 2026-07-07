@@ -45,8 +45,10 @@ func _ready() -> void:
 	_sorted_ids.sort()
 	if not _sorted_ids.is_empty():
 		_selected_pid = _sorted_ids[0]
+	add_child(MenuNav.make(func() -> void: closed.emit()))   # Échap = fermer
 	_build()
 	_fetch_all()
+	MenuNav.focus_first(self)
 
 
 func _build() -> void:

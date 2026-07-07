@@ -15,7 +15,9 @@ const C_GOOD   := Color(0.38, 0.82, 0.45)
 
 func _ready() -> void:
 	layer = 10
+	add_child(MenuNav.make(func() -> void: closed.emit()))   # Échap = fermer
 	_build()
+	MenuNav.focus_first(self)
 
 
 func _build() -> void:
@@ -127,6 +129,41 @@ func _build() -> void:
 		)
 		magnet_card.add_child(mbtn)
 
+	# ── Charges de Dash (Maj en run) — 0 au départ, 3 max ─────────────
+	_lbl(panel, "Charges de Dash", 560, 95, 400, 26, 17, C_TEXT)
+	_lbl(panel, "Esquive/burst (Maj) — tu commences sans dash", 560, 119, 400, 20, 12, C_DIM)
+	var dash_names := ["0 dash\n(départ)", "1 charge", "2 charges", "3 charges\n(max)"]
+	for i in 4:
+		var d_owned   := i <= GameManager.dash_charges_bought
+		var d_current := i == GameManager.dash_charges_bought
+		var d_buyable := i == GameManager.dash_charges_bought + 1 and i <= 3
+		var d_cost    := GameManager.DASH_CHARGE_COSTS[i - 1] if i > 0 else 0
+
+		var d_card := Panel.new()
+		d_card.position = Vector2(560 + i * 104, 148)
+		d_card.size     = Vector2(96, 88)
+		_style(d_card,
+			Color(0.84, 0.76, 0.60) if d_owned else Color(0.70, 0.63, 0.50),
+			C_GOLD if d_current else C_BORDER, 8)
+		panel.add_child(d_card)
+
+		_lbl(d_card, dash_names[i], 4, 6, 88, 44, 11, C_TEXT if d_owned else C_DIM, true)
+
+		if d_buyable:
+			var d_btn := _mk_buy_btn("%d Baies" % d_cost, Vector2(4, 54), Vector2(88, 28),
+				GameManager.gold >= d_cost)
+			var cap_d_cost := d_cost
+			d_btn.pressed.connect(func() -> void:
+				if GameManager.spend_gold(cap_d_cost):
+					GameManager.dash_charges_bought += 1
+					_rebuild()
+			)
+			d_card.add_child(d_btn)
+		elif d_owned:
+			_lbl(d_card, "✓ Obtenu", 4, 62, 88, 20, 11, C_GOOD, true)
+		else:
+			_lbl(d_card, "Bloqué", 4, 62, 88, 20, 11, C_DIM, true)
+
 	# ── Capacités Spéciales — permanentes, valables pour toutes les runs ──
 	_lbl(panel, "Capacités Spéciales", 360, 428, 460, 26, 17, C_TEXT)
 	_lbl(panel, "Franchis les obstacles en run (touche A) — définitif", 360, 452, 460, 20, 12, C_DIM)
@@ -186,9 +223,12 @@ func _buy_team_slot(cost: int) -> void:
 
 func _rebuild() -> void:
 	for child in get_children():
+		if child is MenuNav:
+			continue
 		child.queue_free()
 	await get_tree().process_frame
 	_build()
+	MenuNav.focus_first(self)
 
 
 # ── Helpers UI ────────────────────────────────────────────────────────

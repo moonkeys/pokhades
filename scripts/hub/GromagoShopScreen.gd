@@ -20,7 +20,9 @@ const C_GOOD   := Color(0.38, 0.82, 0.45)
 
 func _ready() -> void:
 	layer = 10
+	add_child(MenuNav.make(func() -> void: closed.emit()))   # Échap = fermer
 	_build()
+	MenuNav.focus_first(self)
 
 
 func _build() -> void:
@@ -137,9 +139,12 @@ func _buy(api: String) -> void:
 
 func _rebuild() -> void:
 	for child in get_children():
+		if child is MenuNav:
+			continue
 		child.queue_free()
 	await get_tree().process_frame
 	_build()
+	MenuNav.focus_first(self)
 
 
 # ── Helpers UI ────────────────────────────────────────────────────────

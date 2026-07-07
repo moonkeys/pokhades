@@ -17,7 +17,9 @@ var _feedback_lbl: Label = null
 
 
 func _ready() -> void:
+	add_child(MenuNav.make(func() -> void: closed.emit()))   # Échap = fermer
 	_build()
+	MenuNav.focus_first(self)
 
 
 func _build() -> void:

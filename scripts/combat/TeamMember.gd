@@ -29,11 +29,13 @@ var is_active:  bool = false
 var _leader: Node3D = null        # membre actif à suivre (compagnons seulement)
 
 # ── Modificateurs de run (bonus de fin de zone, cf. CombatArena._apply_bonus) ──
-var dash_max_charges: int   = 1     # +1 par bonus "dash_plus"
+# Base du Dash = charges ACHETÉES au hub (0 au départ, jusqu'à 3) ; le bonus
+# de run "dash_plus" peut encore en ajouter temporairement.
+var dash_max_charges: int   = GameManager.dash_charges_bought
 var cooldown_mult:    float = 1.0   # ×0.85 par bonus "atk_rate"
 var xp_mult:          float = 1.0   # ×1.25 par bonus "xp_up"
 
-var _dash_charges:  int   = 1
+var _dash_charges:  int   = GameManager.dash_charges_bought
 var _dash_recharge: float = 0.0
 var _dash_timer:    float = 0.0
 var _dash_dir:      Vector3 = Vector3.ZERO

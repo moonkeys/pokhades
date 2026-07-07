@@ -106,6 +106,7 @@ func get_start_level_bonus(pid: int) -> int:
 # ── Améliorations permanentes achetées au hub ─────────────────────────
 var move_slot_count:       int           = 1   # emplacements capacités (1-4)
 var team_slot_count:       int           = 1   # taille équipe (1-6)
+var dash_charges_bought:   int           = 0   # charges de Dash (0-3) — 0 au départ
 var purchased_move_names:  Array[String] = []  # capacités achetées chez le tuteur
 
 # Moveset configuré par Pokémon depuis le Pokédex — persiste même hors équipe.
@@ -114,6 +115,7 @@ var move_loadouts: Dictionary = {}
 
 const MOVE_SLOT_COSTS: Array[int] = [100, 200, 400]  # coût pour passer à 2, 3, 4 slots
 const TEAM_SLOT_COSTS: Array[int] = [80, 120, 180, 250, 350]  # pour chaque slot ajouté
+const DASH_CHARGE_COSTS: Array[int] = [60, 120, 200]  # coût des charges de Dash 1, 2, 3
 
 
 ## Capacités explicitement choisies pour ce Pokémon (vide si jamais configuré).
@@ -235,6 +237,7 @@ func enable_test_mode(starter_id: int) -> void:
 	gold             = 9999
 	move_slot_count  = 4
 	team_slot_count  = 6
+	dash_charges_bought = 3
 	berry_magnet     = true
 	is_first_run     = false
 
