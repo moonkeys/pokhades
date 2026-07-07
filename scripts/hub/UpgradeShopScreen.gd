@@ -3,14 +3,14 @@ extends CanvasLayer
 
 signal closed
 
-const C_BG     := Color(0.04, 0.03, 0.02, 0.82)
-const C_PANEL  := Color(0.10, 0.075, 0.045, 0.96)
-const C_BORDER := Color(0.62, 0.50, 0.32)
-const C_TEXT   := Color(0.96, 0.92, 0.80)
-const C_DIM    := Color(0.62, 0.55, 0.42)
-const C_GOLD   := Color(0.92, 0.72, 0.25)
-const C_GOLD_LT:= Color(0.94, 0.88, 0.72)
-const C_GOOD   := Color(0.38, 0.82, 0.45)
+# Palette « bois & parchemin » (cf. UiKit) — texte SOMBRE sur les cartes
+# parchemin, titres CRÈME sur le panneau bois.
+const C_BORDER := UiKit.WOOD_EDGE
+const C_TEXT   := UiKit.TEXT_DARK
+const C_DIM    := Color(0.45, 0.33, 0.20)
+const C_GOLD   := Color(0.72, 0.52, 0.12)
+const C_GOLD_LT:= UiKit.GOLD
+const C_GOOD   := UiKit.GREEN_DARK
 
 
 func _ready() -> void:
@@ -21,29 +21,21 @@ func _ready() -> void:
 
 
 func _build() -> void:
-	var bg := ColorRect.new()
-	bg.color = C_BG
-	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(bg)
+	var veil := ColorRect.new()
+	veil.color = Color(0.04, 0.05, 0.03, 0.45)
+	veil.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(veil)
 
-	var panel := Panel.new()
-	panel.position = Vector2(140, 60)
-	panel.size     = Vector2(1000, 600)
-	_style(panel, C_PANEL, C_BORDER, 14)
+	var panel := UiKit.main_panel(Vector2(140, 60), Vector2(1000, 600))
 	add_child(panel)
-
-	var hdr := Panel.new()
-	hdr.position = Vector2(0, 0)
-	hdr.size     = Vector2(1000, 72)
-	_style_col(hdr, Color(0.24, 0.18, 0.08), 14, true)
-	panel.add_child(hdr)
-
-	_lbl(panel, "⊕  AMÉLIORATIONS PERMANENTES", 24, 14, 700, 44, 22, C_GOLD_LT)
-	_lbl(panel, "◆ %d Baies" % GameManager.gold, 760, 22, 200, 28, 16, C_GOLD)
+	UiKit.banner(panel, "Améliorations permanentes")
+	UiKit.pop_in(panel)
+	UiKit.label(panel, "◆ %d Baies" % GameManager.gold, Vector2(0, 64), 15,
+		UiKit.GOLD, 1000, HORIZONTAL_ALIGNMENT_CENTER)
 
 	# ── Section capacités ─────────────────────────────────────────────
-	_lbl(panel, "Emplacements de capacités", 40, 95, 460, 26, 17, C_TEXT)
-	_lbl(panel, "Chaque Pokémon équipe plus de capacités en combat", 40, 119, 460, 20, 12, C_DIM)
+	_lbl(panel, "Emplacements de capacités", 40, 95, 460, 26, 17, UiKit.CREAM)
+	_lbl(panel, "Chaque Pokémon équipe plus de capacités en combat", 40, 119, 460, 20, 12, Color(0.85, 0.78, 0.62))
 
 	var slot_names := ["1 slot\n(départ)", "2 slots", "3 slots", "4 slots\n(max)"]
 	for i in 4:
@@ -56,7 +48,7 @@ func _build() -> void:
 		card.position = Vector2(40 + i * 116, 148)
 		card.size     = Vector2(104, 88)
 		_style(card,
-			Color(0.20, 0.16, 0.09) if owned else Color(0.12, 0.10, 0.06),
+			UiKit.TAN if owned else UiKit.TAN_DARK,
 			C_GOLD if current else C_BORDER, 8)
 		panel.add_child(card)
 
@@ -74,8 +66,8 @@ func _build() -> void:
 			_lbl(card, "Bloqué", 4, 62, 96, 20, 11, C_DIM, true)
 
 	# ── Section équipe ────────────────────────────────────────────────
-	_lbl(panel, "Slots d'équipe", 40, 268, 460, 26, 17, C_TEXT)
-	_lbl(panel, "Augmente la taille maximale de ton équipe de combat", 40, 292, 460, 20, 12, C_DIM)
+	_lbl(panel, "Slots d'équipe", 40, 268, 460, 26, 17, UiKit.CREAM)
+	_lbl(panel, "Augmente la taille maximale de ton équipe de combat", 40, 292, 460, 20, 12, Color(0.85, 0.78, 0.62))
 
 	var team_names := ["1 Pokémon\n(départ)", "2 Pokémon", "3 Pokémon", "4 Pokémon", "5 Pokémon", "6 Pokémon\n(max)"]
 	for i in 6:
@@ -88,7 +80,7 @@ func _build() -> void:
 		card.position = Vector2(40 + i * 153, 320)
 		card.size     = Vector2(140, 88)
 		_style(card,
-			Color(0.20, 0.16, 0.09) if owned else Color(0.12, 0.10, 0.06),
+			UiKit.TAN if owned else UiKit.TAN_DARK,
 			C_GOLD if current else C_BORDER, 8)
 		panel.add_child(card)
 
@@ -104,14 +96,14 @@ func _build() -> void:
 			_lbl(card, "✓ Obtenu", 4, 62, 132, 20, 11, C_GOOD, true)
 
 	# ── Section passifs ───────────────────────────────────────────────
-	_lbl(panel, "Passifs de récolte", 40, 428, 460, 26, 17, C_TEXT)
-	_lbl(panel, "Effets permanents actifs pendant tes runs", 40, 452, 460, 20, 12, C_DIM)
+	_lbl(panel, "Passifs de récolte", 40, 428, 460, 26, 17, UiKit.CREAM)
+	_lbl(panel, "Effets permanents actifs pendant tes runs", 40, 452, 460, 20, 12, Color(0.85, 0.78, 0.62))
 
 	var magnet_card := Panel.new()
 	magnet_card.position = Vector2(40, 480)
 	magnet_card.size     = Vector2(300, 88)
 	var has_magnet := GameManager.berry_magnet
-	_style(magnet_card, Color(0.20, 0.16, 0.09) if has_magnet else Color(0.12, 0.10, 0.06),
+	_style(magnet_card, UiKit.TAN if has_magnet else UiKit.TAN_DARK,
 		C_GOLD if has_magnet else C_BORDER, 8)
 	panel.add_child(magnet_card)
 	_lbl(magnet_card, "🧲  Aimant à Baies", 10, 8, 280, 22, 15, C_TEXT)
@@ -130,8 +122,8 @@ func _build() -> void:
 		magnet_card.add_child(mbtn)
 
 	# ── Charges de Dash (Maj en run) — 0 au départ, 3 max ─────────────
-	_lbl(panel, "Charges de Dash", 560, 95, 400, 26, 17, C_TEXT)
-	_lbl(panel, "Esquive/burst (Maj) — tu commences sans dash", 560, 119, 400, 20, 12, C_DIM)
+	_lbl(panel, "Charges de Dash", 560, 95, 400, 26, 17, UiKit.CREAM)
+	_lbl(panel, "Esquive/burst (Maj) — tu commences sans dash", 560, 119, 400, 20, 12, Color(0.85, 0.78, 0.62))
 	var dash_names := ["0 dash\n(départ)", "1 charge", "2 charges", "3 charges\n(max)"]
 	for i in 4:
 		var d_owned   := i <= GameManager.dash_charges_bought
@@ -143,7 +135,7 @@ func _build() -> void:
 		d_card.position = Vector2(560 + i * 104, 148)
 		d_card.size     = Vector2(96, 88)
 		_style(d_card,
-			Color(0.84, 0.76, 0.60) if d_owned else Color(0.70, 0.63, 0.50),
+			UiKit.TAN if d_owned else UiKit.TAN_DARK,
 			C_GOLD if d_current else C_BORDER, 8)
 		panel.add_child(d_card)
 
@@ -165,8 +157,8 @@ func _build() -> void:
 			_lbl(d_card, "Bloqué", 4, 62, 88, 20, 11, C_DIM, true)
 
 	# ── Capacités Spéciales — permanentes, valables pour toutes les runs ──
-	_lbl(panel, "Capacités Spéciales", 360, 428, 460, 26, 17, C_TEXT)
-	_lbl(panel, "Franchis les obstacles en run (touche A) — définitif", 360, 452, 460, 20, 12, C_DIM)
+	_lbl(panel, "Capacités Spéciales", 360, 428, 460, 26, 17, UiKit.CREAM)
+	_lbl(panel, "Franchis les obstacles en run (touche A) — définitif", 360, 452, 460, 20, 12, Color(0.85, 0.78, 0.62))
 
 	for i in GameManager.CS_CATALOG.size():
 		var cs: Dictionary = GameManager.CS_CATALOG[i]
@@ -175,7 +167,7 @@ func _build() -> void:
 		var cs_card := Panel.new()
 		cs_card.position = Vector2(360 + i * 205, 480)
 		cs_card.size     = Vector2(195, 88)
-		_style(cs_card, Color(0.20, 0.16, 0.09) if has_cs else Color(0.12, 0.10, 0.06),
+		_style(cs_card, UiKit.TAN if has_cs else UiKit.TAN_DARK,
 			C_GOLD if has_cs else C_BORDER, 8)
 		panel.add_child(cs_card)
 		_lbl(cs_card, "%s  %s" % [cs["sym"], cs["name"]], 10, 8, 180, 22, 14, C_TEXT)
@@ -196,13 +188,8 @@ func _build() -> void:
 			cs_card.add_child(cs_btn)
 
 	# ── Fermer ────────────────────────────────────────────────────────
-	var close := Button.new()
-	close.text     = "✕  Fermer"
+	var close := UiKit.button("✕  Fermer", Vector2(160, 40), false)
 	close.position = Vector2(816, 548)
-	close.size     = Vector2(160, 40)
-	close.add_theme_font_size_override("font_size", 15)
-	close.add_theme_color_override("font_color", C_DIM)
-	_btn_neutral(close)
 	close.pressed.connect(func() -> void: closed.emit())
 	panel.add_child(close)
 
@@ -234,21 +221,10 @@ func _rebuild() -> void:
 # ── Helpers UI ────────────────────────────────────────────────────────
 
 func _mk_buy_btn(text: String, pos: Vector2, sz: Vector2, enabled: bool) -> Button:
-	var btn := Button.new()
-	btn.text     = text
+	var btn := UiKit.button(text, sz)   # bouton vert du kit (juice inclus)
 	btn.position = pos
-	btn.size     = sz
 	btn.disabled = not enabled
 	btn.add_theme_font_size_override("font_size", 12)
-	btn.add_theme_color_override("font_color", C_GOLD if enabled else C_DIM)
-	var sn := StyleBoxFlat.new()
-	sn.bg_color = Color(0.22, 0.17, 0.09); sn.border_color = C_GOLD if enabled else C_BORDER
-	sn.set_border_width_all(2); sn.set_corner_radius_all(6)
-	var sh := sn.duplicate() as StyleBoxFlat
-	sh.bg_color = Color(0.30, 0.24, 0.12)
-	btn.add_theme_stylebox_override("normal",  sn)
-	btn.add_theme_stylebox_override("hover",   sh)
-	btn.add_theme_stylebox_override("pressed", sh)
 	return btn
 
 
@@ -272,20 +248,3 @@ func _style(p: Panel, bg: Color, border: Color, radius: int) -> void:
 	p.add_theme_stylebox_override("panel", s)
 
 
-func _style_col(p: Panel, bg: Color, radius: int, top_only: bool = false) -> void:
-	var s := StyleBoxFlat.new()
-	s.bg_color = bg
-	if top_only:
-		s.corner_radius_top_left = radius; s.corner_radius_top_right = radius
-	else:
-		s.set_corner_radius_all(radius)
-	p.add_theme_stylebox_override("panel", s)
-
-
-func _btn_neutral(btn: Button) -> void:
-	var s := StyleBoxFlat.new()
-	s.bg_color = Color(0.22, 0.18, 0.11); s.set_corner_radius_all(8)
-	btn.add_theme_stylebox_override("normal", s)
-	var sh := s.duplicate() as StyleBoxFlat
-	sh.bg_color = Color(0.30, 0.25, 0.15)
-	btn.add_theme_stylebox_override("hover", sh)

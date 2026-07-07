@@ -52,27 +52,17 @@ func _ready() -> void:
 
 
 func _build() -> void:
-	var bg := ColorRect.new()
-	bg.color = C_BG
-	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(bg)
+	var veil := ColorRect.new()
+	veil.color = Color(0.04, 0.05, 0.03, 0.45)
+	veil.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(veil)
 
-	var panel := Panel.new()
-	panel.position = Vector2(100, 50)
-	panel.size     = Vector2(1080, 620)
-	_style(panel, C_PANEL, C_BORDER, 14)
+	var panel := UiKit.main_panel(Vector2(100, 50), Vector2(1080, 620))
 	add_child(panel)
-
-	# Header
-	var hdr := Panel.new()
-	hdr.position = Vector2(0, 0)
-	hdr.size     = Vector2(1080, 72)
-	_style_col(hdr, Color(0.24, 0.18, 0.08), 14, true)
-	panel.add_child(hdr)
-
-	_lbl(panel, "⊕  POKÉDEX", 24, 14, 700, 44, 24, C_GOLD_LT)
+	UiKit.banner(panel, "Pokédex & Équipe")
+	UiKit.pop_in(panel)
 	var count_str := "%d débloqués  •  %d aperçus" % [GameManager.unlocked_pokemon.size(), _sorted_ids.size()]
-	_lbl(panel, count_str, 700, 22, 360, 28, 16, C_DIM, true)
+	_lbl(panel, count_str, 0, 64, 1080, 22, 13, C_DIM, true)
 
 	if _sorted_ids.is_empty():
 		_lbl(panel,
@@ -90,13 +80,8 @@ func _build() -> void:
 	]
 	_lbl(panel, prg_str, 0, 590, 1080, 20, 12, C_DIM, true)
 
-	var close := Button.new()
-	close.text     = "✕  Fermer"
-	close.position = Vector2(24, 580)
-	close.size     = Vector2(160, 36)
-	close.add_theme_font_size_override("font_size", 14)
-	close.add_theme_color_override("font_color", C_DIM)
-	_btn_neutral(close)
+	var close := UiKit.button("✕  Fermer", Vector2(160, 38), false)
+	close.position = Vector2(24, 578)
 	close.pressed.connect(func() -> void: closed.emit())
 	panel.add_child(close)
 
@@ -272,12 +257,9 @@ func _fill_type_row(row: Control, types: Array) -> void:
 	for c in row.get_children():
 		c.queue_free()
 	var tx := 0.0
-	var pw := 54.0
 	for t in types:
-		var pill := TypeIcon.make_pill(str(t), pw, 17.0, 9)
-		pill.position = Vector2(tx, 0)
-		row.add_child(pill)
-		tx += pw + 4.0
+		var pill := UiKit.type_badge(row, Vector2(tx, 0), str(t), 18.0)
+		tx += pill.size.x + 4.0
 
 
 func _select(pid: int) -> void:
@@ -699,22 +681,3 @@ func _style(p: Panel, bg: Color, border: Color, radius: int) -> void:
 	s.set_corner_radius_all(radius)
 	s.shadow_color = Color(0, 0, 0, 0.14); s.shadow_size = 3
 	p.add_theme_stylebox_override("panel", s)
-
-
-func _style_col(p: Panel, bg: Color, radius: int, top_only: bool = false) -> void:
-	var s := StyleBoxFlat.new()
-	s.bg_color = bg
-	if top_only:
-		s.corner_radius_top_left = radius; s.corner_radius_top_right = radius
-	else:
-		s.set_corner_radius_all(radius)
-	p.add_theme_stylebox_override("panel", s)
-
-
-func _btn_neutral(btn: Button) -> void:
-	var s := StyleBoxFlat.new()
-	s.bg_color = Color(0.22, 0.18, 0.11); s.set_corner_radius_all(8)
-	btn.add_theme_stylebox_override("normal", s)
-	var sh := s.duplicate() as StyleBoxFlat
-	sh.bg_color = Color(0.30, 0.25, 0.15)
-	btn.add_theme_stylebox_override("hover", sh)
