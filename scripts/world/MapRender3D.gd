@@ -155,20 +155,13 @@ func _build_berry_trees() -> void:
 		placed += 1
 
 
-# Baies Essentials par biome (planche berrytree_<NOM>.png + item <NOM>.png).
+# Baies Essentials par biome — liste CENTRALISÉE dans PokePools.gd.
 const _BERRY_TREE_DIR := "res://Pokemon Essentials v21.1 2023-07-30/Graphics/Characters/berrytree_%s.png"
 const _BERRY_ITEM_DIR := "res://Pokemon Essentials v21.1 2023-07-30/Graphics/Items/%s.png"
-const _BERRIES_BY_THEME := {
-	MapGenerator.MapTheme.FOREST: ["CHERIBERRY", "PECHABERRY", "LEPPABERRY"],
-	MapGenerator.MapTheme.MEADOW: ["ORANBERRY", "PERSIMBERRY", "PECHABERRY"],
-	MapGenerator.MapTheme.SWAMP:  ["AGUAVBERRY", "RAWSTBERRY", "CHESTOBERRY"],
-	MapGenerator.MapTheme.AUTUMN: ["SITRUSBERRY", "FIGYBERRY", "NANABBERRY"],
-	MapGenerator.MapTheme.LAKE:   ["ORANBERRY", "ASPEARBERRY", "MAGOBERRY"],
-}
 
 ## Liste des baies (noms Essentials) plausibles pour le biome.
 func _berries_for_theme(theme: int) -> Array:
-	return _BERRIES_BY_THEME.get(theme, ["CHERIBERRY", "ORANBERRY"])
+	return PokePools.BERRIES_BY_THEME.get(theme, ["CHERIBERRY", "ORANBERRY"])
 
 
 # ─────────────────────────────────────────────────────────────────

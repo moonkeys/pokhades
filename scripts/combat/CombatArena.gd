@@ -25,36 +25,17 @@ var _near_obstacle: Dictionary = {}
 var _near_chest_prompt: String = ""   # "" si aucun coffre à portée
 
 
-# ── Pools ennemis — Zone 1 ───────────────────────────────────────────
-# Rongeurs (Normal)  — vagues 1+
-const POOL_RODENTS:   Array[int] = [399, 19, 263, 161, 819]
-# Insectes (Insecte) — vagues 1+
-const POOL_BUGS:      Array[int] = [10, 13, 265, 824, 851]
-# Éclaireurs (Normal/Vol) — vagues 3+
-const POOL_FLYERS:    Array[int] = [16, 396, 661, 519]
-# Premiers élémentaires — vagues 4+
-const POOL_ELEM:      Array[int] = [403, 261, 191, 43]
-# Semi-boss (évolutions) — vagues 5+
-const POOL_SEMI_BOSS: Array[int] = [20, 400, 17, 404, 402, 262, 55, 162]
-# Boss de zone — vague 10
-const POOL_BOSSES:    Array[int] = [143, 123, 128, 24, 22, 862]
-# Élite de grotte — sbires de l'arène de demi-boss (plus faibles que le boss)
-const POOL_CAVE_ELITE: Array[int] = [217, 229, 359, 297, 342]
-# Demi-boss de grotte — espèces NON ÉVOLUÉES recrutables : les battre débloque
-# l'espèce (bases de pseudo-légendaires, récompense de choix)
-const POOL_CAVE_DEMIBOSS: Array[int] = [147, 246, 371, 443, 610, 633, 704]  # Minidraco, Embrylex, Draby, Griknot, Coupenotte, Solochi, Mucuscule
-
-# ── Habitants par biome — mélangés au pool de base selon le thème de la
-# map courante (double pondération : la faune locale domine la composition
-# sans exclure les espèces communes). Cf. _pool_for_room / _current_theme.
-const POOL_BIOME: Dictionary = {
-	MapGenerator.MapTheme.FOREST: [46, 69, 273, 285, 204, 540],   # Paras, Chétiflor, Grainipiot, Balignon, Pomdepik, Larveyette
-	MapGenerator.MapTheme.SWAMP:  [194, 88, 23, 41, 270, 283],    # Axoloto, Tadmorv, Abo, Nosferapti, Nénupiot, Arakdo
-	MapGenerator.MapTheme.MEADOW: [187, 415, 669, 179, 659],      # Granivol, Apitrini, Flabébé, Wattouat, Sapereau
-	MapGenerator.MapTheme.ROCKY:  [74, 66, 296, 304, 524, 744],   # Racaillou, Machoc, Makuhita, Galekid, Nodulithe, Rocabot
-	MapGenerator.MapTheme.AUTUMN: [585, 216, 46, 163, 204],       # Vivaldaim, Teddiursa, Paras, Hoothoot, Pomdepik
-	MapGenerator.MapTheme.LAKE:   [118, 129, 194, 54, 60, 79],    # Poissirène, Magicarpe, Axoloto, Psykokwak, Ptitard, Ramoloss
-}
+# ── Pools ennemis — CENTRALISÉS dans PokePools.gd (le fichier à éditer
+# pour changer le casting) ; alias locaux pour garder le code lisible. ──
+const POOL_RODENTS       := PokePools.RODENTS
+const POOL_BUGS          := PokePools.BUGS
+const POOL_FLYERS        := PokePools.FLYERS
+const POOL_ELEM          := PokePools.ELEM
+const POOL_SEMI_BOSS     := PokePools.SEMI_BOSS
+const POOL_BOSSES        := PokePools.BOSSES
+const POOL_CAVE_ELITE    := PokePools.CAVE_ELITE
+const POOL_CAVE_DEMIBOSS := PokePools.CAVE_DEMIBOSS
+const POOL_BIOME         := PokePools.BIOME
 
 const PLAYER_LEVEL:    int = 10
 const SEMI_BOSS_LEVEL: int = 13
@@ -102,9 +83,9 @@ var _saved_room_total: int    = 0
 var _saved_team_pos:  Array   = []          # positions équipe avant la grotte
 
 # ── Boutique : salle non-combat occasionnelle (vendeur Perrserker) ────
-const BOUTIQUE_VENDOR_PID   := 863   # Perrserker
-const BOUTIQUE_SLEEPER_PID  := 925   # Maushold (endormi)
-const BOUTIQUE_WANDERER_PID := 79    # Ramoloss (déambule)
+const BOUTIQUE_VENDOR_PID   := PokePools.BOUTIQUE_VENDOR
+const BOUTIQUE_SLEEPER_PID  := PokePools.BOUTIQUE_SLEEPER
+const BOUTIQUE_WANDERER_PID := PokePools.BOUTIQUE_WANDERER
 const BOUTIQUE_MOVE_PRICE   := 110   # ₽ pour apprendre une attaque puissante
 
 var _boutique_active: bool  = false
@@ -1018,36 +999,6 @@ func _net_victory() -> void:
 	_run_victory()
 
 
-func _show_run_status(gold: int) -> void:
-	var screen := RunStatusScreen.new()
-	add_child(screen)
-	screen.setup(_team, gold)
-
-	# Boutique : chaque achat débite les ₽ puis applique l'effet ; l'écran se
-	# reconstruit pour refléter le nouveau solde/les PV soignés.
-	screen.purchase.connect(func(item_id: String) -> void:
-		var price := _run_shop_price(item_id)
-		if GameManager.spend_run_money(price):
-			_apply_bonus(item_id)
-			Sfx.play("coin", -4.0)
-			hud.update_money(GameManager.run_money)
-			screen.refresh()
-	)
-	screen.continued.connect(func() -> void:
-		screen.queue_free()
-		_spawn_exit_portals()
-		_spawn_cave_portals()   # la grotte ne s'ouvre qu'une fois la salle nettoyée
-	, CONNECT_ONE_SHOT)
-
-
-## Prix (₽) d'un article de la boutique en run, 0 si introuvable.
-func _run_shop_price(item_id: String) -> int:
-	for it: Dictionary in RunManager.RUN_SHOP:
-		if it["id"] == item_id:
-			return int(it["price"])
-	return 0
-
-
 const SPAWN_TELEGRAPH_TIME := 0.55
 
 func _spawn_from_pool(pool: Array[int], count: int, lv: int, champion: bool = false, boss: bool = false) -> void:
@@ -1262,13 +1213,10 @@ func _apply_bonus(bonus_id: String) -> void:
 				m.cooldown_mult *= 0.85
 			"xp_up":
 				m.xp_mult *= 1.25
-			"new_move":
-				if i == _active_index:
-					_grant_new_move(m)
 
 
-## Capacités offertes par le bonus "new_move" — données embarquées (pas de
-## fetch PokeAPI au moment du choix : la récompense doit être instantanée).
+## Capacités proposées par la Boutique et les dons (pas de fetch PokeAPI au
+## moment du choix : la récompense doit être instantanée).
 const STRONG_MOVES: Array[Dictionary] = [
 	{"api": "flamethrower", "label": "Lance-Flammes", "type": "fire",     "power": 90,  "class": "special"},
 	{"api": "thunderbolt",  "label": "Tonnerre",      "type": "electric", "power": 90,  "class": "special"},
@@ -1281,45 +1229,6 @@ const STRONG_MOVES: Array[Dictionary] = [
 	{"api": "brick-break",  "label": "Casse-Brique",  "type": "fighting", "power": 75,  "class": "physical"},
 	{"api": "rock-slide",   "label": "Éboulement",    "type": "rock",     "power": 75,  "class": "physical"},
 ]
-
-
-## Bonus "new_move" : le Pokémon actif apprend une capacité puissante tirée
-## au sort (jamais un doublon de son set) — remplace sa plus faible si les 4
-## emplacements sont pris.
-func _grant_new_move(member) -> void:
-	var inst: PokemonInstance = member.pokemon_instance
-	var owned: Array = []
-	for md: MoveData in inst.equipped_moves:
-		owned.append(md.api_name)
-	# Uniquement les capacités du MOVEPOOL du Pokémon (pas de Séisme à Absol),
-	# et pas déjà équipées.
-	var candidates: Array = STRONG_MOVES.filter(func(mv: Dictionary) -> bool:
-		return not owned.has(mv["api"]) and inst.data.can_learn(mv["api"])
-	)
-	if candidates.is_empty():
-		hud.set_wave("✦ Aucune capacité compatible pour %s" % inst.data.name_fr.capitalize())
-		return   # rien de compatible à offrir
-	var pick: Dictionary = candidates[randi() % candidates.size()]
-
-	var md := MoveData.new()
-	md.api_name      = pick["api"]
-	md.display_name  = pick["label"]
-	md.type          = pick["type"]
-	md.power         = pick["power"]
-	md.damage_class  = pick["class"]
-	md.level_learned = 0
-
-	if inst.equipped_moves.size() >= GameManager.move_slot_count:
-		var weakest := 0
-		for j in inst.equipped_moves.size():
-			if (inst.equipped_moves[j] as MoveData).power < (inst.equipped_moves[weakest] as MoveData).power:
-				weakest = j
-		inst.equipped_moves[weakest] = md
-	else:
-		inst.equipped_moves.append(md)
-
-	hud.setup_moves(inst.equipped_moves)
-	hud.set_wave("✦ %s apprend %s !" % [inst.data.name_fr.capitalize(), md.display_name])
 
 
 # ── Boutique : salle non-combat (vendeur Perrserker) ──────────────────
@@ -1680,7 +1589,15 @@ func _consume_boon() -> void:
 	hud.set_wave("★ Don récupéré !")
 
 
+var _chests: Array = []   # coffres de la zone courante (purgés à chaque zone)
+
 func _spawn_chests() -> void:
+	# Purge des coffres de la zone précédente — ils sont enfants de l'arène
+	# (pas de la map) et s'accumulaient de zone en zone (fuite → lag croissant).
+	for c in _chests:
+		if is_instance_valid(c):
+			c.queue_free()
+	_chests.clear()
 	if not is_instance_valid(_map):
 		return
 	for cell: Vector2i in _map.get_chest_cells():
@@ -1690,6 +1607,7 @@ func _spawn_chests() -> void:
 		chest.opened.connect(_on_chest_opened)
 		_wire_chest_prompt(chest)
 		add_child(chest)
+		_chests.append(chest)
 
 
 ## Affiche/masque le prompt "[E] Ouvrir" au HUD quand le joueur entre/sort
@@ -1766,13 +1684,28 @@ func _cs_frame_sprite(path: String, frame_px: int, col: int, row: int, world_h: 
 	return spr
 
 
-func _cs_frame_image(path: String, frame_px: int, col: int, row: int) -> Image:
+## Cache des planches CS décompressées — _update_surf_mount change de frame
+## plusieurs fois par seconde en nage : sans cache, chaque frame rechargeait
+## et décompressait TOUTE la planche (coût par frame inutile).
+var _cs_sheet_cache: Dictionary = {}   # path -> Image décompressée
+
+func _cs_sheet_image(path: String) -> Image:
+	if _cs_sheet_cache.has(path):
+		return _cs_sheet_cache[path]
 	var tex: Texture2D = load(path)
-	if tex == null:
+	var img: Image = null
+	if tex != null:
+		img = tex.get_image()
+		if img.is_compressed():
+			img.decompress()
+	_cs_sheet_cache[path] = img
+	return img
+
+
+func _cs_frame_image(path: String, frame_px: int, col: int, row: int) -> Image:
+	var img := _cs_sheet_image(path)
+	if img == null:
 		return null
-	var img := tex.get_image()
-	if img.is_compressed():
-		img.decompress()
 	return img.get_region(Rect2i(col * frame_px, row * frame_px, frame_px, frame_px))
 
 

@@ -9,34 +9,6 @@ static func inst() -> RunManager:
 
 
 const ZONE_PATH := "res://scenes/world/BiomeMap.tscn"
-const BONUSES: Array = [
-	{"id": "heal_full", "label": "✚ Soin complet"},
-	{"id": "heal_half", "label": "✚ Soin 50%"},
-	{"id": "boost_atk", "label": "⚔ ATQ +20%"},
-	{"id": "boost_def", "label": "🛡 DEF +20%"},
-	{"id": "boost_hp",  "label": "♥ PV +20%"},
-	{"id": "boost_spd", "label": "⚡ SPD +20%"},
-	{"id": "dash_plus", "label": "➶ +1 charge de Dash"},
-	{"id": "revive",    "label": "✚ Ranime les K.O. (50% PV)"},
-	{"id": "atk_rate",  "label": "⚔ Cadence d'attaque +15%"},
-	{"id": "xp_up",     "label": "★ XP gagnée +25%"},
-	{"id": "new_move",  "label": "✦ Capacité puissante (Pokémon actif)"},
-]
-
-# ── Boutique en run (fin de salle) — dépense les Pokédollars ₽ accumulés.
-# Achats multiples possibles ; chaque effet réutilise CombatArena._apply_bonus.
-const RUN_SHOP: Array[Dictionary] = [
-	{"id": "heal_half", "label": "Soin 50%",     "price": 30,  "sym": "✚", "col": Color(0.30, 0.82, 0.42)},
-	{"id": "heal_full", "label": "Soin complet", "price": 60,  "sym": "✚", "col": Color(0.30, 0.85, 0.40)},
-	{"id": "revive",    "label": "Rappel (50%)", "price": 90,  "sym": "✦", "col": Color(0.90, 0.62, 0.15)},
-	{"id": "boost_atk", "label": "ATQ +20%",     "price": 55,  "sym": "⚔", "col": Color(0.95, 0.50, 0.12)},
-	{"id": "boost_def", "label": "DÉF +20%",     "price": 55,  "sym": "🛡", "col": Color(0.30, 0.52, 0.92)},
-	{"id": "boost_hp",  "label": "PV max +20%",  "price": 65,  "sym": "♥", "col": Color(0.85, 0.25, 0.35)},
-	{"id": "boost_spd", "label": "VIT +20%",     "price": 55,  "sym": "⚡", "col": Color(0.90, 0.80, 0.10)},
-	{"id": "dash_plus", "label": "+1 Dash",      "price": 80,  "sym": "➶", "col": Color(0.55, 0.75, 0.98)},
-	{"id": "atk_rate",  "label": "Cadence +15%", "price": 80,  "sym": "⚔", "col": Color(0.95, 0.42, 0.30)},
-	{"id": "new_move",  "label": "Capacité +",   "price": 120, "sym": "★", "col": Color(0.85, 0.50, 0.90)},
-]
 
 var current_zone_idx: int = 0   # toujours 0 (BiomeMap)
 var rooms_cleared:    int = 0
