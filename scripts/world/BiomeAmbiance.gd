@@ -443,7 +443,7 @@ func _rebuild_backdrop(cfg: Dictionary, is_cave: bool) -> void:
 
 	_build_ground_apron(cfg, center)
 	_build_midground(cfg, rng, center)
-	_build_distant_hills(cfg, rng, center)
+	_build_mountains(cfg, rng, center)
 	_build_clouds(cfg, rng, center)
 	_build_butterflies(cfg, rng)
 
@@ -468,11 +468,42 @@ func _build_ground_apron(cfg: Dictionary, center: Vector3) -> void:
 	# "respiraient" avec la caméra (bug "nuage qui grossit/rétrécit", forêt).
 	apron.position = Vector3(center.x, -1.2, center.z)
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = (cfg["hill_a"] as Color).lerp(cfg["hill_b"], 0.4)
+	# Teinte plus SATURÉE (accordée au sol saturé du terrain, cf.
+	# GrassPatch.ground_material) : la plaine se prolonge visiblement jusqu'aux
+	# montagnes au lieu de virer au gris terne.
+	var plain := (cfg["hill_a"] as Color).lerp(cfg["hill_b"], 0.4)
+	var g := plain.get_luminance()
+	plain = Color(g, g, g).lerp(plain, 1.4) * 0.92
+	mat.albedo_color = plain
 	mat.roughness = 1.0
 	apron.material_override = mat
 	apron.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_backdrop.add_child(apron)
+
+	# Bosses de relief doux SUR la plaine (loin, au-delà des murs) — évite le
+	# tablier parfaitement plat qui « lisait » comme du vide entre la lisière
+	# et les montagnes.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(_map_size) * 5 + 71
+	var base_r := maxf(_map_size.x, _map_size.y) * 0.5
+	for i in 22:
+		var ang := rng.randf_range(0.0, TAU)
+		var rr := base_r + rng.randf_range(10.0, 40.0)
+		var mound := MeshInstance3D.new()
+		var sph := SphereMesh.new()
+		sph.radius = rng.randf_range(6.0, 13.0)
+		sph.height = sph.radius * 0.9
+		sph.radial_segments = 8
+		sph.rings = 4
+		mound.mesh = sph
+		mound.position = Vector3(center.x + cos(ang) * rr, -sph.radius * 0.62 - 1.0,
+			center.z + sin(ang) * rr)
+		var mm := StandardMaterial3D.new()
+		mm.albedo_color = plain.lerp(cfg["hill_b"], rng.randf_range(0.0, 0.4)) * rng.randf_range(0.9, 1.06)
+		mm.roughness = 1.0
+		mound.material_override = mm
+		mound.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_backdrop.add_child(mound)
 
 
 ## Papillons qui voltigent au-dessus de la map (prairie, automne) — enfants
@@ -495,19 +526,22 @@ func _build_butterflies(cfg: Dictionary, rng: RandomNumberGenerator) -> void:
 ## pour qu'on ne voie jamais le vide entre le bord jouable et les collines
 ## lointaines.
 func _build_midground(cfg: Dictionary, rng: RandomNumberGenerator, center: Vector3) -> void:
-	var n := 34
 	# Proportion de falaises étagées vs arbres — le rocailleux est surtout
-	# fait de falaises, les thèmes végétaux surtout d'arbres (avec quelques
-	# affleurements rocheux pour casser l'uniformité).
+	# fait de falaises, les thèmes végétaux surtout d'arbres.
 	var cliff_ratio := 0.75 if cfg.get("midground_cliffs", false) else 0.12
-	for i in n:
-		var ang := (TAU / float(n)) * i + rng.randf_range(-0.06, 0.06)
-		var r := maxf(_map_size.x, _map_size.y) * 0.5 + rng.randf_range(3.0, 7.0)
-		var pos := center + Vector3(cos(ang) * r, 0, sin(ang) * r)
-		if rng.randf() < cliff_ratio:
-			_add_cliff_tier(cfg, rng, pos, ang)
-		else:
-			_add_backdrop_tree(cfg, rng, pos)
+	var base_r := maxf(_map_size.x, _map_size.y) * 0.5
+	# CEINTURE DENSE d'arbres sur 2 anneaux entrelacés, juste au-delà des murs
+	# de bordure — plus de trou entre la zone jouable et l'horizon.
+	for ring in 2:
+		var n := 46 - ring * 8
+		for i in n:
+			var ang := (TAU / float(n)) * i + rng.randf_range(-0.09, 0.09)
+			var r := base_r + 2.5 + ring * 6.0 + rng.randf_range(-1.5, 3.5)
+			var pos := center + Vector3(cos(ang) * r, 0, sin(ang) * r)
+			if ring == 0 and rng.randf() < cliff_ratio:
+				_add_cliff_tier(cfg, rng, pos, ang)
+			else:
+				_add_backdrop_tree(cfg, rng, pos)
 
 
 ## Petit affleurement rocheux en second plan — empile 2-3 vrais blocs de
@@ -562,28 +596,75 @@ func _disable_shadows(node: Node) -> void:
 		_disable_shadows(child)
 
 
-## Collines lointaines brumeuses — arrière-plan flou derrière le second plan,
-## même principe que HubWorld._build_backdrop, rayon adapté à la taille
-## (variable) de la map générée.
-func _build_distant_hills(cfg: Dictionary, rng: RandomNumberGenerator, center: Vector3) -> void:
-	var n := 20
-	for i in n:
-		var ang := (TAU / float(n)) * i + rng.randf_range(-0.15, 0.15)
-		var rx := _map_size.x * 0.5 + rng.randf_range(16.0, 32.0)
-		var ry := _map_size.y * 0.5 + rng.randf_range(14.0, 28.0)
-		var pos := center + Vector3(cos(ang) * rx, 0, sin(ang) * ry)
+## CHAÎNE DE MONTAGNES lointaine — pics low-poly (cônes à 6 facettes) en 2
+## anneaux étagés (les plus lointains, plus hauts, se voient derrière les
+## premiers), sommets enneigés, teinte de plus en plus bleutée/brumeuse avec
+## la distance (perspective atmosphérique). C'est LE point de fuite qui
+## comble le vide de l'horizon.
+func _build_mountains(cfg: Dictionary, rng: RandomNumberGenerator, center: Vector3) -> void:
+	# Roche de base SOMBRE (bleu-gris) : les montagnes doivent trancher sur
+	# le ciel pâle, pas s'y fondre (c'était ça le « vide » de l'horizon).
+	var rock: Color = Color(0.30, 0.34, 0.45).lerp(cfg["hill_b"], 0.20)
+	var base_r := maxf(_map_size.x, _map_size.y) * 0.5
+	var big: bool = cfg.get("midground_cliffs", false)
 
-		var hill := MeshInstance3D.new()
-		var mesh := SphereMesh.new()
-		mesh.radius = rng.randf_range(10.0, 20.0)
-		mesh.height = mesh.radius * 1.15
-		hill.mesh = mesh
-		hill.position = pos + Vector3(0, -mesh.radius * 0.5, 0)
-		var mat := StandardMaterial3D.new()
-		mat.albedo_color = (cfg["hill_a"] as Color).lerp(cfg["hill_b"], rng.randf())
-		mat.roughness = 1.0
-		hill.material_override = mat
-		_backdrop.add_child(hill)
+	for layer in 2:
+		# Distances SÛRES : l'anneau proche reste au-delà de la caméra (qui suit
+		# le joueur, ~32 u derrière lui) — sinon une montagne surgit juste à côté
+		# de la caméra et barre l'écran d'une bande. Elles ferment l'horizon en
+		# masse bleutée derrière la lisière d'arbres.
+		var dist := base_r + (30.0 if big else 34.0) + layer * 30.0
+		var peak_h := (30.0 if big else 26.0) + layer * 18.0
+		var count := 28 + layer * 8
+		# Perspective atmosphérique LÉGÈRE seulement (sinon elles disparaissent
+		# dans le ciel) : l'anneau lointain à peine bleuté.
+		var col := rock.lerp(cfg["fog_color"], 0.06 + 0.12 * layer)
+		for i in count:
+			var ang := TAU * (float(i) + rng.randf_range(-0.35, 0.35)) / float(count)
+			var r := dist + rng.randf_range(-7.0, 7.0)
+			var pos := center + Vector3(cos(ang) * r, 0, sin(ang) * r)
+			# Grande variation de hauteur → silhouette dentelée (des pics, pas
+			# un mur) ; les plus hauts (>1.1×) coiffés de neige.
+			var hf := rng.randf_range(0.6, 1.5)
+			var h := peak_h * hf
+			var bw := h * rng.randf_range(0.5, 0.78)
+			_add_mountain(pos, h, bw, col, hf > 1.1)
+
+
+func _add_mountain(pos: Vector3, h: float, base_w: float, col: Color, snow: bool) -> void:
+	var m := MeshInstance3D.new()
+	var cone := CylinderMesh.new()
+	cone.top_radius      = 0.0
+	cone.bottom_radius   = base_w
+	cone.height          = h
+	cone.radial_segments = 6     # facettes low-poly, accordées aux arbres
+	cone.rings           = 1
+	m.mesh = cone
+	m.position = pos + Vector3(0, h * 0.5 - 1.5, 0)   # base enfoncée sous la plaine
+	m.rotation.y = randf() * TAU
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = col
+	mat.roughness = 1.0
+	m.material_override = mat
+	m.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_backdrop.add_child(m)
+	if snow:
+		var cap := MeshInstance3D.new()
+		var c2 := CylinderMesh.new()
+		c2.top_radius      = 0.0
+		c2.bottom_radius   = base_w * 0.40
+		c2.height          = h * 0.30
+		c2.radial_segments = 6
+		c2.rings           = 1
+		cap.mesh = c2
+		cap.position = pos + Vector3(0, h - h * 0.15 - 1.5, 0)
+		cap.rotation.y = m.rotation.y
+		var sm := StandardMaterial3D.new()
+		sm.albedo_color = col.lerp(Color(0.95, 0.97, 1.0), 0.8)
+		sm.roughness = 1.0
+		cap.material_override = sm
+		cap.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_backdrop.add_child(cap)
 
 
 ## Nuages — billboards doux qui dérivent lentement (déplacés dans _process),
