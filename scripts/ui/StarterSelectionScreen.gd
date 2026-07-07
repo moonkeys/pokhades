@@ -288,6 +288,36 @@ func _select(id: int) -> void:
 	_load_center_sprite(id)
 
 
+## Navigation clavier : flèches = déplacement dans la grille 3×3 des
+## starters, Entrée/Espace = COMMENCER LA RÉBELLION avec la sélection.
+func _unhandled_input(event: InputEvent) -> void:
+	var idx := _selected_index()
+	if event.is_action_pressed("ui_right"):
+		_select_index(idx + 1)
+	elif event.is_action_pressed("ui_left"):
+		_select_index(idx - 1)
+	elif event.is_action_pressed("ui_down"):
+		_select_index(idx + 3)
+	elif event.is_action_pressed("ui_up"):
+		_select_index(idx - 3)
+	elif event.is_action_pressed("ui_accept"):
+		starter_chosen.emit(_selected_id)
+	else:
+		return
+	get_viewport().set_input_as_handled()
+
+
+func _selected_index() -> int:
+	for i in STARTERS.size():
+		if int(STARTERS[i].get("id", 0)) == _selected_id:
+			return i
+	return 0
+
+
+func _select_index(i: int) -> void:
+	_select(int(STARTERS[clampi(i, 0, STARTERS.size() - 1)].get("id", 0)))
+
+
 func _apply_card_style(card: Panel, selected: bool) -> void:
 	if selected:
 		card.add_theme_stylebox_override("panel", _liseré_style(C_CARD_SEL, C_GOLD, 8, 3))

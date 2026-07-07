@@ -215,9 +215,11 @@ func unlock_pokemon(id: int) -> void:
 # Débloque tout pour tester en conditions réelles sans avoir à farmer :
 # roster large, toutes les CS, emplacements/équipe au max, Baies à gogo,
 # aimant à baies. Déclenché par le bouton « MODE TEST » de l'accueil.
+# Formes de BASE uniquement (les évolutions se gagnent par le niveau /
+# Super Bonbons — cf. is_team_selectable).
 const TEST_ROSTER: Array[int] = [
-	25, 6, 9, 3, 448, 445, 282, 260, 65, 94,   # Pikachu, Dracaufeu, Tortank, Florizarre, Lucario, Carchacrok, Gardevoir, Laggron, Alakazam, Ectoplasma
-	149, 130, 143, 248, 461, 212, 373, 359, 197, 468,  # Dracolosse, Léviator, Ronflex, Tyranocif, Dimoret, Cizayox, Drattak, Absol, Noctali, Togekiss
+	25, 4, 7, 1, 447, 443, 280, 258, 63, 92,   # Pikachu, Salamèche, Carapuce, Bulbizarre, Riolu, Griknot, Tarsal, Gobou, Abra, Fantominus
+	147, 129, 143, 246, 215, 123, 371, 359, 133, 175,  # Minidraco, Magicarpe, Ronflex, Embrylex, Farfuret, Insécateur, Draby, Absol, Évoli, Togepi
 ]
 
 func enable_test_mode(starter_id: int) -> void:
@@ -290,6 +292,22 @@ func get_run_team() -> Array[int]:
 	if hub_team.is_empty():
 		return [selected_starter_id]
 	return hub_team
+
+
+## Une espèce est sélectionnable comme MEMBRE D'ÉQUIPE seulement si c'est
+## une forme de DÉPART : les évolutions s'obtiennent par le niveau (Super
+## Bonbons → get_effective_start), jamais en les choisissant directement —
+## un Florizarre niveau 10 n'a pas de sens.
+##   - cible d'évolution de la table du jeu (EVOLUTIONS) → refusé ;
+##   - clé d'EVOLUTIONS (ex. Pikachu, traité comme départ ici) → accepté ;
+##   - sinon on suit l'API (`api_base_form` = PokemonData.is_base_form).
+func is_team_selectable(pid: int, api_base_form: bool) -> bool:
+	for k in EVOLUTIONS:
+		if int(EVOLUTIONS[k]["evolves_to"]) == pid:
+			return false
+	if EVOLUTIONS.has(pid):
+		return true
+	return api_base_form
 
 
 ## Niveau + forme de DÉPART d'un Pokémon d'équipe, une fois appliqués les

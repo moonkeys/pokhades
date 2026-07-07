@@ -465,7 +465,10 @@ func _refresh_detail() -> void:
 	_detail_root.add_child(type_row)
 	_fill_type_row(type_row, pd.types)
 
-	# Ajout / retrait de l'équipe
+	# Ajout / retrait de l'équipe — les formes ÉVOLUÉES ne sont pas
+	# sélectionnables : on part de la forme de base, qui évolue par le
+	# niveau (Super Bonbons, cf. GameManager.get_effective_start).
+	var selectable := GameManager.is_team_selectable(_selected_pid, pd.is_base_form)
 	var in_team := _selected_pid in GameManager.hub_team
 	var team_btn := Button.new()
 	team_btn.position = Vector2(424, 14)
@@ -474,20 +477,28 @@ func _refresh_detail() -> void:
 		team_btn.text = "✕ Retirer"
 		_style_button(team_btn, Color(0.78, 0.30, 0.24), Color.WHITE)
 	else:
-		var can_add := GameManager.hub_team.size() < GameManager.get_max_team_size()
+		var can_add := GameManager.hub_team.size() < GameManager.get_max_team_size() \
+			and selectable
 		team_btn.text     = "+ Ajouter"
 		team_btn.disabled = not can_add
 		_style_button(team_btn, C_GOOD if can_add else Color(0.62, 0.56, 0.46), Color.WHITE)
 	var capture_pid := _selected_pid
+	var capture_selectable := selectable
 	team_btn.pressed.connect(func() -> void:
 		if capture_pid in GameManager.hub_team:
 			GameManager.hub_team.erase(capture_pid)
-		elif GameManager.hub_team.size() < GameManager.get_max_team_size():
+		elif capture_selectable and GameManager.hub_team.size() < GameManager.get_max_team_size():
 			GameManager.hub_team.append(capture_pid)
 		_refresh_detail()
 		_refresh_team_strip()
 	)
 	_detail_root.add_child(team_btn)
+
+	if not selectable and not in_team:
+		var hint := _lbl_node("Forme évoluée — pars de sa forme de base : elle évoluera avec le niveau (Super Bonbons).",
+			424, 52, 140, 60, 9, C_DIM)
+		hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_detail_root.add_child(hint)
 
 	# Objet tenu (assignable uniquement ici, cf. cahier des charges) + Super Bonbon
 	_build_item_row(_selected_pid, 122, 82)
