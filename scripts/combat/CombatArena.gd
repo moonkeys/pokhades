@@ -383,6 +383,7 @@ func _preload_all() -> void:
 	background.append_array(POOL_ELEM)
 	background.append_array(POOL_SEMI_BOSS)
 	background.append_array(POOL_BOSSES)
+	background.append_array(PokePools.all_champion_ids())   # compos du Dresseur Final
 	background.append_array(POOL_CAVE_ELITE)
 	background.append_array(POOL_CAVE_DEMIBOSS)
 	for t in POOL_BIOME:
@@ -836,24 +837,25 @@ func _spawn_room_enemies() -> void:
 	_waves_total = 1
 
 	if _is_boss_room(room) and room + 1 >= VICTORY_ROOM:
-		# ── DRESSEUR FINAL : 6 vagues, comme l'équipe complète d'un dresseur
-		# expérimenté — chaque vague envoie UN boss (les 6 de POOL_BOSSES,
-		# ordre mélangé) escorté de ses sbires, niveaux croissants.
-		var bosses := Array(POOL_BOSSES)
-		bosses.shuffle()
-		_waves_total = bosses.size()
-		var minions_per_wave := maxi(2, count / 3)
+		# ── DRESSEUR FINAL : une COMPO DE CHAMPION D'ARÈNE (6 Pokémon
+		# mono-type, cf. PokePools.CHAMPION_TEAMS) tirée au hasard — 6 vagues,
+		# un Pokémon par vague dans l'ordre de la compo, l'AS du champion en
+		# dernier (anneau doré), niveaux croissants.
+		var comp: Dictionary = PokePools.CHAMPION_TEAMS[randi() % PokePools.CHAMPION_TEAMS.size()]
+		var comp_ids: Array = comp["ids"]
+		_waves_total = comp_ids.size()
 		for w in _waves_total:
+			var is_ace := w == _waves_total - 1
 			var specs: Array = [
-				{"pool": [bosses[w]], "count": 1, "lv": BOSS_LEVEL + room + w * 2,
-					"champion": false, "boss": true},
-				{"pool": Array(pool), "count": minions_per_wave, "lv": lv + w,
-					"champion": false, "boss": false},
+				{"pool": [comp_ids[w]], "count": 1,
+					"lv": BOSS_LEVEL + room + w * 2,
+					"champion": not is_ace, "boss": is_ace},
 			]
 			_wave_queue.append(specs)
-		_room_total = _waves_total * (1 + minions_per_wave)
+		_room_total = _waves_total
 		hud.set_kills(0, _room_total)
-		hud.set_wave("☠☠ DRESSEUR FINAL — %d Pokémon boss t'attendent !" % _waves_total)
+		hud.set_wave("☠☠ CHAMPION %s (%s) — son équipe de %d t'attend !"
+			% [str(comp["name"]).to_upper(), comp["type"], _waves_total])
 		get_tree().call_group("combat_arena", "add_camera_shake", 0.15)
 		await get_tree().create_timer(1.8).timeout   # temps de lire l'annonce
 		if _game_over_triggered or _victory_triggered:

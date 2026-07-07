@@ -27,7 +27,36 @@ const BOSSES:    Array[int] = [143, 123, 128, 24, 22, 862]
 # Sbires d'élite (plus faibles que le demi-boss)
 const CAVE_ELITE: Array[int] = [217, 229, 359, 297, 342]
 # Demi-boss — espèces NON ÉVOLUÉES recrutables : les battre débloque l'espèce
-const CAVE_DEMIBOSS: Array[int] = [147, 246, 371, 443, 610, 633, 704]  # Minidraco, Embrylex, Draby, Griknot, Coupenotte, Solochi, Mucuscule
+# (bases de pseudo-légendaires et lignées rares, la récompense de choix)
+const CAVE_DEMIBOSS: Array[int] = [
+	147, 246, 371, 443, 610, 633, 704,   # Minidraco, Embrylex, Draby, Griknot, Coupenotte, Solochi, Mucuscule
+	374, 328, 782, 885, 996,             # Terhal, Kraknoix, Bébécaille, Fantyrm, Frigodo
+]
+
+# ── Compositions de CHAMPIONS D'ARÈNE — salles du Dresseur Final (6 vagues,
+# un Pokémon par vague) : une compo tirée au hasard, le DERNIER id est le
+# leader (l'as du champion). Compos mono-type façon champions historiques. ──
+const CHAMPION_TEAMS: Array[Dictionary] = [
+	{"name": "Pierre",    "type": "Roche",    "ids": [74, 95, 111, 76, 208, 248]},    # Racaillou, Onix, Rhinocorne, Grolem, Steelix, Tyranocif
+	{"name": "Ondine",    "type": "Eau",      "ids": [120, 54, 116, 121, 131, 130]},  # Stari, Psykokwak, Hypotrempe, Staross, Lokhlass, Léviator
+	{"name": "Major Bob", "type": "Électrik", "ids": [100, 81, 25, 125, 135, 26]},    # Voltorbe, Magnéti, Pikachu, Élektek, Voltali, Raichu
+	{"name": "Erika",     "type": "Plante",   "ids": [44, 114, 182, 71, 103, 45]},    # Ortide, Saquedeneu, Joliflor, Empiflor, Noadkoko, Rafflesia
+	{"name": "Koga",      "type": "Poison",   "ids": [109, 49, 24, 89, 169, 110]},    # Smogo, Aéromite, Arbok, Grotadmorv, Nostenfer, Smogogo
+	{"name": "Morgane",   "type": "Psy",      "ids": [96, 122, 64, 97, 80, 65]},      # Soporifik, M. Mime, Kadabra, Hypnomade, Flagadoss, Alakazam
+	{"name": "Auguste",   "type": "Feu",      "ids": [77, 58, 126, 78, 38, 59]},      # Ponyta, Caninos, Magmar, Galopa, Feunard, Arcanin
+	{"name": "Giovanni",  "type": "Sol",      "ids": [51, 111, 31, 105, 34, 112]},    # Triopikeur, Rhinocorne, Nidoqueen, Ossatueur, Nidoking, Rhinoféros
+]
+
+## Tous les ids des compos de champions (préchargement du cache).
+static func all_champion_ids() -> Array[int]:
+	var seen: Dictionary = {}
+	var out: Array[int] = []
+	for team: Dictionary in CHAMPION_TEAMS:
+		for pid in team["ids"]:
+			if not seen.has(pid):
+				seen[pid] = true
+				out.append(int(pid))
+	return out
 
 # ── Faune par biome (MapGenerator.MapTheme → ids) — mélangée au pool de
 # base en double pondération : la population locale domine sans exclure
