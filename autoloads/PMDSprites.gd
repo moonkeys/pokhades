@@ -23,7 +23,7 @@ const _DIAG_FALLBACK_SUFFIX := {
 ## déjà affichés gagnent les animations dès qu'elles arrivent).
 ## Nom SpriteCollab → préfixe d'animation Godot. Shoot/Charge servent aux
 ## attaques spéciales (cf. TeamMember : chaîne de repli shoot→charge→attack).
-const _EXTRA_ACTIONS := {"Attack": "attack", "Hurt": "hurt", "Shoot": "shoot", "Charge": "charge"}
+const _EXTRA_ACTIONS := {"Attack": "attack", "Hurt": "hurt", "Shoot": "shoot", "Charge": "charge", "Sleep": "sleep"}
 
 const _FPS_DEFAULT := 8.0
 

@@ -98,6 +98,12 @@ func _set_hp_ratio(ratio: float) -> void:
 
 func setup(instance: PokemonInstance, champion: bool = false, boss: bool = false, demi_boss: bool = false) -> void:
 	pokemon_instance = instance
+	# Un move SPÉCIAL dans le set → cet ennemi attaque À DISTANCE (projectile,
+	# il s'arrête plus loin) ; sinon corps à corps classique.
+	for md: MoveData in instance.equipped_moves:
+		if md.damage_class == "special" and md.power > 0:
+			_ranged_move = md
+			break
 	is_champion = champion or boss or demi_boss
 	is_boss = boss
 	is_demi_boss = demi_boss
@@ -304,7 +310,7 @@ func _physics_process(delta: float) -> void:
 
 	var dist := global_position.distance_to(target.global_position)
 
-	if dist > ATTACK_RANGE:
+	if dist > _attack_range():
 		var steer_pos := _get_steer_target(target.global_position, delta)
 		var dir := (steer_pos - global_position)
 		dir.y = 0.0
@@ -527,21 +533,53 @@ func _finish_windup() -> void:
 	_do_attack(target)
 
 
+# Move spécial du set (le cas échéant) — l'ennemi devient un TIREUR :
+# il s'arrête à RANGED_RANGE et envoie des projectiles (cf. setup).
+var _ranged_move: MoveData = null
+const RANGED_RANGE := 6.5
+
+## Portée d'engagement effective (tireur ou corps à corps).
+func _attack_range() -> float:
+	return RANGED_RANGE if _ranged_move != null else ATTACK_RANGE
+
+
 func _do_attack(target: CharacterBody3D) -> void:
 	_attack_timer = ATTACK_COOLDOWN
-	var move_type  := pokemon_instance.get_attack_type()
-	var move_power := pokemon_instance.get_attack_power()
+	var move_type:  String
+	var move_power: int
+	if _ranged_move != null:
+		move_type  = _ranged_move.type
+		move_power = _ranged_move.power
+	else:
+		move_type  = pokemon_instance.get_attack_type()
+		move_power = pokemon_instance.get_attack_power()
 	var dmg := DamageCalculator.calculate(pokemon_instance, target.pokemon_instance, move_power, move_type)
-	target.take_damage(dmg, global_position)
-	var st := StatusFx.roll(move_type)
-	if st != "":
-		target.pokemon_instance.apply_status(st, StatusFx.duration(st))
-	CombatVFX.spawn_damage_number(get_parent(), target.global_position, dmg, "player")
-	# Secousse caméra seulement quand le Pokémon CONTRÔLÉ encaisse — un
-	# compagnon touché à l'autre bout de la map ne doit pas secouer l'écran.
-	if target.get("is_active") == true:
-		get_tree().call_group("combat_arena", "add_camera_shake", 0.12)
-	_play_attack_lunge(target.global_position)
+
+	# Effets à l'impact (partagés mêlée/projectile)
+	var parent := get_parent()
+	var tgt := target
+	var from := global_position
+	var apply_hit := func() -> void:
+		if not is_instance_valid(tgt) or not is_instance_valid(parent):
+			return
+		tgt.take_damage(dmg, from)
+		var st := StatusFx.roll(move_type)
+		if st != "":
+			tgt.pokemon_instance.apply_status(st, StatusFx.duration(st))
+		CombatVFX.spawn_damage_number(parent, tgt.global_position, dmg, "player")
+		# Secousse caméra seulement quand le Pokémon CONTRÔLÉ encaisse — un
+		# compagnon touché à l'autre bout de la map ne doit pas secouer l'écran.
+		if tgt.get("is_active") == true:
+			get_tree().call_group("combat_arena", "add_camera_shake", 0.12)
+
+	if _ranged_move != null:
+		var dir := target.global_position - global_position
+		_play_action_anim(["shoot", "charge", "attack"], Vector2(dir.x, dir.z), 0.4)
+		Projectile.launch(parent, global_position, target,
+			CombatVFX.type_color(move_type), apply_hit, 10.0)
+	else:
+		apply_hit.call()
+		_play_attack_lunge(target.global_position)
 
 
 func _play_attack_lunge(target_pos: Vector3) -> void:

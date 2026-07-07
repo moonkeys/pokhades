@@ -555,9 +555,14 @@ func _attack() -> void:
 		move_type  = pokemon_instance.get_attack_type()
 		move_power = pokemon_instance.get_attack_power()
 
-	# Attaque spéciale → anim de projection PMD si la feuille existe
-	# (chaîne de repli : Shoot → Charge → Attack)
-	var anim_prefixes: Array = ["shoot", "charge", "attack"] if move_class == "special" else ["attack"]
+	# Attaque SPÉCIALE = À DISTANCE (convention PokeAPI damage_class) :
+	# projectile guidé vers l'ennemi le plus proche, anim Shoot/Charge.
+	# Attaque PHYSIQUE = corps à corps (zone autour de soi, comme avant).
+	if move_class == "special":
+		_ranged_attack(move_type, move_power)
+		return
+
+	var anim_prefixes: Array = ["attack"]
 
 	var lunge_pos := Vector3.ZERO
 	var hit_count := 0
@@ -610,6 +615,45 @@ func _attack() -> void:
 				if is_instance_valid(self) and not _evolving:
 					sprite.modulate = Color.WHITE
 			)
+
+
+## Attaque à distance : tire un Projectile sur l'ennemi le plus proche
+## (portée RANGED_RANGE), anim PMD Shoot→Charge→Attack. Dégâts, statut,
+## chiffre coloré et animation de type appliqués À L'IMPACT.
+const RANGED_RANGE := 9.0
+
+func _ranged_attack(move_type: String, move_power: int) -> void:
+	var target := _nearest_enemy(RANGED_RANGE)
+	if target == null:
+		# Tir à vide : petit flash, comme un coup dans le vide en mêlée
+		sprite.modulate = Color(2.2, 2.2, 2.2)
+		get_tree().create_timer(0.1).timeout.connect(func():
+			if is_instance_valid(self) and not _evolving:
+				sprite.modulate = Color.WHITE
+		)
+		return
+
+	var dir := target.global_position - global_position
+	if not _evolving:
+		_play_action_anim(["shoot", "charge", "attack"], Vector2(dir.x, dir.z), 0.4)
+
+	var dmg  := DamageCalculator.calculate(pokemon_instance, target.pokemon_instance, move_power, move_type)
+	var mult := DamageCalculator.type_multiplier(move_type, target.pokemon_instance.data.types)
+	var kind := CombatVFX.kind_from_multiplier(mult)
+	var tint := CombatVFX.type_color(move_type)
+	var from := global_position
+	var parent := get_parent()
+	var tgt := target
+	Projectile.launch(parent, global_position, target, tint, func() -> void:
+		if not is_instance_valid(tgt) or not is_instance_valid(parent):
+			return
+		tgt.take_damage(dmg, from, tint)
+		var st := StatusFx.roll(move_type)
+		if st != "":
+			tgt.pokemon_instance.apply_status(st, StatusFx.duration(st))
+		CombatVFX.spawn_damage_number(parent, tgt.global_position, dmg, kind)
+		AttackAnim.play(parent, tgt.global_position, move_type)
+	)
 
 
 func _play_attack_lunge(target_pos: Vector3, anim_prefixes: Array = ["attack"]) -> void:
@@ -686,10 +730,13 @@ func _play_faint_anim() -> void:
 	if is_instance_valid(_range_ring):
 		_range_ring.visible = false
 	CombatVFX.spawn_death_poof(get_parent(), global_position, Color(0.95, 0.55, 0.50))
-	var tw := create_tween().set_parallel(true)
-	tw.tween_property(sprite, "modulate", Color(0.9, 0.3, 0.3, 0.0), 0.55).set_ease(Tween.EASE_IN)
-	tw.tween_property(sprite, "position", _sprite_base_pos + Vector3(0, -0.4, 0), 0.4).set_ease(Tween.EASE_IN)
-	tw.chain().tween_callback(func() -> void: died.emit())
+	# Le membre K.O. ne DISPARAÎT plus : il reste couché sur place (anim
+	# Sleep PMD, repli Hurt figée), grisé — visuellement ranimable (revive).
+	_action_lock = INF   # verrouille l'anim (rien ne doit l'écraser)
+	_play_action_anim(["sleep", "hurt"], Vector2.ZERO, INF)
+	sprite.modulate = Color(0.52, 0.52, 0.60, 0.9)
+	sprite.position = _sprite_base_pos
+	died.emit()
 
 
 ## Ranime un membre K.O. (bonus de fin de zone "revive") — restaure les PV
@@ -702,6 +749,13 @@ func revive(hp_pct: float) -> void:
 	set_physics_process(true)
 	sprite.modulate = Color.WHITE
 	sprite.position = _sprite_base_pos
+	# Réveil : déverrouille l'anim Sleep du K.O. et repart sur idle
+	_action_lock = 0.0
+	if sprite.sprite_frames and sprite.sprite_frames.has_animation("idle"):
+		_current_anim = "idle"
+		sprite.play("idle")
+	if is_instance_valid(_range_ring):
+		_range_ring.visible = true
 	hp_changed.emit(pokemon_instance.hp_ratio())
 	CombatVFX.spawn_death_poof(get_parent(), global_position, Color(0.55, 1.0, 0.60))
 
