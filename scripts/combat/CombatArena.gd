@@ -809,11 +809,13 @@ func _update_leaders() -> void:
 
 # ── Combat — salle unique ─────────────────────────────────────────────
 
-const BOSS_ROOM_EVERY := 5    # salles 5, 10, 15… = salles de boss
-const VICTORY_ROOM    := 10   # vaincre le boss de la salle 10 = victoire de run
-
+# Structure de run en ACTES — déléguée à RunManager (5 combats → Boutique →
+# Boss par acte ; le boss du dernier acte est le Dresseur Final).
 func _is_boss_room(room: int) -> bool:
-	return (room + 1) % BOSS_ROOM_EVERY == 0
+	return RunManager.inst().is_boss_room(room)
+
+func _is_final_boss_room(room: int) -> bool:
+	return RunManager.inst().is_final_boss_room(room)
 
 
 # ── Vagues : les ennemis d'une salle arrivent en 1 à 4 vagues — moins
@@ -836,7 +838,7 @@ func _spawn_room_enemies() -> void:
 	_wave_num    = 0
 	_waves_total = 1
 
-	if _is_boss_room(room) and room + 1 >= VICTORY_ROOM:
+	if _is_final_boss_room(room):
 		# ── DRESSEUR FINAL : une COMPO DE CHAMPION D'ARÈNE (6 Pokémon
 		# mono-type, cf. PokePools.CHAMPION_TEAMS) tirée au hasard — 6 vagues,
 		# un Pokémon par vague dans l'ordre de la compo, l'AS du champion en
@@ -957,7 +959,7 @@ func _on_room_cleared() -> void:
 	var room := RunManager.inst().rooms_cleared
 	# Vaincre le boss de la salle VICTORY_ROOM = victoire de run — le jeu
 	# n'avait jusqu'ici qu'une fin par défaite.
-	if _is_boss_room(room) and room + 1 >= VICTORY_ROOM:
+	if _is_final_boss_room(room):
 		_run_victory()
 		return
 
@@ -1243,16 +1245,10 @@ const STRONG_MOVES: Array[Dictionary] = [
 # déambule, Perrserker marchand) et un étal où dépenser ses Pokédollars ₽
 # en attaques puissantes ou en Baies. On repart par un portail de sortie.
 
-## Décision déterministe par run (stable entre l'annonce d'une porte et
-## l'arrivée effective dans la salle).
+## La Boutique est désormais STRUCTURELLE : l'avant-dernière salle de chaque
+## acte, juste avant le boss (respiration + préparation, façon Hades).
 func _is_shop_room(room: int) -> bool:
-	if room <= 1:
-		return false
-	if _is_boss_room(room):
-		return false
-	var rng := RandomNumberGenerator.new()
-	rng.seed = hash("shop:%d:%d" % [GameManager.run_count, room])
-	return rng.randf() < 0.22
+	return RunManager.inst().is_shop_room(room)
 
 
 func _enter_boutique() -> void:

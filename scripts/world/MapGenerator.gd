@@ -360,6 +360,12 @@ func _apply_theme() -> void:
 	min_water_pools = cfg["min_water_pools"]
 	flower_density  = cfg["flower_density"]
 	path_width      = cfg["path_width"]
+	# VARIATION intra-biome : un acte enchaîne 5+ salles du MÊME biome —
+	# chaque salle jitterle ses densités (par graine) pour que deux forêts
+	# consécutives ne se ressemblent pas (clairsemée, touffue, marécageuse…).
+	tree_density    *= _rng.randf_range(0.65, 1.45)
+	flower_density  *= _rng.randf_range(0.5, 1.6)
+	water_threshold  = clampf(water_threshold + _rng.randf_range(-0.05, 0.04), 0.5, 0.95)
 	if random_gating:
 		gating_type = cfg["gating"]
 	print("MapGenerator: thème=%s  gating=%s" % [
@@ -836,21 +842,58 @@ func _stamp_tree(cx: int, cy: int) -> void:
 ## ─────────────────────────────────────────────────────────────────
 
 func _gen_tall_grass() -> void:
+	# PEU de nappes mais GROSSES (9-14 cases chacune) : des zones de
+	# furtivité franches et lisibles, pas un saupoudrage de touffes isolées.
+	# Croissance organique par frontière aléatoire depuis une graine.
 	var W := map_size.x
 	var H := map_size.y
-	var noise := FastNoiseLite.new()
-	noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
-	noise.seed       = _rng.randi()
-	noise.frequency  = 0.15
-	for r in range(3, H - 3):
-		for c in range(3, W - 3):
-			var cell := Vector2i(c, r)
-			if _grid[r][c] != Terrain.GRASS: continue
-			if _objects.get_cell_source_id(cell) != -1: continue
-			if _is_near_portal(c, r, 5): continue
-			var v := (noise.get_noise_2d(float(c), float(r)) + 1.0) * 0.5
-			if v > _tg_threshold:
-				_tall_grass.set_cell(cell, source_id, tile_tg)
+	# _tg_threshold module le nombre de nappes par biome (seuil bas = biome
+	# herbeux = un peu plus de nappes).
+	var patches := clampi(int(float(W * H) / 550.0 * (1.45 - _tg_threshold)), 3, 7)
+	for p in patches:
+		var start := Vector2i(-1, -1)
+		for attempt in 40:
+			var cand := Vector2i(_rng.randi_range(5, W - 6), _rng.randi_range(5, H - 6))
+			if _tg_cell_ok(cand):
+				start = cand
+				break
+		if start == Vector2i(-1, -1):
+			continue
+		var target := _rng.randi_range(9, 14)
+		var placed: Dictionary = {start: true}
+		var frontier: Array[Vector2i] = [start]
+		_tall_grass.set_cell(start, source_id, tile_tg)
+		while placed.size() < target and not frontier.is_empty():
+			var base: Vector2i = frontier[_rng.randi() % frontier.size()]
+			var dirs := [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+			dirs.shuffle()
+			var grown := false
+			for d: Vector2i in dirs:
+				var nb: Vector2i = base + d
+				if placed.has(nb) or not _tg_cell_ok(nb):
+					continue
+				placed[nb] = true
+				frontier.append(nb)
+				_tall_grass.set_cell(nb, source_id, tile_tg)
+				grown = true
+				break
+			if not grown:
+				frontier.erase(base)
+
+
+## Une case peut-elle accueillir de la haute herbe ?
+func _tg_cell_ok(cell: Vector2i) -> bool:
+	if cell.x < 4 or cell.x >= map_size.x - 4 or cell.y < 4 or cell.y >= map_size.y - 4:
+		return false
+	if _grid[cell.y][cell.x] != Terrain.GRASS:
+		return false
+	if _objects.get_cell_source_id(cell) != -1:
+		return false
+	if _water.get_cell_source_id(cell) != -1:
+		return false
+	if _is_near_portal(cell.x, cell.y, 5):
+		return false
+	return not _is_bridge_cell(cell)
 
 
 ## ─────────────────────────────────────────────────────────────────

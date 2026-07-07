@@ -631,7 +631,9 @@ func _play_attack_lunge(target_pos: Vector3, anim_prefixes: Array = ["attack"]) 
 # Dans une case de haute herbe, le sprite devient PLUS CLAIR et translucide :
 # le joueur voit qu'il est caché. Réappliqué chaque frame car les flashes de
 # combat (dégâts, attaque, dash) réécrivent modulate puis restaurent WHITE.
-const GRASS_HIDDEN_TINT := Color(1.4, 1.45, 1.35, 0.55)
+# Nettement translucide (retour joueur : à 0.55 la différence ne se voyait
+# pas) — le Pokémon devient un fantôme clair, impossible à confondre.
+const GRASS_HIDDEN_TINT := Color(1.5, 1.55, 1.45, 0.3)
 
 func _update_grass_hiding() -> void:
 	if _evolving or not is_instance_valid(sprite):
