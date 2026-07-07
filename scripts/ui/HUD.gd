@@ -11,11 +11,13 @@ extends CanvasLayer
 ##   • toasts empilés en haut-droite (level up / évolution / recrutement) ;
 ##   • vignette rouge pulsante quand le Pokémon contrôlé est bas en PV.
 
-# ── Palette (bois sombre translucide + or, cohérente avec les boutiques) ──
-const C_PANEL   := Color(0.10, 0.075, 0.045, 0.86)  # fond de panneau
-const C_PANEL_2 := Color(0.16, 0.12, 0.07, 0.90)    # panneau secondaire
-const C_BORDER  := Color(0.55, 0.42, 0.22)           # liseré bois clair
-const C_GOLD    := Color(0.92, 0.72, 0.25)
+# ── Palette alignée sur UiKit (bois & parchemin) — le HUD reste
+# translucide pour ne pas masquer le combat, mais parle exactement le même
+# langage que les menus (mockups utilisateur). ──
+const C_PANEL   := Color(0.22, 0.14, 0.09, 0.88)     # bois sombre (UiKit.WOOD_DARK)
+const C_PANEL_2 := Color(0.33, 0.22, 0.14, 0.92)     # bois (UiKit.WOOD)
+const C_BORDER  := Color(0.55, 0.38, 0.22)           # liseré brun (UiKit.BROWN_CARD)
+const C_GOLD    := Color(0.95, 0.76, 0.31)           # UiKit.GOLD
 const C_TEXT    := Color(0.96, 0.92, 0.80)           # crème
 const C_DIM     := Color(0.62, 0.55, 0.42)
 const C_HP_HIGH := Color(0.28, 0.82, 0.34)

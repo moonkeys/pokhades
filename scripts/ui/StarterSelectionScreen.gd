@@ -240,23 +240,16 @@ func _build_right_scroll() -> void:
 
 
 func _build_start_button() -> void:
-	_btn_start = Button.new()
+	# Bouton principal VERT du kit (même langage que « Continuer » en run)
+	_btn_start = UiKit.button("COMMENCER LA RÉBELLION  ▶", Vector2(366, 50))
 	_btn_start.position = Vector2(898, 660)
-	_btn_start.size     = Vector2(366, 50)
-	_btn_start.text     = "COMMENCER LA RÉBELLION  ▶"
-	var sn := _liseré_style(C_WOOD, C_GOLD, 10, 3)
-	var sh := _liseré_style(C_WOOD_LT, C_GOLD_LT, 10, 3)
-	_btn_start.add_theme_stylebox_override("normal", sn)
-	_btn_start.add_theme_stylebox_override("hover",  sh)
-	_btn_start.add_theme_stylebox_override("pressed", sn)
-	_btn_start.add_theme_color_override("font_color", C_GOLD_LT)
-	_btn_start.add_theme_color_override("font_hover_color", Color.WHITE)
 	_btn_start.add_theme_font_size_override("font_size", 18)
 	_btn_start.pressed.connect(func() -> void: starter_chosen.emit(_selected_id))
 	add_child(_btn_start)
 
 	# Bouton « MODE TEST » — juste au-dessus : démarre avec tout débloqué
 	# (roster large, CS, emplacements max, Baies) pour tester en conditions.
+	# Accent bleu conservé (c'est un outil de dev, pas une action de jeu).
 	var btn_test := Button.new()
 	btn_test.position = Vector2(898, 606)
 	btn_test.size     = Vector2(366, 44)
@@ -269,6 +262,7 @@ func _build_start_button() -> void:
 	btn_test.add_theme_color_override("font_color", Color(0.80, 0.92, 1.0))
 	btn_test.add_theme_color_override("font_hover_color", Color.WHITE)
 	btn_test.add_theme_font_size_override("font_size", 16)
+	UiKit.juice(btn_test)   # même vie que les boutons du kit
 	btn_test.pressed.connect(func() -> void: test_mode_chosen.emit(_selected_id))
 	add_child(btn_test)
 
