@@ -243,6 +243,10 @@ func _apply_environment(cfg: Dictionary) -> void:
 	e.glow_bloom      = cfg["glow_bloom"]
 	e.tonemap_mode    = Environment.TONE_MAPPER_FILMIC
 	e.tonemap_exposure = cfg["exposure"]
+	# Couleurs plus SATURÉES (retour utilisateur : le rendu délavé manquait
+	# de punch — référence : verts francs des mockups).
+	e.adjustment_enabled    = true
+	e.adjustment_saturation = cfg.get("saturation", 1.3)
 
 	# Contact-shadowing léger au pied des falaises/structures (chantier 2).
 	# Sans effet en GL Compatibility — prêt pour un passage en Forward+.

@@ -109,6 +109,8 @@ func _build_environment() -> void:
 	e.glow_bloom      = 0.05
 	e.tonemap_mode    = Environment.TONE_MAPPER_FILMIC
 	e.tonemap_exposure = 0.74       # aligné sur BiomeAmbiance._BASE_AMBIANCE
+	e.adjustment_enabled    = true
+	e.adjustment_saturation = 1.3   # couleurs franches (cf. BiomeAmbiance)
 	env.environment = e
 	add_child(env)
 
@@ -432,6 +434,12 @@ func _process(delta: float) -> void:
 	_update_camera(false, delta)
 
 	if _blocked:
+		return
+
+	# Relance ÉCLAIR : Entrée depuis le hub lance directement la run —
+	# mort → Entrée → on repart, sans marcher jusqu'au PNJ.
+	if Input.is_action_just_pressed("ui_accept") and not GameManager.hub_team.is_empty():
+		_start_run()
 		return
 
 	# Détection PNJ interactif le plus proche
