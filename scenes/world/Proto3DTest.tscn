@@ -1,0 +1,7 @@
+[gd_scene format=3 uid="uid://dqx3y5k8h2m4a"]
+
+[ext_resource type="Script" uid="uid://dgfmv2rtb1llt" path="res://scripts/world/Proto3DTest.gd" id="1"]
+
+[node name="Proto3DTest" type="Node3D" unique_id=1466730678]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.013231516, 0, 0.014674425)
+script = ExtResource("1")

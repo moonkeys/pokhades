@@ -16,7 +16,8 @@ func get_pokemon(id_or_name: Variant, callback: Callable) -> void:
 		return
 
 	var disk := _read_json_cache(_disk_path("pokemon", key))
-	if not disk.is_empty():
+	# Invalide les caches d'avant l'ajout du movepool complet (learnable_moves)
+	if not disk.is_empty() and disk.has("learnable_moves"):
 		_cache[key] = disk
 		_cache[str(disk.get("id", 0))] = disk
 		if callback.is_valid(): callback.call(disk)
@@ -108,7 +109,9 @@ func get_move(move_name: String, callback: Callable) -> void:
 		return
 
 	var disk := _read_json_cache(_disk_path("move", move_name))
-	if not disk.is_empty():
+	# Invalidation : les caches d'avant l'ajout de name_fr n'ont pas le nom
+	# français — on les re-télécharge une fois.
+	if not disk.is_empty() and disk.has("name_fr"):
 		_move_cache[move_name] = disk
 		if callback.is_valid(): callback.call(disk)
 		return
@@ -129,8 +132,15 @@ func get_move(move_name: String, callback: Callable) -> void:
 			http.queue_free()
 			return
 		var d: Dictionary = json.get_data()
+		# Nom localisé français (tableau `names` de PokeAPI)
+		var name_fr: String = ""
+		for entry in d.get("names", []):
+			if entry.get("language", {}).get("name", "") == "fr":
+				name_fr = entry.get("name", "")
+				break
 		var move_data := {
 			"name":         move_name,
+			"name_fr":      name_fr,
 			"type":         d.get("type", {}).get("name", "normal"),
 			"power":        d.get("power"),
 			"damage_class": d.get("damage_class", {}).get("name", "physical"),
@@ -203,8 +213,12 @@ func _build_data(json: Dictionary, name_fr: String, is_base_form: bool = true) -
 	# On déduplique par nom et on trie par niveau croissant
 	var level_up_moves: Array = []
 	var seen: Dictionary = {}
+	# Movepool COMPLET (tous modes d'apprentissage) — sert à valider qu'une
+	# attaque appartient bien au Pokémon (cf. PokemonData.learnable_moves).
+	var learnable: Array = []
 	for m in json.get("moves", []):
 		var mname: String = m["move"]["name"]
+		learnable.append(mname)
 		if seen.has(mname):
 			continue
 		for vg in m.get("version_group_details", []):
@@ -214,10 +228,12 @@ func _build_data(json: Dictionary, name_fr: String, is_base_form: bool = true) -
 				seen[mname] = true
 				break
 		if level_up_moves.size() >= 20:
-			break
+			pass   # on continue à collecter le movepool complet
 	level_up_moves.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		return int(a["level"]) < int(b["level"])
 	)
+	if level_up_moves.size() > 20:
+		level_up_moves = level_up_moves.slice(0, 20)
 
 	var sprites: Dictionary = json.get("sprites", {})
 	var sprite_url: String = sprites.get("front_default", "")
@@ -230,6 +246,7 @@ func _build_data(json: Dictionary, name_fr: String, is_base_form: bool = true) -
 		"stats":          stats,
 		"sprite_url":     sprite_url,
 		"level_up_moves": level_up_moves,
+		"learnable_moves": learnable,
 		"is_base_form":   is_base_form,
 	}
 

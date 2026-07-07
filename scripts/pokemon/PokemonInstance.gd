@@ -23,6 +23,57 @@ var max_hp_mult:  float = 1.0
 # Objet tenu — un seul à la fois par Pokémon ({} si aucun)
 var held_item: Dictionary = {}
 
+# ── Altération de statut (cf. StatusFx) ──────────────────────────────
+var status: String = ""          # "" | burn | poison | paralysis | freeze | sleep
+var status_time: float = 0.0
+var _dot_timer: float = 0.0
+const _DOT_INTERVAL := 0.9
+
+
+## Inflige `kind` pour `dur` secondes. N'écrase pas un statut déjà actif
+## (un Pokémon ne cumule pas les altérations).
+func apply_status(kind: String, dur: float) -> bool:
+	if status != "" or kind == "":
+		return false
+	status      = kind
+	status_time = dur
+	_dot_timer  = 0.0
+	return true
+
+
+func clear_status() -> void:
+	status = ""
+	status_time = 0.0
+
+
+## Avance le statut d'un pas de temps. Retourne les dégâts sur la durée à
+## infliger CETTE frame (0 la plupart du temps ; un « tic » toutes les
+## _DOT_INTERVAL s pour brûlure/poison). Met à jour l'expiration.
+func tick_status(delta: float) -> int:
+	if status == "":
+		return 0
+	status_time -= delta
+	if status_time <= 0.0:
+		clear_status()
+		return 0
+	var dot: float = StatusFx.INFO.get(status, {}).get("dot", 0.0)
+	if dot > 0.0:
+		_dot_timer += delta
+		if _dot_timer >= _DOT_INTERVAL:
+			_dot_timer -= _DOT_INTERVAL
+			return maxi(1, int(float(max_hp) * dot))
+	return 0
+
+
+## Peut agir (se déplacer / attaquer) ? Faux sous sommeil ou gel.
+func status_can_act() -> bool:
+	return status != "sleep" and status != "freeze"
+
+
+## Multiplicateur de vitesse dû au statut (paralysie = moitié).
+func status_speed_mult() -> float:
+	return 0.5 if status == "paralysis" else 1.0
+
 
 func _init(pokemon_data: PokemonData, lv: int = 5) -> void:
 	data       = pokemon_data
@@ -104,10 +155,13 @@ func get_effective_speed() -> int:
 	return int(float(data.speed) * speed_mult)
 
 func apply_hp_boost(factor: float) -> void:
-	var ratio: float = hp_ratio()
+	# Les PV gagnés en max sont AUSSI crédités en PV courants (façon Hades) :
+	# préserver le ratio rendait le bonus invisible (même barre, ex. 50/100 →
+	# 60/120) — le joueur croyait que le boost ne faisait rien.
+	var old_max := max_hp
 	max_hp_mult *= factor
 	max_hp = _calc_max_hp()
-	current_hp = int(ratio * float(max_hp))
+	current_hp = mini(max_hp, current_hp + maxi(0, max_hp - old_max))
 
 func _calc_max_hp() -> int:
 	var base: int = int(floor((2.0 * data.hp * level / 100.0) + level + 10))
@@ -139,18 +193,30 @@ func equip_item(item: Dictionary) -> void:
 func _apply_stat_mult(item: Dictionary) -> void:
 	var mult: float = item.get("mult", 1.0)
 	match item.get("effect", ""):
-		"atk": attack_mult  *= mult
-		"def": defense_mult *= mult
-		"spd": speed_mult   *= mult
+		"atk":   attack_mult  *= mult
+		"def":   defense_mult *= mult
+		"spd":   speed_mult   *= mult
+		"maxhp": apply_hp_boost(mult)
 
 
 func _unapply_stat_mult(item: Dictionary) -> void:
 	var mult: float = item.get("mult", 1.0)
 	if mult == 0.0: return
 	match item.get("effect", ""):
-		"atk": attack_mult  /= mult
-		"def": defense_mult /= mult
-		"spd": speed_mult   /= mult
+		"atk":   attack_mult  /= mult
+		"def":   defense_mult /= mult
+		"spd":   speed_mult   /= mult
+		"maxhp": apply_hp_boost(1.0 / mult)
+
+
+## Équipe l'objet tenu du catalogue assigné à ce Pokémon (cf.
+## GameManager.pokemon_item) — appelé une fois au spawn de run.
+func equip_catalog_item(api: String) -> void:
+	var it := ItemCatalog.get_item(api)
+	if it.is_empty() or it.get("kind", "") != "held":
+		return
+	held_item = it.duplicate()
+	_apply_stat_mult(held_item)
 
 func take_damage(amount: int) -> void:
 	current_hp = max(0, current_hp - amount)

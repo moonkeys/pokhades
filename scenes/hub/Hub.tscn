@@ -1,6 +1,48 @@
-[gd_scene format=3 uid="uid://c1hubmain0001"]
+[gd_scene format=3]
 
 [ext_resource type="Script" path="res://scripts/hub/HubWorld.gd" id="1"]
+[ext_resource type="Script" path="res://scripts/hub/HubMap.gd" id="2"]
 
-[node name="Hub" type="Node2D"]
+[node name="Hub" type="Node3D" unique_id=260062157]
 script = ExtResource("1")
+
+[node name="HubMapBg" type="Node3D" parent="." unique_id=1883765506]
+script = ExtResource("2")
+pine_tree_cell = Vector2i(1, 4)
+dirt_center = Vector2i(2, 16)
+dirt_edge_n = Vector2i(2, 15)
+dirt_edge_s = Vector2i(2, 17)
+dirt_edge_e = Vector2i(1, 16)
+dirt_edge_w = Vector2i(3, 16)
+dirt_corner_ne = Vector2i(3, 15)
+dirt_corner_nw = Vector2i(1, 15)
+dirt_corner_se = Vector2i(3, 17)
+dirt_corner_sw = Vector2i(1, 17)
+water_center = Vector2i(46, 26)
+water_edge_n = Vector2i(46, 25)
+water_edge_s = Vector2i(46, 27)
+water_edge_e = Vector2i(47, 26)
+water_edge_w = Vector2i(45, 26)
+water_corner_ne = Vector2i(47, 27)
+water_corner_nw = Vector2i(45, 25)
+water_corner_se = Vector2i(47, 27)
+water_corner_sw = Vector2i(47, 25)
+sand_center = Vector2i(17, 33)
+cliff_center = Vector2i(53, 33)
+cliff_edge_n = Vector2i(53, 32)
+cliff_edge_s = Vector2i(53, 34)
+cliff_edge_e = Vector2i(54, 33)
+cliff_edge_w = Vector2i(52, 33)
+cliff_corner_ne = Vector2i(54, 32)
+cliff_corner_nw = Vector2i(52, 32)
+cliff_corner_se = Vector2i(54, 34)
+cliff_corner_sw = Vector2i(52, 34)
+sea_center = Vector2i(23, 26)
+sea_edge_n = Vector2i(23, 25)
+sea_edge_s = Vector2i(23, 27)
+sea_edge_e = Vector2i(24, 26)
+sea_edge_w = Vector2i(22, 26)
+sea_corner_ne = Vector2i(24, 27)
+sea_corner_nw = Vector2i(22, 25)
+sea_corner_se = Vector2i(24, 27)
+sea_corner_sw = Vector2i(22, 25)

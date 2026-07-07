@@ -3,14 +3,14 @@ extends CanvasLayer
 
 signal closed
 
-const C_BG     := Color(0.10, 0.08, 0.05, 0.90)
-const C_PANEL  := Color(0.91, 0.85, 0.70)
+const C_BG     := Color(0.04, 0.03, 0.02, 0.82)
+const C_PANEL  := Color(0.10, 0.075, 0.045, 0.96)
 const C_BORDER := Color(0.62, 0.50, 0.32)
-const C_TEXT   := Color(0.18, 0.13, 0.06)
-const C_DIM    := Color(0.48, 0.38, 0.22)
-const C_GOLD   := Color(0.76, 0.53, 0.17)
+const C_TEXT   := Color(0.96, 0.92, 0.80)
+const C_DIM    := Color(0.62, 0.55, 0.42)
+const C_GOLD   := Color(0.92, 0.72, 0.25)
 const C_GOLD_LT:= Color(0.94, 0.88, 0.72)
-const C_GOOD   := Color(0.20, 0.68, 0.35)
+const C_GOOD   := Color(0.38, 0.82, 0.45)
 
 
 func _ready() -> void:
@@ -37,7 +37,7 @@ func _build() -> void:
 	panel.add_child(hdr)
 
 	_lbl(panel, "⊕  AMÉLIORATIONS PERMANENTES", 24, 14, 700, 44, 22, C_GOLD_LT)
-	_lbl(panel, "◆ %d Or" % GameManager.gold, 760, 22, 200, 28, 16, C_GOLD)
+	_lbl(panel, "◆ %d Baies" % GameManager.gold, 760, 22, 200, 28, 16, C_GOLD)
 
 	# ── Section capacités ─────────────────────────────────────────────
 	_lbl(panel, "Emplacements de capacités", 40, 95, 460, 26, 17, C_TEXT)
@@ -54,14 +54,14 @@ func _build() -> void:
 		card.position = Vector2(40 + i * 116, 148)
 		card.size     = Vector2(104, 88)
 		_style(card,
-			Color(0.84, 0.76, 0.60) if owned else Color(0.70, 0.63, 0.50),
+			Color(0.20, 0.16, 0.09) if owned else Color(0.12, 0.10, 0.06),
 			C_GOLD if current else C_BORDER, 8)
 		panel.add_child(card)
 
 		_lbl(card, slot_names[i], 4, 6, 96, 44, 11, C_TEXT if owned else C_DIM, true)
 
 		if buyable:
-			var btn := _mk_buy_btn("%d Or" % cost, Vector2(4, 54), Vector2(96, 28),
+			var btn := _mk_buy_btn("%d Baies" % cost, Vector2(4, 54), Vector2(96, 28),
 				GameManager.gold >= cost)
 			var cap_cost := cost
 			btn.pressed.connect(func() -> void: _buy_move_slot(cap_cost))
@@ -86,14 +86,14 @@ func _build() -> void:
 		card.position = Vector2(40 + i * 153, 320)
 		card.size     = Vector2(140, 88)
 		_style(card,
-			Color(0.84, 0.76, 0.60) if owned else Color(0.70, 0.63, 0.50),
+			Color(0.20, 0.16, 0.09) if owned else Color(0.12, 0.10, 0.06),
 			C_GOLD if current else C_BORDER, 8)
 		panel.add_child(card)
 
 		_lbl(card, team_names[i], 4, 6, 132, 44, 11, C_TEXT if owned else C_DIM, true)
 
 		if buyable:
-			var btn := _mk_buy_btn("%d Or" % cost, Vector2(4, 54), Vector2(132, 28),
+			var btn := _mk_buy_btn("%d Baies" % cost, Vector2(4, 54), Vector2(132, 28),
 				GameManager.gold >= cost)
 			var cap_cost := cost
 			btn.pressed.connect(func() -> void: _buy_team_slot(cap_cost))
@@ -101,10 +101,67 @@ func _build() -> void:
 		elif owned:
 			_lbl(card, "✓ Obtenu", 4, 62, 132, 20, 11, C_GOOD, true)
 
+	# ── Section passifs ───────────────────────────────────────────────
+	_lbl(panel, "Passifs de récolte", 40, 428, 460, 26, 17, C_TEXT)
+	_lbl(panel, "Effets permanents actifs pendant tes runs", 40, 452, 460, 20, 12, C_DIM)
+
+	var magnet_card := Panel.new()
+	magnet_card.position = Vector2(40, 480)
+	magnet_card.size     = Vector2(300, 88)
+	var has_magnet := GameManager.berry_magnet
+	_style(magnet_card, Color(0.20, 0.16, 0.09) if has_magnet else Color(0.12, 0.10, 0.06),
+		C_GOLD if has_magnet else C_BORDER, 8)
+	panel.add_child(magnet_card)
+	_lbl(magnet_card, "🧲  Aimant à Baies", 10, 8, 280, 22, 15, C_TEXT)
+	_lbl(magnet_card, "Les baies tombées au sol viennent à toi.", 10, 32, 280, 20, 11, C_DIM)
+	if has_magnet:
+		_lbl(magnet_card, "✓ Obtenu", 10, 60, 280, 20, 12, C_GOOD)
+	else:
+		var mcost := GameManager.BERRY_MAGNET_COST
+		var mbtn := _mk_buy_btn("%d Baies" % mcost, Vector2(10, 56), Vector2(150, 28),
+			GameManager.gold >= mcost)
+		mbtn.pressed.connect(func() -> void:
+			if GameManager.spend_gold(GameManager.BERRY_MAGNET_COST):
+				GameManager.berry_magnet = true
+				_rebuild()
+		)
+		magnet_card.add_child(mbtn)
+
+	# ── Capacités Spéciales — permanentes, valables pour toutes les runs ──
+	_lbl(panel, "Capacités Spéciales", 360, 428, 460, 26, 17, C_TEXT)
+	_lbl(panel, "Franchis les obstacles en run (touche A) — définitif", 360, 452, 460, 20, 12, C_DIM)
+
+	for i in GameManager.CS_CATALOG.size():
+		var cs: Dictionary = GameManager.CS_CATALOG[i]
+		var cs_id: String  = cs["id"]
+		var has_cs := GameManager.owns_cs(cs_id)
+		var cs_card := Panel.new()
+		cs_card.position = Vector2(360 + i * 205, 480)
+		cs_card.size     = Vector2(195, 88)
+		_style(cs_card, Color(0.20, 0.16, 0.09) if has_cs else Color(0.12, 0.10, 0.06),
+			C_GOLD if has_cs else C_BORDER, 8)
+		panel.add_child(cs_card)
+		_lbl(cs_card, "%s  %s" % [cs["sym"], cs["name"]], 10, 8, 180, 22, 14, C_TEXT)
+		var cs_desc := _lbl(cs_card, cs["desc"], 10, 30, 178, 26, 9, C_DIM)
+		cs_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		if has_cs:
+			_lbl(cs_card, "✓ Obtenu", 10, 62, 170, 20, 12, C_GOOD)
+		else:
+			var cs_price: int = cs["price"]
+			var cs_btn := _mk_buy_btn("%d Baies" % cs_price, Vector2(10, 56), Vector2(120, 28),
+				GameManager.gold >= cs_price)
+			var cap_id := cs_id
+			var cap_price := cs_price
+			cs_btn.pressed.connect(func() -> void:
+				if GameManager.buy_cs(cap_id, cap_price):
+					_rebuild()
+			)
+			cs_card.add_child(cs_btn)
+
 	# ── Fermer ────────────────────────────────────────────────────────
 	var close := Button.new()
 	close.text     = "✕  Fermer"
-	close.position = Vector2(24, 552)
+	close.position = Vector2(816, 548)
 	close.size     = Vector2(160, 40)
 	close.add_theme_font_size_override("font_size", 15)
 	close.add_theme_color_override("font_color", C_DIM)
@@ -187,8 +244,8 @@ func _style_col(p: Panel, bg: Color, radius: int, top_only: bool = false) -> voi
 
 func _btn_neutral(btn: Button) -> void:
 	var s := StyleBoxFlat.new()
-	s.bg_color = Color(0.74, 0.66, 0.52); s.set_corner_radius_all(8)
+	s.bg_color = Color(0.22, 0.18, 0.11); s.set_corner_radius_all(8)
 	btn.add_theme_stylebox_override("normal", s)
 	var sh := s.duplicate() as StyleBoxFlat
-	sh.bg_color = Color(0.82, 0.74, 0.60)
+	sh.bg_color = Color(0.30, 0.25, 0.15)
 	btn.add_theme_stylebox_override("hover", sh)

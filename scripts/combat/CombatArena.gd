@@ -1,15 +1,21 @@
-extends Node2D
+extends Node3D
 
-const ZOOM  := 2.0     # zoom caméra combat (tiles 32px à l'écran)
 const WATER_LAYER := 4  # cf. MapGenerator.WATER_LAYER — collision dédiée à l'eau
 
-var _map_w: float = 1280.0
-var _map_h: float = 720.0
+# ── Caméra HD-2D (angle fixe façon Octopath, comme le Hub) ────────────────
+# Même pitch que HubWorld (hauteur:recul = 1:2) mais bien plus reculée : le
+# combat temps réel a besoin de voir ~30 tuiles de large (l'ancienne caméra
+# 2D en montrait 40 à zoom 2).
+const CAM_HEIGHT := 16.0
+const CAM_BACK   := 32.0
+const CAM_FOV    := 28.0
+const CAM_MARGIN := 6.0    # clamp du point visé à l'intérieur de la map
+
+var _map_cells: Vector2i = Vector2i(80, 45)
 
 # ── CS (Capacités Spéciales) — calculées une fois au spawn de l'équipe ──
 var _cs_surf_unlocked:  bool = false   # Surf : effet d'équipe (cf. _compute_cs_unlocks)
-var _cs_holder_idx: Dictionary = {}    # "cs_coupe"/"cs_force" -> team_index du porteur (-1 si aucun)
-var _cs_triggers: Array = []   # [{"area":Area2D, "cs_id":String, "prompt":String, "on_use":Callable}, ...]
+var _cs_triggers: Array = []   # [{"area":Area3D, "cs_id":String, "prompt":String, "on_use":Callable, "at":Vector3}, ...]
 ## {} si aucun ; sinon {"cs_id":String, "prompt":String, "on_use":Callable}
 ## Le prompt/l'interaction ne sont actifs que si le membre CONTRÔLÉ (actif)
 ## est justement le porteur de cette CS — recalculé chaque frame (cf.
@@ -32,21 +38,36 @@ const POOL_ELEM:      Array[int] = [403, 261, 191, 43]
 const POOL_SEMI_BOSS: Array[int] = [20, 400, 17, 404, 402, 262, 55, 162]
 # Boss de zone — vague 10
 const POOL_BOSSES:    Array[int] = [143, 123, 128, 24, 22, 862]
-# Élite de grotte — allure plus imposante, réservés aux arènes de demi-boss
+# Élite de grotte — sbires de l'arène de demi-boss (plus faibles que le boss)
 const POOL_CAVE_ELITE: Array[int] = [217, 229, 359, 297, 342]
+# Demi-boss de grotte — espèces NON ÉVOLUÉES recrutables : les battre débloque
+# l'espèce (bases de pseudo-légendaires, récompense de choix)
+const POOL_CAVE_DEMIBOSS: Array[int] = [147, 246, 371, 443, 610, 633, 704]  # Minidraco, Embrylex, Draby, Griknot, Coupenotte, Solochi, Mucuscule
+
+# ── Habitants par biome — mélangés au pool de base selon le thème de la
+# map courante (double pondération : la faune locale domine la composition
+# sans exclure les espèces communes). Cf. _pool_for_room / _current_theme.
+const POOL_BIOME: Dictionary = {
+	MapGenerator.MapTheme.FOREST: [46, 69, 273, 285, 204, 540],   # Paras, Chétiflor, Grainipiot, Balignon, Pomdepik, Larveyette
+	MapGenerator.MapTheme.SWAMP:  [194, 88, 23, 41, 270, 283],    # Axoloto, Tadmorv, Abo, Nosferapti, Nénupiot, Arakdo
+	MapGenerator.MapTheme.MEADOW: [187, 415, 669, 179, 659],      # Granivol, Apitrini, Flabébé, Wattouat, Sapereau
+	MapGenerator.MapTheme.ROCKY:  [74, 66, 296, 304, 524, 744],   # Racaillou, Machoc, Makuhita, Galekid, Nodulithe, Rocabot
+	MapGenerator.MapTheme.AUTUMN: [585, 216, 46, 163, 204],       # Vivaldaim, Teddiursa, Paras, Hoothoot, Pomdepik
+	MapGenerator.MapTheme.LAKE:   [118, 129, 194, 54, 60, 79],    # Poissirène, Magicarpe, Axoloto, Psykokwak, Ptitard, Ramoloss
+}
 
 const PLAYER_LEVEL:    int = 10
 const SEMI_BOSS_LEVEL: int = 13
 const BOSS_LEVEL:      int = 18
 
-# Décalages de spawn pour les membres de l'équipe
+# Décalages de spawn pour les membres de l'équipe (unités monde = tuiles)
 const SPAWN_OFFSETS: Array = [
-	Vector2(0,    0),
-	Vector2(68,  22),
-	Vector2(-68, 22),
-	Vector2(0,  -68),
-	Vector2(68, -22),
-	Vector2(-68,-22),
+	Vector3(0,     0, 0),
+	Vector3(4.25,  0, 1.4),
+	Vector3(-4.25, 0, 1.4),
+	Vector3(0,     0, -4.25),
+	Vector3(4.25,  0, -1.4),
+	Vector3(-4.25, 0, -1.4),
 ]
 
 var _team:         Array   = []
@@ -55,12 +76,16 @@ var _killed: int = 0
 var _alive:  int = 0
 var _room_total: int = 0   # nombre total d'ennemis dans la salle courante
 var _cache: Dictionary = {}
-var _cam_pos: Vector2 = Vector2.ZERO
+var _cam: Camera3D = null
+var _cam_pos: Vector3 = Vector3.ZERO
 var _follow_mode: bool = true
+
+# Ambiance par biome (chantiers 1 & 3 : environment/fog/brume + backdrop/nuages)
+var _ambiance: BiomeAmbiance = null
 
 # Système de portes
 var _map:           MapBase        = null
-var _entry_barrier: StaticBody2D   = null
+var _entry_barrier: StaticBody3D   = null
 var _exit_portals:  Array          = []
 
 # ── Grotte (arène de demi-boss) ──────────────────────────────────────
@@ -76,23 +101,73 @@ var _saved_killed:    int     = 0
 var _saved_room_total: int    = 0
 var _saved_team_pos:  Array   = []          # positions équipe avant la grotte
 
-@onready var hud          = $HUD
+# ── Boutique : salle non-combat occasionnelle (vendeur Perrserker) ────
+const BOUTIQUE_VENDOR_PID   := 863   # Perrserker
+const BOUTIQUE_SLEEPER_PID  := 925   # Maushold (endormi)
+const BOUTIQUE_WANDERER_PID := 79    # Ramoloss (déambule)
+const BOUTIQUE_MOVE_PRICE   := 110   # ₽ pour apprendre une attaque puissante
 
-@onready var player_spawn: Marker2D = $PlayerSpawnPoint
+var _boutique_active: bool  = false
+var _boutique_nodes:  Array = []            # PNJ + déclencheur du vendeur
+var _boutique_offers: Array = []            # offre d'attaque par membre vivant
+var _boutique_live:   Array = []            # membres vivants (alignés sur _boutique_offers)
+var _boutique_screen: BoutiqueScreen = null
+
+# ── Don de fin de zone (façon Hades) ──────────────────────────────────
+var _boon_node:   Area3D = null             # item flottant au centre
+var _boon_type:   int    = -1               # RunManager.BONUS_SKILL / BONUS_STAT
+var _boon_screen: BoutiqueScreen = null     # écran de récompense (skill/stat)
+
+@onready var hud          = $HUD
 
 const TEAM_SCENE  := preload("res://scenes/combat/TeamMember.tscn")
 const ENEMY_SCENE := preload("res://scenes/combat/EnemyPokemon.tscn")
 
+# ── Multijoueur ───────────────────────────────────────────────────────
+# _mp = run multijoueur : l'HÔTE simule les ennemis et fait autorité (spawns,
+# dégâts, salle nettoyée, sorties) ; chaque joueur contrôle UN Pokémon (pas
+# de switch) et fait autorité sur ses propres PV/position, rediffusés à tous.
+var _mp: bool = false
+var _net_enemy_counter: int = 0
+var _net_pos_accum: float = 0.0
+const NET_POS_HZ := 10.0
+
 
 func _ready() -> void:
-	y_sort_enabled = true
+	Engine.time_scale = 1.0   # sécurité : un hitstop coupé par un changement de scène pourrait l'avoir laissé à 0
+	add_to_group("combat_arena")   # cible des appels add_camera_shake (cf. CombatVFX)
+	_mp = Net.in_run
+	if _mp:
+		Net.server_closed.connect(func() -> void:
+			Net.reset()
+			get_tree().change_scene_to_file("res://scenes/hub/Hub.tscn")
+		)
 	_register_switch_key()
 	_map = get_node_or_null("Map") as MapBase
 	_refresh_map_bounds()
 	RunManager.inst().start_run()
-	_cam_pos = player_spawn.global_position
-	_apply_canvas_transform()
+	GameManager.run_money = 0   # les Pokédollars ne survivent pas à la run
+
+	_ambiance = BiomeAmbiance.new()
+	_ambiance.name = "Ambiance"
+	add_child(_ambiance)
+	_apply_ambiance()
+
+	_cam = Camera3D.new()
+	_cam.fov = CAM_FOV
+	add_child(_cam)
+	_cam_pos = _map.cell_to_world3(_map.entry_tile) if is_instance_valid(_map) \
+		else Vector3(_map_cells.x * 0.5, 0, _map_cells.y * 0.5)
+	_update_camera()
 	_preload_all()
+
+
+## Configure l'ambiance (environment, fog, lumière, backdrop) selon le thème
+## de la map courante — pendant à _theme_config()/_apply_theme() côté tuiles.
+func _apply_ambiance() -> void:
+	if not is_instance_valid(_ambiance):
+		return
+	_ambiance.apply_theme(_current_theme(), _map_cells, _cave_active, _map)
 
 
 func _register_switch_key() -> void:
@@ -114,11 +189,45 @@ func _register_switch_key() -> void:
 		ev3.keycode = KEY_E
 		InputMap.action_add_event("interact", ev3)
 
+	# Touche dédiée aux CS (Coupe/Surf/Force) — distincte de [E] (coffres)
+	if not InputMap.has_action("cs_use"):
+		InputMap.add_action("cs_use")
+		var ev4 := InputEventKey.new()
+		ev4.keycode = KEY_A
+		InputMap.action_add_event("cs_use", ev4)
+
 
 func _process(delta: float) -> void:
 	if _team.size() > 0 and is_instance_valid(_team[_active_index]):
 		_cam_pos = _cam_pos.lerp(_team[_active_index].global_position, 8.0 * delta)
-	_apply_canvas_transform()
+	_shake = maxf(0.0, _shake - delta * 2.2)
+	_update_camera()
+	if not _mp or multiplayer.is_server():
+		_rescue_stray_enemies(delta)
+	_update_surf_state()
+	_update_surf_mount()
+
+	# Multijoueur (hôte) : diffusion groupée des positions d'ennemis — un
+	# seul RPC non-fiable pour toute la meute, à NET_POS_HZ.
+	if _mp and multiplayer.is_server():
+		_net_pos_accum += delta
+		if _net_pos_accum >= 1.0 / NET_POS_HZ:
+			_net_pos_accum = 0.0
+			var names: PackedStringArray = []
+			var poss:  PackedVector3Array = []
+			for e in get_tree().get_nodes_in_group("enemies"):
+				if is_instance_valid(e) and e.get_parent() == self:
+					names.append(String(e.name))
+					poss.append(e.global_position)
+			if names.size() > 0:
+				_net_enemy_positions.rpc(names, poss)
+
+	# Rotation + flottement du don s'il est présent
+	if is_instance_valid(_boon_node):
+		var spin := _boon_node.get_node_or_null("Spin")
+		if spin:
+			(spin as Node3D).rotate_y(delta * 1.6)
+		_boon_node.position.y += sin(Time.get_ticks_msec() * 0.003) * delta * 0.4
 
 	if Input.is_action_just_pressed("switch_pokemon"):
 		_cycle_active()
@@ -129,49 +238,140 @@ func _process(delta: float) -> void:
 		hud.set_follow_mode(_follow_mode)
 
 	_refresh_cs_prompt()
-	if not _near_obstacle.is_empty() and Input.is_action_just_pressed("interact"):
+	if not _near_obstacle.is_empty() and Input.is_action_just_pressed("cs_use"):
 		var cb: Callable = _near_obstacle["on_use"]
+		var used_cs: String = _near_obstacle.get("cs_id", "")
+		var at: Vector3 = _near_obstacle.get("at", _team[_active_index].global_position if _active_index < _team.size() else Vector3.ZERO)
 		_near_obstacle = {}
 		_refresh_interact_prompt()
 		if cb.is_valid():
 			cb.call()
+		_play_cs_effect(used_cs, at)
 		_spawn_cs_triggers()
+
+
+## ── Anti-blocage (bug signalé) : certains ennemis spawnaient loin et
+## restaient coincés (île, cul-de-sac A*), rendant la salle infinissable.
+## Balayage périodique : tout ennemi à plus de RESCUE_DIST du Pokémon
+## contrôlé est rapatrié sur une case valide près de l'équipe.
+const RESCUE_DIST     := 40.0
+const RESCUE_INTERVAL := 8.0
+var _rescue_timer: float = 0.0
+
+func _rescue_stray_enemies(delta: float) -> void:
+	_rescue_timer += delta
+	if _rescue_timer < RESCUE_INTERVAL:
+		return
+	_rescue_timer = 0.0
+	if _team.is_empty() or not is_instance_valid(_map):
+		return
+	if _active_index >= _team.size() or not is_instance_valid(_team[_active_index]):
+		return
+	var anchor: Node3D = _team[_active_index]
+	for enemy in get_tree().get_nodes_in_group("enemies"):
+		if not is_instance_valid(enemy):
+			continue
+		if enemy.global_position.distance_to(anchor.global_position) < RESCUE_DIST:
+			continue
+		var dest := _valid_cell_near(anchor.global_position, 8.0, 14.0)
+		if dest != Vector2i(-1, -1):
+			enemy.global_position = _map.cell_to_world3(dest)
+			CombatVFX.spawn_death_poof(self, enemy.global_position, Color(0.75, 0.72, 0.9))
+
+
+## Case de spawn valide dans un anneau [r_min, r_max] autour de `origin`,
+## ou (-1,-1) après épuisement des essais.
+func _valid_cell_near(origin: Vector3, r_min: float, r_max: float) -> Vector2i:
+	for _attempt in 30:
+		var ang := randf() * TAU
+		var r := randf_range(r_min, r_max)
+		var cell := _map.world3_to_cell(origin + Vector3(cos(ang) * r, 0, sin(ang) * r))
+		if _map.is_valid_spawn_cell(cell):
+			return cell
+	return Vector2i(-1, -1)
 
 
 func _refresh_map_bounds() -> void:
 	if is_instance_valid(_map):
-		var sz := _map.get_map_pixel_size()
-		_map_w = sz.x
-		_map_h = sz.y
+		_map_cells = _map.get_map_cell_size()
 	else:
-		_map_w = 1280.0
-		_map_h = 720.0
+		_map_cells = Vector2i(80, 45)
 
 
-func _apply_canvas_transform() -> void:
-	var vp      := get_viewport().get_visible_rect().size
-	var half_vw := vp.x * 0.5 / ZOOM
-	var half_vh := vp.y * 0.5 / ZOOM
-	var cx := clampf(_cam_pos.x, half_vw, _map_w - half_vw)
-	var cy := clampf(_cam_pos.y, half_vh, _map_h - half_vh)
-	# Transform : scale + translation pour centrer sur (cx, cy)
-	var t := Transform2D()
-	t.x      = Vector2(ZOOM, 0)
-	t.y      = Vector2(0, ZOOM)
-	t.origin = Vector2(vp.x * 0.5 - cx * ZOOM, vp.y * 0.5 - cy * ZOOM)
-	get_viewport().canvas_transform = t
+## Secousse de caméra (dégâts subis, ennemis vaincus) — intensité cumulable
+## plafonnée, décroissance dans _process. Appelée via le groupe
+## "combat_arena" depuis TeamMember/EnemyAI (cf. CombatVFX).
+var _shake: float = 0.0
+
+func add_camera_shake(intensity: float) -> void:
+	_shake = minf(0.45, _shake + intensity)
+
+
+# ── Hit-pause (hitstop) ───────────────────────────────────────────────
+# Bref gel global à l'impact d'un coup : donne du "poids" aux frappes. On
+# passe par Engine.time_scale = 0 et un timer NON affecté par le time_scale
+# (ignore_time_scale) pour restaurer la vitesse. Les requêtes concurrentes
+# ne font que prolonger la fin (jamais raccourcir).
+var _hitstop_gen: int = 0
+
+func request_hitstop(duration: float) -> void:
+	_hitstop_gen += 1
+	var my_gen := _hitstop_gen
+	Engine.time_scale = 0.0
+	# process_always=true, process_in_physics=false, ignore_time_scale=true :
+	# le timer s'écoule en temps réel malgré le time_scale à 0.
+	var t := get_tree().create_timer(duration, true, false, true)
+	t.timeout.connect(func() -> void:
+		# Ne restaure que si aucune requête plus récente n'est arrivée entre-temps
+		# (sinon on couperait un gel prolongé). Le dernier gel gagne.
+		if my_gen == _hitstop_gen:
+			Engine.time_scale = 1.0
+	)
+
+
+## Caméra à angle fixe façon Octopath (comme HubWorld._update_camera), point
+## visé clampé pour ne pas cadrer le vide au-delà des bords de la map.
+func _update_camera() -> void:
+	if not is_instance_valid(_cam):
+		return
+	var target := _cam_pos
+	target.x = clampf(target.x, CAM_MARGIN, float(_map_cells.x) - CAM_MARGIN)
+	target.z = clampf(target.z, CAM_MARGIN, float(_map_cells.y) - CAM_MARGIN)
+	# Suit légèrement le relief (collines douces) sous le point visé — la
+	# caméra "respire" avec le terrain au lieu de rester à plat en permanence.
+	target.y = _map.get_height_at_world(target) if is_instance_valid(_map) else 0.0
+	var shake_off := Vector3.ZERO
+	if _shake > 0.001:
+		shake_off = Vector3(randf_range(-1, 1), randf_range(-1, 1), 0) * _shake
+	_cam.position = target + Vector3(0, CAM_HEIGHT, CAM_BACK) + shake_off
+	_cam.look_at(target + Vector3(0, 0.9, 0), Vector3.UP)
 
 
 # ── Chargement ────────────────────────────────────────────────────────
 
 func _preload_all() -> void:
-	var team_ids: Array = GameManager.get_run_team()
+	# Équipe résolue : forme de départ après Super Bonbons (peut être évoluée)
+	# — on précharge la FORME FINALE, pas la base.
+	var team_ids: Array = []
+	if _mp:
+		# Multijoueur : un Pokémon par joueur (choisi au lobby), niveau de
+		# base — pas de Super Bonbons ni d'objets du hub (équité entre pairs).
+		for id in Net.player_order():
+			team_ids.append(int(Net.players[id]["pid"]))
+	else:
+		for base_pid: int in GameManager.get_run_team():
+			var eff := GameManager.get_effective_start(base_pid, PLAYER_LEVEL)
+			team_ids.append(int(eff["id"]))
 	var priority_seen: Dictionary = {}
 
-	# Phase 1 (bloquante) : équipe + salle 0 uniquement (rodents + bugs)
-	# → ~10-15 Pokémon, zone démarre dès que c'est prêt
+	# Phase 1 (bloquante) : équipe + salle 0 (rodents + bugs + faune du biome
+	# courant) → zone démarre dès que c'est prêt
+	var first_room: Array = []
+	first_room.append_array(POOL_RODENTS)
+	first_room.append_array(POOL_BUGS)
+	first_room.append_array(POOL_BIOME.get(_current_theme(), []))
 	var priority_ids: Array = team_ids.duplicate()
-	for eid: int in (POOL_RODENTS + POOL_BUGS):
+	for eid: int in first_room:
 		if not priority_seen.has(eid):
 			priority_seen[eid] = true
 			priority_ids.append(eid)
@@ -190,10 +390,21 @@ func _preload_all() -> void:
 				_preload_moves()
 		)
 
-	# Phase 2 (arrière-plan) : pools des salles suivantes
-	# Ils seront mis en cache avant que le joueur les atteigne
-	for eid: int in (POOL_FLYERS + POOL_ELEM + POOL_SEMI_BOSS + POOL_BOSSES + POOL_CAVE_ELITE):
+	# Phase 2 (arrière-plan) : pools des salles suivantes + faunes des AUTRES
+	# biomes (le thème change à chaque transition de zone — ils doivent être
+	# en cache avant que le joueur franchisse un portail)
+	var background: Array = []
+	background.append_array(POOL_FLYERS)
+	background.append_array(POOL_ELEM)
+	background.append_array(POOL_SEMI_BOSS)
+	background.append_array(POOL_BOSSES)
+	background.append_array(POOL_CAVE_ELITE)
+	background.append_array(POOL_CAVE_DEMIBOSS)
+	for t in POOL_BIOME:
+		background.append_array(POOL_BIOME[t])
+	for eid: int in background:
 		if not priority_seen.has(eid):
+			priority_seen[eid] = true
 			PokemonAPI.get_pokemon(eid, func(data: Dictionary) -> void:
 				if not is_instance_valid(self): return
 				if not data.is_empty():
@@ -250,7 +461,8 @@ func _preload_moves() -> void:
 					var lv: int         = entry["level"]
 					var md := MoveData.new()
 					md.api_name     = mname
-					md.display_name = mname.replace("-", " ").capitalize()
+					var fr: String  = move_data.get("name_fr", "")
+					md.display_name = fr if not fr.is_empty() else mname.replace("-", " ").capitalize()
 					md.type         = move_data.get("type", "normal")
 					md.power        = power
 					md.damage_class = move_data.get("damage_class", "physical")
@@ -276,35 +488,50 @@ func _start_zone() -> void:
 	_killed     = 0
 	_room_total = 0
 	_spawn_team()
+	# Salle-boutique : pas de combat — le vendeur Perrserker et ses PNJ, puis
+	# on repart par un portail de sortie (cf. _enter_boutique).
+	if _is_shop_room(RunManager.inst().rooms_cleared):
+		_enter_boutique()
+		return
 	_spawn_entry_barrier()
 	_spawn_chests()
-	_spawn_cave_portals()
+	# Grotte : déclencheur posé seulement une fois la salle nettoyée
+	# (cf. _show_run_status) — pas de détour d'élite en plein combat.
 	_spawn_cs_triggers()
-	hud.set_wave(RunManager.inst().get_zone_name())
+	hud.set_wave(_zone_label())
 	hud.set_kills(0, 0)
 	await get_tree().create_timer(1.2).timeout
+	await _net_zone_barrier()
 	_spawn_room_enemies()
 
 
 func _spawn_team() -> void:
+	if _mp:
+		_spawn_team_mp()
+		return
 	var team_ids: Array[int] = GameManager.get_run_team()
 	# Spawn juste au-dessus de l'entrée (pas au centre de la map)
-	var spawn_center: Vector2
+	var spawn_center: Vector3
 	if is_instance_valid(_map):
-		var et := _map.entry_tile
-		spawn_center = Vector2(et.x * 16.0 + 8.0, (et.y - 4) * 16.0 + 8.0)
+		spawn_center = _map.cell_to_world3(_map.entry_tile + Vector2i(0, -4))
 	else:
-		spawn_center = player_spawn.global_position
+		spawn_center = Vector3(_map_cells.x * 0.5, 0, _map_cells.y * 0.5)
 
 	for i in team_ids.size():
-		var id: int  = team_ids[i]
+		var base_pid: int = team_ids[i]
+		var eff := GameManager.get_effective_start(base_pid, PLAYER_LEVEL)
+		var id: int  = int(eff["id"])
 		var data: PokemonData = _cache.get(str(id))
 		if not data:
 			push_error("Pokémon introuvable pour id=%d" % id)
 			continue
 
-		var instance := PokemonInstance.new(data, PLAYER_LEVEL)
+		var instance := PokemonInstance.new(data, int(eff["level"]))
 		instance.init_moves()
+		# Objet tenu assigné à ce Pokémon (clé = id de base, avant évolution)
+		var held: String = GameManager.get_assigned_item(base_pid)
+		if held != "":
+			instance.equip_catalog_item(held)
 		var member   = TEAM_SCENE.instantiate()
 		add_child(member)
 		member.global_position = spawn_center + SPAWN_OFFSETS[i % SPAWN_OFFSETS.size()]
@@ -343,10 +570,14 @@ func _spawn_team() -> void:
 			_team[midx].pokemon_instance.portrait_texture = tex
 		)
 		member.died.connect(_on_team_member_died.bind(idx))
+		member.dash_changed.connect(func(charges: int, max_c: int) -> void:
+			if idx == _active_index:
+				hud.update_dash(charges, max_c)
+		)
 
 	# Centre la caméra immédiatement sur le premier membre
 	_cam_pos = _team[0].global_position
-	_apply_canvas_transform()
+	_update_camera()
 
 	# Leader initial pour les compagnons
 	_update_leaders()
@@ -363,31 +594,160 @@ func _spawn_team() -> void:
 	_compute_cs_unlocks(team_ids)
 
 
-## Détermine une fois pour la run quelles CS l'équipe peut utiliser, en
-## fonction du Pokémon assigné (cf. GameManager.assign_cs) — basé sur la
-## composition d'équipe au lancement, insensible aux évolutions en cours de run.
-func _compute_cs_unlocks(team_ids: Array[int]) -> void:
-	_cs_surf_unlocked = GameManager.owns_cs("cs_surf") and GameManager.get_cs_holder("cs_surf") in team_ids
+## Multijoueur : un TeamMember par joueur connecté, dans l'ordre stable du
+## registre (identique sur tous les pairs → mêmes noms de nœuds "P<peer>",
+## indispensable pour cibler les RPC). Seul le membre du joueur LOCAL est
+## contrôlé (is_active) ; les autres sont des copies pilotées à distance.
+## Pas de compagnons IA, pas de switch, pas d'objets du hub.
+func _spawn_team_mp() -> void:
+	var spawn_center: Vector3
+	if is_instance_valid(_map):
+		spawn_center = _map.cell_to_world3(_map.entry_tile + Vector2i(0, -4))
+	else:
+		spawn_center = Vector3(_map_cells.x * 0.5, 0, _map_cells.y * 0.5)
 
-	# Coupe/Force : seul le membre CONTRÔLÉ compte — on retrouve son index
-	# d'équipe (résiste à l'évolution, basée sur la composition au lancement).
-	_cs_holder_idx.clear()
-	for cs_id in ["cs_coupe", "cs_force"]:
-		var idx := -1
-		if GameManager.owns_cs(cs_id):
-			idx = team_ids.find(GameManager.get_cs_holder(cs_id))
-		_cs_holder_idx[cs_id] = idx
+	var order := Net.player_order()
+	var local_peer := Net.local_id()
 
-	# CS Surf : toute l'équipe ignore la couche physique de l'eau (elle
-	# "surfe" ensemble), sinon comportement normal (bloquée par l'eau).
+	for i in order.size():
+		var peer: int = order[i]
+		var pid: int  = int(Net.players[peer]["pid"])
+		var data: PokemonData = _cache.get(str(pid))
+		if not data:
+			push_error("MP: Pokémon introuvable pour pid=%d (joueur %s)" % [pid, str(Net.players[peer]["name"])])
+			continue
+
+		var instance := PokemonInstance.new(data, PLAYER_LEVEL)
+		instance.init_moves()
+		var member = TEAM_SCENE.instantiate()
+		member.name = "P%d" % peer
+		add_child(member)
+		member.global_position = spawn_center + SPAWN_OFFSETS[i % SPAWN_OFFSETS.size()]
+
+		var is_local := peer == local_peer
+		member.setup(instance, i, is_local)
+		if not is_local:
+			member.remote_peer = peer
+		else:
+			_active_index = i
+		_team.append(member)
+
+		var idx := i
+		member.hp_changed.connect(func(ratio: float) -> void:
+			hud.update_team_hp(idx, ratio)
+			if idx == _active_index:
+				hud.update_hp(ratio)
+		)
+		member.cooldown_changed.connect(func(ratio: float) -> void:
+			if idx == _active_index:
+				hud.update_cooldown(ratio)
+		)
+		member.xp_changed.connect(func(ratio: float, lv: int) -> void:
+			hud.update_team_level(idx, lv)
+			hud.update_team_xp(idx, ratio)
+			if idx == _active_index:
+				hud.update_xp(ratio, lv)
+		)
+		member.leveled_up.connect(func(lv: int) -> void:
+			if idx == _active_index:
+				hud.show_levelup(lv)
+		)
+		member.evolved.connect(func(name_fr: String) -> void:
+			if idx == _active_index:
+				hud.show_evolution(name_fr)
+		)
+		member.portrait_ready.connect(func(midx: int, tex: Texture2D) -> void:
+			hud.update_team_portrait(midx, tex)
+			_team[midx].pokemon_instance.portrait_texture = tex
+		)
+		member.died.connect(_on_team_member_died.bind(idx))
+		member.dash_changed.connect(func(charges: int, max_c: int) -> void:
+			if idx == _active_index:
+				hud.update_dash(charges, max_c)
+		)
+
+	if _team.is_empty():
+		push_error("MP: aucun membre spawné — retour au hub.")
+		Net.reset()
+		get_tree().change_scene_to_file("res://scenes/hub/Hub.tscn")
+		return
+
+	_cam_pos = _team[_active_index].global_position
+	_update_camera()
+
+	var instances: Array = []
+	for m in _team:
+		instances.append(m.pokemon_instance)
+	hud.setup_team(instances, _active_index)
+	hud.setup_player(_team[_active_index].pokemon_instance)
+	hud.setup_moves(_team[_active_index].pokemon_instance.equipped_moves)
+	_connect_move_signal(_active_index)
+	# Applique le masque de collision eau (CS Surf) — sans quoi les membres
+	# garderaient le masque par défaut et marcheraient sur l'eau.
+	_compute_cs_unlocks([] as Array[int])
+
+
+## Quelles CS l'équipe peut utiliser — désormais basé UNIQUEMENT sur la
+## possession (achat), plus d'assignation à un Pokémon précis : n'importe
+## quel membre peut s'en servir (touche A près d'un obstacle).
+func _compute_cs_unlocks(_team_ids: Array[int]) -> void:
+	_cs_surf_unlocked = GameManager.owns_cs("cs_surf")
+	_apply_water_mask()
+
+
+# ── Surf : posséder la CS ne suffit pas — il faut MONTER (touche A au bord
+# de l'eau) pour que l'équipe puisse traverser ; on démonte automatiquement
+# en revenant s'éloigner sur la terre ferme. ──────────────────────────────
+var _surf_active: bool = false
+
+## L'eau bloque tant qu'on n'a pas activé le surf (touche A au bord).
+func _apply_water_mask() -> void:
 	for m in _team:
 		if is_instance_valid(m):
-			m.collision_mask = 1 if _cs_surf_unlocked else (1 | WATER_LAYER)
+			m.collision_mask = 1 if _surf_active else (1 | WATER_LAYER)
 
 
-## Vrai si le membre actuellement CONTRÔLÉ (actif) est le porteur de `cs_id`.
-func _active_holds_cs(cs_id: String) -> bool:
-	return _cs_holder_idx.get(cs_id, -1) == _active_index
+func _mount_surf() -> void:
+	_surf_active = true
+	_apply_water_mask()
+	Sfx.play("dash", -6.0)
+
+
+## La case du corps est-elle de l'eau ?
+func _is_on_water(body: Node3D) -> bool:
+	if not is_instance_valid(_map) or not _map.has_method("world3_to_cell") \
+			or _map.get("_water") == null:
+		return false
+	var cell: Vector2i = _map.world3_to_cell(body.global_position)
+	return _map._water.get_cell_source_id(cell) != -1
+
+
+## Le membre actif touche-t-il le bord de l'eau (sa case ou une voisine) ?
+func _active_near_water() -> bool:
+	if _active_index >= _team.size() or not is_instance_valid(_team[_active_index]):
+		return false
+	if not is_instance_valid(_map) or not _map.has_method("world3_to_cell") \
+			or _map.get("_water") == null:
+		return false
+	var cell: Vector2i = _map.world3_to_cell(_team[_active_index].global_position)
+	for dy in range(-1, 2):
+		for dx in range(-1, 2):
+			if _map._water.get_cell_source_id(cell + Vector2i(dx, dy)) != -1:
+				return true
+	return false
+
+
+## Démontage automatique : toute l'équipe au sec et l'actif éloigné du bord.
+func _update_surf_state() -> void:
+	if not _surf_active:
+		return
+	for m in _team:
+		if is_instance_valid(m) and _is_on_water(m):
+			return   # quelqu'un surfe encore — ne pas re-bloquer l'eau sous lui
+	if _active_near_water():
+		return       # encore au bord : on reste prêt à repartir
+	_surf_active = false
+	_apply_water_mask()
 
 
 func _apply_hub_items() -> void:
@@ -412,6 +772,8 @@ func _apply_hub_items() -> void:
 # ── Gestion de l'équipe ───────────────────────────────────────────────
 
 func _cycle_active() -> void:
+	if _mp:
+		return   # multijoueur : un Pokémon par joueur, pas de switch
 	var old_idx := _active_index
 	var next    := (old_idx + 1) % _team.size()
 
@@ -436,6 +798,7 @@ func _set_active(idx: int) -> void:
 	hud.setup_player(_team[idx].pokemon_instance)
 	hud.setup_moves(_team[idx].pokemon_instance.equipped_moves)
 	hud.set_active_slot(idx)
+	hud.update_dash(_team[idx]._dash_charges, _team[idx].dash_max_charges)
 	_connect_move_signal(idx)
 
 
@@ -452,7 +815,7 @@ func _connect_move_signal(idx: int) -> void:
 
 
 func _update_leaders() -> void:
-	var leader: Node2D = _team[_active_index] if _follow_mode else null
+	var leader: Node3D = _team[_active_index] if _follow_mode else null
 	for i in _team.size():
 		if i != _active_index:
 			_team[i]._leader = leader
@@ -460,15 +823,124 @@ func _update_leaders() -> void:
 
 # ── Combat — salle unique ─────────────────────────────────────────────
 
+const BOSS_ROOM_EVERY := 5    # salles 5, 10, 15… = salles de boss
+const VICTORY_ROOM    := 10   # vaincre le boss de la salle 10 = victoire de run
+
+func _is_boss_room(room: int) -> bool:
+	return (room + 1) % BOSS_ROOM_EVERY == 0
+
+
+# ── Vagues : les ennemis d'une salle arrivent en 1 à 4 vagues — moins
+# d'adversaires simultanés, surtout en début de run (le "tout d'un coup"
+# rendait la salle 1 létale). File consommée par _on_enemy_died.
+var _wave_queue: Array = []   # vagues restantes : Array[Array[spawn_spec]]
+var _wave_num:   int   = 0
+var _waves_total: int  = 0
+
+
 func _spawn_room_enemies() -> void:
 	var room  := RunManager.inst().rooms_cleared
-	var count := 4 + room * 2
-	var lv    := PLAYER_LEVEL + room * 2
+	# Courbe lissée : effectif +1/salle (plafonné), niveau +1.5/salle, et un
+	# champion d'élite qui incarne visiblement la montée en danger.
+	var count := mini(3 + room, 12)
+	var lv    := PLAYER_LEVEL + int(room * 1.5)
 	var pool  := _pool_for_room(room)
-	_spawn_from_pool(pool, count, lv)
-	_room_total = _alive
+
+	_wave_queue.clear()
+	_wave_num    = 0
+	_waves_total = 1
+
+	if _is_boss_room(room) and room + 1 >= VICTORY_ROOM:
+		# ── DRESSEUR FINAL : 6 vagues, comme l'équipe complète d'un dresseur
+		# expérimenté — chaque vague envoie UN boss (les 6 de POOL_BOSSES,
+		# ordre mélangé) escorté de ses sbires, niveaux croissants.
+		var bosses := Array(POOL_BOSSES)
+		bosses.shuffle()
+		_waves_total = bosses.size()
+		var minions_per_wave := maxi(2, count / 3)
+		for w in _waves_total:
+			var specs: Array = [
+				{"pool": [bosses[w]], "count": 1, "lv": BOSS_LEVEL + room + w * 2,
+					"champion": false, "boss": true},
+				{"pool": Array(pool), "count": minions_per_wave, "lv": lv + w,
+					"champion": false, "boss": false},
+			]
+			_wave_queue.append(specs)
+		_room_total = _waves_total * (1 + minions_per_wave)
+		hud.set_kills(0, _room_total)
+		hud.set_wave("☠☠ DRESSEUR FINAL — %d Pokémon boss t'attendent !" % _waves_total)
+		get_tree().call_group("combat_arena", "add_camera_shake", 0.15)
+		await get_tree().create_timer(1.8).timeout   # temps de lire l'annonce
+		if _game_over_triggered or _victory_triggered:
+			return
+		_spawn_next_wave()
+		return
+
+	if _is_boss_room(room):
+		# Salle de boss intermédiaire : vague unique — un colosse
+		# (POOL_BOSSES, anneau doré, 1.7×) escorté d'une poignée de sbires.
+		_spawn_from_pool(POOL_BOSSES, 1, BOSS_LEVEL + room, false, true)
+		_spawn_from_pool(pool, maxi(3, count / 2), lv)
+		_room_total = _alive
+		hud.set_kills(0, _room_total)
+		hud.set_wave("☠ BOSS — %s · Niv. %d" % [_zone_label(), BOSS_LEVEL + room])
+		return
+
+	# Champions : 1 dès la salle 3, 2 dès la salle 6 — tirés de la faune du
+	# biome (l'"alpha" local), +4 niveaux, dans la DERNIÈRE vague.
+	var champions := 0
+	if room >= 5:   champions = 2
+	elif room >= 2: champions = 1
+	var champ_pool: Array = []
+	if champions > 0:
+		var biome: Array = POOL_BIOME.get(_current_theme(), [])
+		champ_pool = biome if not biome.is_empty() else Array(pool)
+
+	# Découpe l'effectif en 1-4 vagues (au moins ~2 ennemis par vague)
+	_waves_total = clampi(randi_range(1, 4), 1, maxi(1, count / 2))
+	var base := count / _waves_total
+	var rem  := count % _waves_total
+	for w in _waves_total:
+		var n := base + (1 if w < rem else 0)
+		var specs: Array = [{"pool": Array(pool), "count": n, "lv": lv, "champion": false, "boss": false}]
+		if w == _waves_total - 1 and champions > 0:
+			specs.append({"pool": champ_pool, "count": champions, "lv": lv + 4, "champion": true, "boss": false})
+		_wave_queue.append(specs)
+
+	_room_total = count + champions
 	hud.set_kills(0, _room_total)
-	hud.set_wave("%s — %d ennemis" % [RunManager.inst().get_zone_name(), _room_total])
+	_spawn_next_wave()
+
+
+func _spawn_next_wave() -> void:
+	if _wave_queue.is_empty():
+		return
+	var specs: Array = _wave_queue.pop_front()
+	_wave_num += 1
+	for spec: Dictionary in specs:
+		var typed_pool: Array[int] = []
+		for eid: int in spec["pool"]:
+			typed_pool.append(eid)
+		_spawn_from_pool(typed_pool, spec["count"], spec["lv"], spec["champion"], spec["boss"])
+	var lv0: int = (specs[0] as Dictionary)["lv"]
+	if _waves_total > 1:
+		hud.set_wave("%s · Vague %d/%d · Niv. %d" % [_zone_label(), _wave_num, _waves_total, lv0])
+	else:
+		hud.set_wave("%s · %d ennemis · Niv. %d" % [_zone_label(), _room_total, lv0])
+
+
+## "Forêt — Salle 3" : le nom du biome courant + le numéro de salle — la
+## progression se lit d'un coup d'œil au HUD.
+func _zone_label() -> String:
+	var names := {
+		MapGenerator.MapTheme.FOREST: "Forêt",
+		MapGenerator.MapTheme.SWAMP:  "Marécage",
+		MapGenerator.MapTheme.MEADOW: "Prairie",
+		MapGenerator.MapTheme.ROCKY:  "Éboulis",
+		MapGenerator.MapTheme.AUTUMN: "Bois d'automne",
+		MapGenerator.MapTheme.LAKE:   "Lac",
+	}
+	return "%s — %s" % [names.get(_current_theme(), "Zone"), RunManager.inst().get_zone_name()]
 
 
 func _pool_for_room(room: int) -> Array[int]:
@@ -478,70 +950,190 @@ func _pool_for_room(room: int) -> Array[int]:
 	if room >= 2: pool.append_array(POOL_FLYERS)
 	if room >= 3: pool.append_array(POOL_ELEM)
 	if room >= 4: pool.append_array(POOL_SEMI_BOSS)
+	# Faune du biome courant, en double pondération — la population locale
+	# domine la composition sans exclure les espèces communes.
+	var biome: Array = POOL_BIOME.get(_current_theme(), [])
+	for i in 2:
+		for eid: int in biome:
+			pool.append(eid)
 	return pool
 
 
+## Thème (MapGenerator.MapTheme) de la map courante — FOREST par défaut si
+## la map n'expose pas de thème (scènes legacy).
+func _current_theme() -> int:
+	var theme_v: Variant = _map.get("theme") if is_instance_valid(_map) else null
+	return int(theme_v) if theme_v != null else MapGenerator.MapTheme.FOREST
+
+
 func _on_room_cleared() -> void:
-	var gold := 30 + RunManager.inst().rooms_cleared * 20
-	GameManager.add_gold(gold)
-	hud.set_wave("Salle libérée !  +%d Or" % gold)
+	var room := RunManager.inst().rooms_cleared
+	# Vaincre le boss de la salle VICTORY_ROOM = victoire de run — le jeu
+	# n'avait jusqu'ici qu'une fin par défaite.
+	if _is_boss_room(room) and room + 1 >= VICTORY_ROOM:
+		_run_victory()
+		return
+
+	var gold := 30 + room * 20
+	if _is_boss_room(room):
+		gold *= 3   # butin de boss intermédiaire
+	if _mp:
+		_net_room_cleared.rpc(gold)   # chaque client touche le même butin
+	GameManager.add_run_money(gold)
+	hud.update_money(GameManager.run_money)
+	hud.set_wave("Salle libérée !  +%d ₽" % gold)
 	hud.set_kills(_killed, _room_total)
 	await get_tree().create_timer(0.8).timeout
-	_show_run_status(gold)
+	# Don façon Hades : un item apparaît au CENTRE (type annoncé par la porte
+	# choisie pour entrer ici) ; les portes de sortie s'ouvrent en parallèle.
+	_spawn_boon(RunManager.inst().current_zone_bonus)
+	_spawn_exit_portals()
+	_spawn_cave_portals()
+
+
+## Fin de run victorieuse : gros butin, jingle, retour au hub.
+var _victory_triggered: bool = false
+
+func _run_victory() -> void:
+	if _victory_triggered or _game_over_triggered:
+		return
+	_victory_triggered = true
+	# Multijoueur : la victoire n'est détectée que chez l'hôte (seul à
+	# compter les morts d'ennemis) — il la diffuse à tous les clients.
+	if _mp and multiplayer.is_server():
+		_net_victory.rpc()
+	var gold := 500 + RunManager.inst().rooms_cleared * 30
+	GameManager.add_gold(gold)
+	Sfx.play("victory")
+	hud.set_wave("🏆 VICTOIRE !  Le boss est vaincu — +%d Baies" % gold)
+	get_tree().call_group("combat_arena", "add_camera_shake", 0.2)
+	await get_tree().create_timer(4.0).timeout
+	if _mp:
+		Net.reset()
+	get_tree().change_scene_to_file("res://scenes/hub/Hub.tscn")
+
+
+@rpc("authority", "call_remote", "reliable")
+func _net_victory() -> void:
+	_run_victory()
 
 
 func _show_run_status(gold: int) -> void:
 	var screen := RunStatusScreen.new()
 	add_child(screen)
+	screen.setup(_team, gold)
 
-	# Propose 2 bonus aléatoires depuis le pool global de RunManager
-	var pool: Array = RunManager.BONUSES.duplicate()
-	pool.shuffle()
-	var offers: Array = []
-	for i in mini(2, pool.size()):
-		var b := pool[i] as Dictionary
-		offers.append({"bonus": b.get("id", "heal_half"), "bonus_label": b.get("label", "")})
-
-	screen.setup(_team, gold, offers)
-	screen.bonus_chosen.connect(func(bid: String) -> void:
-		_apply_bonus(bid)
+	# Boutique : chaque achat débite les ₽ puis applique l'effet ; l'écran se
+	# reconstruit pour refléter le nouveau solde/les PV soignés.
+	screen.purchase.connect(func(item_id: String) -> void:
+		var price := _run_shop_price(item_id)
+		if GameManager.spend_run_money(price):
+			_apply_bonus(item_id)
+			Sfx.play("coin", -4.0)
+			hud.update_money(GameManager.run_money)
+			screen.refresh()
+	)
+	screen.continued.connect(func() -> void:
 		screen.queue_free()
 		_spawn_exit_portals()
+		_spawn_cave_portals()   # la grotte ne s'ouvre qu'une fois la salle nettoyée
 	, CONNECT_ONE_SHOT)
 
 
-func _spawn_from_pool(pool: Array[int], count: int, lv: int) -> void:
+## Prix (₽) d'un article de la boutique en run, 0 si introuvable.
+func _run_shop_price(item_id: String) -> int:
+	for it: Dictionary in RunManager.RUN_SHOP:
+		if it["id"] == item_id:
+			return int(it["price"])
+	return 0
+
+
+const SPAWN_TELEGRAPH_TIME := 0.55
+
+func _spawn_from_pool(pool: Array[int], count: int, lv: int, champion: bool = false, boss: bool = false) -> void:
 	if pool.is_empty():
 		return
+	if _mp and not multiplayer.is_server():
+		return   # seuls les ennemis de l'hôte font autorité — les clients reçoivent _net_spawn_enemy
 	for i in count:
 		var id: int = pool[randi() % pool.size()]
 		var cache_key: String = str(id)
 		if not _cache.has(cache_key):
 			continue
-		var data: PokemonData = _cache[cache_key]
-		var instance := PokemonInstance.new(data, lv)
-		instance.init_moves()
-		var enemy = ENEMY_SCENE.instantiate()
-		add_child(enemy)
-		enemy.global_position = _random_valid_spawn()
-		enemy.setup(instance)
-		enemy.died.connect(_on_enemy_died.bind(id, data.is_base_form))
+		# Spawn TÉLÉPHONÉ : un anneau grandit au sol pendant ~0,5 s avant que
+		# l'ennemi n'apparaisse — la vague se lit, plus de pop-in brutal.
+		# _alive est réservé tout de suite : la salle ne peut pas se "nettoyer"
+		# pendant que des apparitions sont en cours.
 		_alive += 1
+		var pos := _random_valid_spawn()
+		_spawn_telegraph_ring(pos, 1.6 if boss else (1.2 if champion else 0.9),
+			SPAWN_TELEGRAPH_TIME)
+		var captured_id := id
+		get_tree().create_timer(SPAWN_TELEGRAPH_TIME).timeout.connect(func() -> void:
+			if _game_over_triggered or _victory_triggered or not is_instance_valid(self):
+				return
+			_materialize_enemy(captured_id, lv, pos, champion, boss)
+		)
 
 
-func _random_valid_spawn() -> Vector2:
+## Apparition effective d'un ennemi (après la télégraphie).
+func _materialize_enemy(id: int, lv: int, pos: Vector3, champion: bool, boss: bool) -> void:
+	var data: PokemonData = _cache[str(id)]
+	var instance := PokemonInstance.new(data, lv)
+	instance.init_moves()
+	var enemy = ENEMY_SCENE.instantiate()
+	if _mp:
+		_net_enemy_counter += 1
+		enemy.name = "E%d" % _net_enemy_counter
+	add_child(enemy)
+	enemy.global_position = pos
+	enemy.setup(instance, champion, boss)
+	enemy.died.connect(_on_enemy_died.bind(id, data.is_base_form))
+	CombatVFX.spawn_death_poof(self, pos, Color(0.85, 0.88, 0.95))   # nuage d'arrivée
+	if _mp:
+		var ename := String(enemy.name)
+		enemy.died.connect(func(xp: int) -> void:
+			_net_enemy_died.rpc(ename, xp)
+		)
+		_net_spawn_enemy.rpc(ename, id, lv, pos, champion, boss)
+
+
+## Anneau d'annonce au sol (spawn d'ennemi) — grandit puis disparaît.
+func _spawn_telegraph_ring(pos: Vector3, radius: float, dur: float) -> void:
+	var ring := MeshInstance3D.new()
+	var torus := TorusMesh.new()
+	torus.inner_radius = maxf(0.1, radius - 0.14)
+	torus.outer_radius = radius
+	ring.mesh = torus
+	ring.position = pos + Vector3(0, 0.05, 0)
+	ring.scale = Vector3(0.15, 0.05, 0.15)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.95, 0.35, 0.75, 0.55)
+	mat.transparency  = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.shading_mode  = BaseMaterial3D.SHADING_MODE_UNSHADED
+	ring.material_override = mat
+	ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(ring)
+	var tw := create_tween()
+	tw.tween_property(ring, "scale", Vector3(1.0, 0.05, 1.0), dur * 0.85).set_ease(Tween.EASE_OUT)
+	tw.tween_property(ring, "scale", Vector3(0.05, 0.05, 0.05), dur * 0.15).set_ease(Tween.EASE_IN)
+	tw.tween_callback(ring.queue_free)
+
+
+func _random_valid_spawn() -> Vector3:
 	# Cherche une position libre (ni arbre, ni eau, ni bord) — taille réelle de la map
 	var sz := Vector2i(MapBase.W, MapBase.H)
 	if is_instance_valid(_map):
 		sz = _map.get_map_cell_size()
 	for _attempt in 40:
-		var tx := randi_range(6, maxi(7, sz.x - 6))
-		var ty := randi_range(6, maxi(7, sz.y - 6))
-		var pos := Vector2(tx * 16.0 + 8.0, ty * 16.0 + 8.0)
-		if is_instance_valid(_map) and _map.is_valid_spawn(pos):
-			return pos
+		var cell := Vector2i(
+			randi_range(6, maxi(7, sz.x - 6)),
+			randi_range(6, maxi(7, sz.y - 6))
+		)
+		if is_instance_valid(_map) and _map.is_valid_spawn_cell(cell):
+			return _map.cell_to_world3(cell)
 	# Fallback : centre de la map
-	return Vector2(sz.x * 8.0, sz.y * 8.0)
+	return Vector3(sz.x * 0.5, 0, sz.y * 0.5)
 
 
 # ── Signaux ───────────────────────────────────────────────────────────
@@ -551,15 +1143,31 @@ func _on_enemy_died(xp_reward: int, pid: int, is_base_form: bool) -> void:
 	_killed += 1
 	hud.set_kills(_killed, _room_total)
 
-	for member in _team:
-		if is_instance_valid(member) and not member.pokemon_instance.is_fainted():
-			member.gain_xp(xp_reward)
+	if _mp:
+		# Multijoueur : chacun donne l'XP à SON Pokémon (l'hôte ici, les
+		# clients dans _net_enemy_died) — les copies distantes n'évoluent pas.
+		_net_kills.rpc(_killed, _room_total)
+		var mine = _team[_active_index] if _active_index < _team.size() else null
+		if is_instance_valid(mine) and not mine.pokemon_instance.is_fainted():
+			mine.gain_xp(xp_reward)
+	else:
+		for member in _team:
+			if is_instance_valid(member) and not member.pokemon_instance.is_fainted():
+				member.gain_xp(xp_reward)
 
 	if GameManager.record_defeat(pid, is_base_form):
 		var name_fr := (_cache[str(pid)] as PokemonData).name_fr if _cache.has(str(pid)) else "Pokémon"
 		hud.show_unlock(name_fr)
 
 	if _alive <= 0:
+		# Vagues restantes ? La salle n'est pas finie : annonce + suite.
+		if not _cave_active and not _wave_queue.is_empty():
+			hud.set_wave("⚔ Vague %d/%d…" % [_wave_num + 1, _waves_total])
+			await get_tree().create_timer(1.4).timeout
+			if _game_over_triggered or _victory_triggered:
+				return
+			_spawn_next_wave()
+			return
 		await get_tree().create_timer(1.0).timeout
 		if _cave_active:
 			_on_cave_cleared()
@@ -578,6 +1186,12 @@ func _on_team_member_died(idx: int) -> void:
 
 	if idx != _active_index:
 		return  # un compagnon est KO, l'équipe continue
+
+	# Multijoueur : pas de remplaçant — ton Pokémon est KO, tu spectates
+	# jusqu'à la victoire de la salle ou la défaite générale (wipe ci-dessus).
+	if _mp:
+		hud.set_wave("☠ KO — les autres continuent le combat !")
+		return
 
 	# Le membre actif est KO → cherche un remplaçant
 	var next := _find_next_alive()
@@ -633,6 +1247,437 @@ func _apply_bonus(bonus_id: String) -> void:
 				inst.defense_mult *= 1.2
 			"boost_spd":
 				inst.speed_mult *= 1.2
+			"dash_plus":
+				m.dash_max_charges += 1
+				m._dash_charges = m.dash_max_charges   # recharge immédiate à l'obtention
+				if i == _active_index:
+					hud.update_dash(m._dash_charges, m.dash_max_charges)
+			"revive":
+				m.revive(0.5)
+				var rr: float = inst.hp_ratio()
+				hud.update_team_hp(i, rr)
+				if i == _active_index:
+					hud.update_hp(rr)
+			"atk_rate":
+				m.cooldown_mult *= 0.85
+			"xp_up":
+				m.xp_mult *= 1.25
+			"new_move":
+				if i == _active_index:
+					_grant_new_move(m)
+
+
+## Capacités offertes par le bonus "new_move" — données embarquées (pas de
+## fetch PokeAPI au moment du choix : la récompense doit être instantanée).
+const STRONG_MOVES: Array[Dictionary] = [
+	{"api": "flamethrower", "label": "Lance-Flammes", "type": "fire",     "power": 90,  "class": "special"},
+	{"api": "thunderbolt",  "label": "Tonnerre",      "type": "electric", "power": 90,  "class": "special"},
+	{"api": "ice-beam",     "label": "Laser Glace",   "type": "ice",      "power": 90,  "class": "special"},
+	{"api": "surf",         "label": "Surf",          "type": "water",    "power": 90,  "class": "special"},
+	{"api": "earthquake",   "label": "Séisme",        "type": "ground",   "power": 100, "class": "physical"},
+	{"api": "psychic",      "label": "Psyko",         "type": "psychic",  "power": 90,  "class": "special"},
+	{"api": "shadow-ball",  "label": "Ball'Ombre",    "type": "ghost",    "power": 80,  "class": "special"},
+	{"api": "energy-ball",  "label": "Éco-Sphère",    "type": "grass",    "power": 90,  "class": "special"},
+	{"api": "brick-break",  "label": "Casse-Brique",  "type": "fighting", "power": 75,  "class": "physical"},
+	{"api": "rock-slide",   "label": "Éboulement",    "type": "rock",     "power": 75,  "class": "physical"},
+]
+
+
+## Bonus "new_move" : le Pokémon actif apprend une capacité puissante tirée
+## au sort (jamais un doublon de son set) — remplace sa plus faible si les 4
+## emplacements sont pris.
+func _grant_new_move(member) -> void:
+	var inst: PokemonInstance = member.pokemon_instance
+	var owned: Array = []
+	for md: MoveData in inst.equipped_moves:
+		owned.append(md.api_name)
+	# Uniquement les capacités du MOVEPOOL du Pokémon (pas de Séisme à Absol),
+	# et pas déjà équipées.
+	var candidates: Array = STRONG_MOVES.filter(func(mv: Dictionary) -> bool:
+		return not owned.has(mv["api"]) and inst.data.can_learn(mv["api"])
+	)
+	if candidates.is_empty():
+		hud.set_wave("✦ Aucune capacité compatible pour %s" % inst.data.name_fr.capitalize())
+		return   # rien de compatible à offrir
+	var pick: Dictionary = candidates[randi() % candidates.size()]
+
+	var md := MoveData.new()
+	md.api_name      = pick["api"]
+	md.display_name  = pick["label"]
+	md.type          = pick["type"]
+	md.power         = pick["power"]
+	md.damage_class  = pick["class"]
+	md.level_learned = 0
+
+	if inst.equipped_moves.size() >= GameManager.move_slot_count:
+		var weakest := 0
+		for j in inst.equipped_moves.size():
+			if (inst.equipped_moves[j] as MoveData).power < (inst.equipped_moves[weakest] as MoveData).power:
+				weakest = j
+		inst.equipped_moves[weakest] = md
+	else:
+		inst.equipped_moves.append(md)
+
+	hud.setup_moves(inst.equipped_moves)
+	hud.set_wave("✦ %s apprend %s !" % [inst.data.name_fr.capitalize(), md.display_name])
+
+
+# ── Boutique : salle non-combat (vendeur Perrserker) ──────────────────
+# Une salle sur ~5 (hors 1res salles et salles de boss) est une boutique :
+# aucun ennemi, trois PNJ d'ambiance (Maushold endormi, Ramoloss qui
+# déambule, Perrserker marchand) et un étal où dépenser ses Pokédollars ₽
+# en attaques puissantes ou en Baies. On repart par un portail de sortie.
+
+## Décision déterministe par run (stable entre l'annonce d'une porte et
+## l'arrivée effective dans la salle).
+func _is_shop_room(room: int) -> bool:
+	if room <= 1:
+		return false
+	if _is_boss_room(room):
+		return false
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash("shop:%d:%d" % [GameManager.run_count, room])
+	return rng.randf() < 0.22
+
+
+func _enter_boutique() -> void:
+	_boutique_active = true
+	_clear_boutique_nodes()
+	# Offres d'attaque — une par membre vivant, tirée à l'entrée puis figée.
+	_boutique_live = []
+	_boutique_offers = []
+	for m in _team:
+		if not is_instance_valid(m):
+			continue
+		_boutique_live.append(m)
+		_boutique_offers.append(_roll_move_offers(m.pokemon_instance))
+	_spawn_boutique_npcs()
+	_spawn_exit_portals()   # on peut repartir librement, sans acheter
+	hud.set_kills(0, 0)
+	hud.set_wave("🛍 Boutique — parle au Perrserker (marchand)")
+
+
+## Tire jusqu'à 3 attaques puissantes compatibles (movepool + non déjà connues)
+## proposées au choix. [] si aucune. Le joueur choisira ensuite laquelle
+## apprendre et quelle attaque remplacer (cf. BoutiqueScreen).
+func _roll_move_offers(inst: PokemonInstance) -> Array:
+	var owned: Array = []
+	for md: MoveData in inst.equipped_moves:
+		owned.append(md.api_name)
+	var candidates: Array = STRONG_MOVES.filter(func(mv: Dictionary) -> bool:
+		return not owned.has(mv["api"]) and inst.data.can_learn(mv["api"])
+	)
+	candidates.shuffle()
+	var out: Array = []
+	for pick: Dictionary in candidates:
+		if out.size() >= 3:
+			break
+		out.append({
+			"api": pick["api"], "label": pick["label"], "type": pick["type"],
+			"power": pick["power"], "class": pick["class"],
+			"price": BOUTIQUE_MOVE_PRICE,
+		})
+	return out
+
+
+func _spawn_boutique_npcs() -> void:
+	if not is_instance_valid(_map):
+		return
+	var sz := _map.get_map_cell_size()
+	var cx := sz.x / 2
+	var cy := sz.y / 2
+
+	# Perrserker marchand (au centre) + étal déclencheur
+	var vendor := HubNPC.new()
+	add_child(vendor)
+	vendor.setup("boutique_vendor", BOUTIQUE_VENDOR_PID, Color(0.85, 0.60, 0.20))
+	vendor.position = _map.cell_to_world3(Vector2i(cx, cy))
+	_boutique_nodes.append(vendor)
+	_spawn_vendor_trigger(Vector2i(cx, cy))
+
+	# Maushold endormi (fixe) + « Zzz »
+	var sleeper := HubNPC.new()
+	add_child(sleeper)
+	sleeper.setup("boutique_sleeper", BOUTIQUE_SLEEPER_PID, Color(0.72, 0.72, 0.82))
+	sleeper.position = _map.cell_to_world3(Vector2i(maxi(3, cx - 4), cy + 2))
+	_boutique_nodes.append(sleeper)
+	var zzz := Label3D.new()
+	zzz.text        = "Zzz"
+	zzz.position    = Vector3(0.3, 1.6, 0)
+	zzz.font_size   = 40
+	zzz.pixel_size  = 0.007
+	zzz.billboard   = BaseMaterial3D.BILLBOARD_ENABLED
+	zzz.modulate    = Color(0.75, 0.85, 1.0)
+	zzz.outline_size = 8
+	zzz.outline_modulate = Color(0, 0, 0, 0.7)
+	zzz.no_depth_test = true
+	sleeper.add_child(zzz)
+
+	# Ramoloss qui déambule lentement
+	var wanderer := HubNPC.new()
+	add_child(wanderer)
+	wanderer.setup("boutique_wanderer", BOUTIQUE_WANDERER_PID, Color(0.90, 0.60, 0.72))
+	var wcenter := _map.cell_to_world3(Vector2i(mini(sz.x - 3, cx + 4), maxi(3, cy - 2)))
+	wanderer.position = wcenter
+	_boutique_nodes.append(wanderer)
+	wanderer.start_wandering(wcenter, 2.4, 0.7)
+
+
+func _spawn_vendor_trigger(cell: Vector2i) -> void:
+	var area := Area3D.new()
+	area.position        = _map.cell_to_world3(cell) + Vector3(0, 0, 1.1)
+	area.collision_layer = 0
+	area.collision_mask  = 1
+	var cs := CollisionShape3D.new()
+	var sh := BoxShape3D.new()
+	sh.size  = Vector3(1.6, 1.6, 1.4)
+	cs.shape = sh
+	cs.position = Vector3(0, 0.8, 0)
+	area.add_child(cs)
+	var lbl := Label3D.new()
+	lbl.text      = "🛍 Boutique"
+	lbl.position  = Vector3(0, 2.5, 0)
+	lbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	lbl.no_depth_test = true
+	lbl.font_size  = 44
+	lbl.pixel_size = 0.009
+	lbl.modulate = Color(0.95, 0.82, 0.35)
+	lbl.outline_modulate = Color(0.12, 0.08, 0.02)
+	lbl.outline_size = 12
+	area.add_child(lbl)
+	area.body_entered.connect(func(body: Node) -> void:
+		if not (body.is_in_group("players") and body.get("is_active") == true):
+			return
+		_open_boutique_shop()
+	)
+	add_child(area)
+	_boutique_nodes.append(area)
+
+
+func _open_boutique_shop() -> void:
+	if is_instance_valid(_boutique_screen):
+		return
+	_boutique_screen = BoutiqueScreen.new()
+	add_child(_boutique_screen)
+	_boutique_screen.learn_move.connect(_learn_boutique_move)
+	_boutique_screen.buy_berries.connect(_buy_boutique_berries)
+	_boutique_screen.closed.connect(func() -> void:
+		if is_instance_valid(_boutique_screen):
+			_boutique_screen.queue_free()
+		_boutique_screen = null
+	)
+	_boutique_screen.setup(_boutique_live, _boutique_offers)
+
+
+## Apprend l'attaque `option_index` (parmi les 3 proposées) au membre
+## `member_index`, en REMPLAÇANT son attaque `replace_index` (-1 = ajouter sur
+## un emplacement libre). Débite les ₽.
+func _learn_boutique_move(member_index: int, option_index: int, replace_index: int) -> void:
+	if member_index < 0 or member_index >= _boutique_offers.size():
+		return
+	var options: Array = _boutique_offers[member_index]
+	if option_index < 0 or option_index >= options.size():
+		return
+	var offer: Dictionary = options[option_index]
+	var member = _boutique_live[member_index]
+	if not is_instance_valid(member):
+		return
+	if not GameManager.spend_run_money(int(offer["price"])):
+		return
+	var inst: PokemonInstance = member.pokemon_instance
+
+	var md := MoveData.new()
+	md.api_name      = offer["api"]
+	md.display_name  = offer["label"]
+	md.type          = offer["type"]
+	md.power         = int(offer["power"])
+	md.damage_class  = offer["class"]
+	md.level_learned = 0
+
+	if replace_index >= 0 and replace_index < inst.equipped_moves.size():
+		inst.equipped_moves[replace_index] = md
+	elif inst.equipped_moves.size() < GameManager.move_slot_count:
+		inst.equipped_moves.append(md)
+	else:
+		inst.equipped_moves[inst.equipped_moves.size() - 1] = md
+
+	# HUD des capacités si c'est le membre actif
+	if _active_index < _team.size() and _team[_active_index] == member:
+		hud.setup_moves(inst.equipped_moves)
+
+	# Attaque apprise → cet achat est consommé pour ce Pokémon (une fois/visite)
+	_boutique_offers[member_index] = []
+	Sfx.play("coin", -4.0)
+	hud.update_money(GameManager.run_money)
+	if is_instance_valid(_boutique_screen):
+		_boutique_screen.refresh()
+
+
+func _buy_boutique_berries(price: int, amount: int) -> void:
+	if not GameManager.spend_run_money(price):
+		return
+	GameManager.add_gold(amount)
+	Sfx.play("coin", -4.0)
+	hud.update_money(GameManager.run_money)
+	if is_instance_valid(_boutique_screen):
+		_boutique_screen.refresh()
+
+
+func _clear_boutique_nodes() -> void:
+	for n in _boutique_nodes:
+		if is_instance_valid(n):
+			n.queue_free()
+	_boutique_nodes.clear()
+
+
+# ── Don de fin de zone (façon Hades) ──────────────────────────────────
+
+var _boon_live:   Array = []
+var _boon_offers: Array = []
+
+## Fait apparaître un « don » flottant au centre de la map nettoyée. Son type
+## (attaque / stats) est celui annoncé par la porte choisie pour entrer ici.
+func _spawn_boon(bonus_type: int) -> void:
+	_clear_boon()
+	if not is_instance_valid(_map):
+		return
+	_boon_type = bonus_type
+	var sz := _map.get_map_cell_size()
+	var cell := Vector2i(sz.x / 2, sz.y / 2)
+
+	var area := Area3D.new()
+	area.position        = _map.cell_to_world3(cell) + Vector3(0, 0.9, 0)
+	area.collision_layer = 0
+	area.collision_mask  = 1
+	var cs := CollisionShape3D.new()
+	var sh := SphereShape3D.new()
+	sh.radius = 1.2
+	cs.shape  = sh
+	area.add_child(cs)
+
+	# Visuel : losange émissif tournant, coloré selon le type
+	var col := Color(0.72, 0.55, 0.92) if bonus_type == RunManager.BONUS_SKILL else Color(0.95, 0.78, 0.28)
+	var mi := MeshInstance3D.new()
+	var prism := PrismMesh.new()
+	prism.size = Vector3(0.7, 1.0, 0.7)
+	mi.mesh = prism
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = col
+	mat.emission_enabled = true
+	mat.emission = col
+	mat.emission_energy_multiplier = 1.4
+	mi.material_override = mat
+	mi.name = "Spin"
+	area.add_child(mi)
+
+	var lbl := Label3D.new()
+	lbl.text      = "★ %s ★" % RunManager.inst().bonus_type_label(bonus_type)
+	lbl.position  = Vector3(0, 1.4, 0)
+	lbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	lbl.no_depth_test = true
+	lbl.font_size  = 44
+	lbl.pixel_size = 0.009
+	lbl.modulate   = col.lightened(0.3)
+	lbl.outline_size = 12
+	lbl.outline_modulate = Color(0.08, 0.06, 0.04)
+	area.add_child(lbl)
+
+	area.body_entered.connect(func(body: Node) -> void:
+		if body.is_in_group("players") and body.get("is_active") == true:
+			_open_boon()
+	)
+	add_child(area)
+	_boon_node = area
+
+
+func _clear_boon() -> void:
+	if is_instance_valid(_boon_node):
+		_boon_node.queue_free()
+	_boon_node = null
+	if is_instance_valid(_boon_screen):
+		_boon_screen.queue_free()
+	_boon_screen = null
+	_boon_type = -1
+
+
+func _open_boon() -> void:
+	if is_instance_valid(_boon_screen):
+		return
+	_boon_screen = BoutiqueScreen.new()
+	add_child(_boon_screen)
+	if _boon_type == RunManager.BONUS_SKILL:
+		_boon_live = []
+		_boon_offers = []
+		for m in _team:
+			if not is_instance_valid(m):
+				continue
+			_boon_live.append(m)
+			var offs := _roll_move_offers(m.pokemon_instance)
+			for o: Dictionary in offs:
+				o["price"] = 0   # don gratuit
+			_boon_offers.append(offs)
+		_boon_screen.learn_move.connect(_claim_boon_skill)
+		_boon_screen.setup(_boon_live, _boon_offers, "skill")
+	else:
+		_boon_screen.boon_stat.connect(_claim_boon_stat)
+		_boon_screen.setup(_team, [], "stat")
+	# « Continuer » ferme sans réclamer — le don reste dispo (on peut y revenir).
+	_boon_screen.closed.connect(func() -> void:
+		if is_instance_valid(_boon_screen):
+			_boon_screen.queue_free()
+		_boon_screen = null
+	)
+
+
+func _claim_boon_skill(member_index: int, option_index: int, replace_index: int) -> void:
+	if member_index < 0 or member_index >= _boon_offers.size():
+		return
+	var options: Array = _boon_offers[member_index]
+	if option_index < 0 or option_index >= options.size():
+		return
+	var member = _boon_live[member_index]
+	if not is_instance_valid(member):
+		return
+	var offer: Dictionary = options[option_index]
+	var inst: PokemonInstance = member.pokemon_instance
+
+	var md := MoveData.new()
+	md.api_name      = offer["api"]
+	md.display_name  = offer["label"]
+	md.type          = offer["type"]
+	md.power         = int(offer["power"])
+	md.damage_class  = offer["class"]
+	md.level_learned = 0
+
+	if replace_index >= 0 and replace_index < inst.equipped_moves.size():
+		inst.equipped_moves[replace_index] = md
+	elif inst.equipped_moves.size() < GameManager.move_slot_count:
+		inst.equipped_moves.append(md)
+	else:
+		inst.equipped_moves[inst.equipped_moves.size() - 1] = md
+
+	if _active_index < _team.size() and _team[_active_index] == member:
+		hud.setup_moves(inst.equipped_moves)
+	Sfx.play("victory", -6.0)
+	_consume_boon()
+
+
+func _claim_boon_stat(stat_id: String) -> void:
+	_apply_bonus(stat_id)   # applique le boost à TOUTE l'équipe
+	Sfx.play("victory", -6.0)
+	_consume_boon()
+
+
+## Don réclamé : on ferme l'écran et on retire l'item du centre.
+func _consume_boon() -> void:
+	if is_instance_valid(_boon_screen):
+		_boon_screen.queue_free()
+	_boon_screen = null
+	if is_instance_valid(_boon_node):
+		_boon_node.queue_free()
+	_boon_node = null
+	_boon_type = -1
+	hud.set_wave("★ Don récupéré !")
 
 
 func _spawn_chests() -> void:
@@ -640,7 +1685,7 @@ func _spawn_chests() -> void:
 		return
 	for cell: Vector2i in _map.get_chest_cells():
 		var chest := Chest.new()
-		chest.position = Vector2(cell.x * 16.0 + 8.0, cell.y * 16.0 + 8.0)
+		chest.position = _map.cell_to_world3(cell)
 		chest.setup(_map.get_objects_layer(), cell, _map.source_id)
 		chest.opened.connect(_on_chest_opened)
 		_wire_chest_prompt(chest)
@@ -683,7 +1728,9 @@ func _spawn_cs_triggers() -> void:
 	for entry: Dictionary in _map.get_coupe_tree_approaches():
 		var cells: Array = entry["cells"]
 		var approach: Vector2i = entry["approach"]
-		_register_cs_trigger(approach, "cs_coupe", "Appuyer sur [E] pour couper l'arbre (CS Coupe)",
+		# Position de l'obstacle (1re case du groupe d'arbre) pour l'effet visuel
+		var at_cell: Vector2i = cells[0] if not cells.is_empty() else approach
+		_register_cs_trigger(approach, "cs_coupe", "[A]  Couper l'arbre (CS Coupe)", at_cell,
 			func() -> void: _map.cut_tree_group(cells)
 		)
 
@@ -691,23 +1738,148 @@ func _spawn_cs_triggers() -> void:
 	for bcell: Vector2i in boulders:
 		var approach: Vector2i = boulders[bcell]
 		var captured_bcell: Vector2i = bcell
-		_register_cs_trigger(approach, "cs_force", "Appuyer sur [E] pour casser le rocher (CS Force)",
+		_register_cs_trigger(approach, "cs_force", "[A]  Casser le rocher (CS Force)", bcell,
 			func() -> void: _map.break_rock_at(captured_bcell)
 		)
 
 
-func _register_cs_trigger(approach: Vector2i, cs_id: String, prompt: String, on_use: Callable) -> void:
-	var area := Area2D.new()
-	area.position         = Vector2(approach.x * 16.0 + 8.0, approach.y * 16.0 + 8.0)
+# ── Effets visuels des CS (sprites Pokémon Essentials) ──────────────────
+# Charsets RPG Maker XP standard : base_surf (4 col walk × 4 lignes direction,
+# frames 64px) ; Object tree/rock (4×4, chaque ligne = une frame d'animation
+# répétée sur les 4 colonnes — on ne lit qu'une colonne, de haut en bas).
+const _CS_SURF := "res://Pokemon Essentials v21.1 2023-07-30/Graphics/Characters/base_surf.png"
+const _CS_ROCK := "res://Pokemon Essentials v21.1 2023-07-30/Graphics/Characters/Object rock.png"
+const _CS_TREE := "res://Pokemon Essentials v21.1 2023-07-30/Graphics/Characters/Object tree 1.png"
+
+## Crope une frame (col,row) d'une planche de personnage → Sprite3D billboard.
+func _cs_frame_sprite(path: String, frame_px: int, col: int, row: int, world_h: float) -> Sprite3D:
+	var spr := Sprite3D.new()
+	var img := _cs_frame_image(path, frame_px, col, row)
+	if img == null:
+		return spr
+	spr.texture        = ImageTexture.create_from_image(img)
+	spr.billboard      = BaseMaterial3D.BILLBOARD_ENABLED
+	spr.shaded         = false
+	spr.alpha_cut      = SpriteBase3D.ALPHA_CUT_DISCARD
+	spr.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	spr.pixel_size     = world_h / float(frame_px)
+	return spr
+
+
+func _cs_frame_image(path: String, frame_px: int, col: int, row: int) -> Image:
+	var tex: Texture2D = load(path)
+	if tex == null:
+		return null
+	var img := tex.get_image()
+	if img.is_compressed():
+		img.decompress()
+	return img.get_region(Rect2i(col * frame_px, row * frame_px, frame_px, frame_px))
+
+
+## Effet à l'usage d'une CS Coupe/Force : anime les 4 frames verticales
+## (intact → secoué → en train de céder → débris) de la planche Essentials,
+## puis fait apparaître le nuage de débris et sursauter/s'effacer le sprite.
+func _play_cs_effect(cs_id: String, at: Vector3) -> void:
+	if cs_id == "cs_coupe":
+		await _play_cs_break_anim(_CS_TREE, at + Vector3(0, 0.9, 0), 1.8, Color(0.35, 0.65, 0.30), "hit", -2.0)
+	elif cs_id == "cs_force":
+		await _play_cs_break_anim(_CS_ROCK, at + Vector3(0, 0.7, 0), 1.4, Color(0.55, 0.50, 0.44), "death", -3.0)
+
+
+const _CS_BREAK_FRAME_TIME := 0.12
+
+func _play_cs_break_anim(path: String, pos: Vector3, world_h: float, poof_color: Color, sfx: String, sfx_db: float) -> void:
+	var spr := _cs_frame_sprite(path, 32, 0, 0, world_h)
+	spr.position = pos
+	add_child(spr)
+
+	for row in [1, 2, 3]:
+		await get_tree().create_timer(_CS_BREAK_FRAME_TIME).timeout
+		if not is_instance_valid(spr):
+			return
+		var img := _cs_frame_image(path, 32, 0, row)
+		if img != null:
+			spr.texture = ImageTexture.create_from_image(img)
+
+	CombatVFX.spawn_death_poof(self, pos, poof_color)
+	Sfx.play(sfx, sfx_db)
+	_cs_pop_and_fade(spr)
+
+
+func _cs_pop_and_fade(spr: Sprite3D) -> void:
+	spr.scale = Vector3.ONE * 0.5
+	var tw := spr.create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(spr, "scale", Vector3.ONE * 1.2, 0.18).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.tween_property(spr, "position:y", spr.position.y + 0.6, 0.5)
+	tw.tween_property(spr, "modulate:a", 0.0, 0.5).set_delay(0.15)
+	tw.chain().tween_callback(spr.queue_free)
+
+
+## Monture de surf sous le Pokémon contrôlé quand il est au-dessus de l'eau
+## (CS Surf possédée). Appelée chaque frame par _process — suit la direction
+## de déplacement (ligne du charset) et anime le cycle de nage (colonnes).
+var _surf_mount: Sprite3D = null
+var _surf_row:   int      = 0     # 0=bas 1=gauche 2=droite 3=haut (charset RPG Maker)
+var _surf_anim_t: float   = 0.0
+const _SURF_FPS := 6.0
+
+func _update_surf_mount() -> void:
+	var show := false
+	var pos := Vector3.ZERO
+	var body: CharacterBody3D = null
+	if _surf_active and _active_index < _team.size() and is_instance_valid(_team[_active_index]) \
+			and is_instance_valid(_map) and _map.has_method("world3_to_cell"):
+		body = _team[_active_index]
+		var cell: Vector2i = _map.world3_to_cell(body.global_position)
+		if _map.get("_water") != null and _map._water.get_cell_source_id(cell) != -1:
+			show = true
+			pos = body.global_position
+
+	if not show:
+		if is_instance_valid(_surf_mount):
+			_surf_mount.queue_free()
+			_surf_mount = null
+		return
+
+	var moving := Vector2(body.velocity.x, body.velocity.z).length() > 0.1
+	if moving:
+		var dir := Vector2(body.velocity.x, body.velocity.z)
+		if absf(dir.x) > absf(dir.y):
+			_surf_row = 2 if dir.x > 0 else 1
+		else:
+			_surf_row = 3 if dir.y < 0 else 0
+		_surf_anim_t += get_process_delta_time()
+	var col := int(_surf_anim_t * _SURF_FPS) % 4 if moving else 0
+
+	if not is_instance_valid(_surf_mount):
+		_surf_mount = _cs_frame_sprite(_CS_SURF, 64, col, _surf_row, 2.0)
+		add_child(_surf_mount)
+		_surf_mount.set_meta("frame", Vector2i(col, _surf_row))
+	elif _surf_mount.get_meta("frame", Vector2i(-1, -1)) != Vector2i(col, _surf_row):
+		var img := _cs_frame_image(_CS_SURF, 64, col, _surf_row)
+		if img != null:
+			_surf_mount.texture = ImageTexture.create_from_image(img)
+		_surf_mount.set_meta("frame", Vector2i(col, _surf_row))
+	_surf_mount.global_position = pos + Vector3(0, 0.15, 0)
+
+
+func _register_cs_trigger(approach: Vector2i, cs_id: String, prompt: String, at_cell: Vector2i, on_use: Callable) -> void:
+	var area := Area3D.new()
+	area.position         = _map.cell_to_world3(approach)
 	area.collision_layer  = 0
 	area.collision_mask   = 1
-	var cs := CollisionShape2D.new()
-	var sh := RectangleShape2D.new()
-	sh.size  = Vector2(16, 16)
+	var cs := CollisionShape3D.new()
+	var sh := BoxShape3D.new()
+	sh.size  = Vector3(1.0, 1.5, 1.0)
 	cs.shape = sh
+	cs.position = Vector3(0, 0.75, 0)
 	area.add_child(cs)
 	add_child(area)
-	_cs_triggers.append({"area": area, "cs_id": cs_id, "prompt": prompt, "on_use": on_use})
+	_cs_triggers.append({
+		"area": area, "cs_id": cs_id, "prompt": prompt, "on_use": on_use,
+		"at": _map.cell_to_world3(at_cell),
+	})
 
 
 ## Recalculé chaque frame : le joueur doit à la fois se tenir dans la zone
@@ -719,13 +1891,24 @@ func _refresh_cs_prompt() -> void:
 		return
 	var active_body: Node = _team[_active_index]
 	for entry: Dictionary in _cs_triggers:
-		var area: Area2D = entry["area"]
+		var area: Area3D = entry["area"]
 		if not is_instance_valid(area): continue
-		if active_body in area.get_overlapping_bodies() and _active_holds_cs(entry["cs_id"]):
+		if active_body in area.get_overlapping_bodies() and GameManager.owns_cs(entry["cs_id"]):
 			if _near_obstacle.get("prompt", "") != entry["prompt"]:
 				_near_obstacle = entry
 				_refresh_interact_prompt()
 			return
+	# Surf : au bord de l'eau avec la CS mais pas encore monté → [A] pour surfer
+	if _cs_surf_unlocked and not _surf_active and _active_near_water():
+		var prompt := "[A]  Surfer (CS Surf)"
+		if _near_obstacle.get("prompt", "") != prompt:
+			_near_obstacle = {
+				"prompt": prompt, "cs_id": "cs_surf",
+				"on_use": _mount_surf,
+				"at": (active_body as Node3D).global_position,
+			}
+			_refresh_interact_prompt()
+		return
 	_clear_cs_prompt()
 
 
@@ -777,11 +1960,15 @@ func _game_over() -> void:
 	if _game_over_triggered:
 		return
 	_game_over_triggered = true
+	Sfx.play("defeat")
 	hud.set_wave("DÉFAITE...")
 	var consolation_gold := RunManager.inst().rooms_cleared * 15
 	if consolation_gold > 0:
 		GameManager.add_gold(consolation_gold)
+		hud.set_wave("DÉFAITE...  +%d Baies de consolation" % consolation_gold)
 	await get_tree().create_timer(2.5).timeout
+	if _mp:
+		Net.reset()
 	get_tree().change_scene_to_file("res://scenes/hub/Hub.tscn")
 
 
@@ -792,33 +1979,47 @@ func _spawn_entry_barrier() -> void:
 		_entry_barrier.queue_free()
 	if not is_instance_valid(_map):
 		return
-	var ep  := _map.entry_tile
-	var pos := Vector2(ep.x * 16.0 + 8.0, ep.y * 16.0 + 8.0)
 
-	var barrier := StaticBody2D.new()
+	var barrier := StaticBody3D.new()
 	barrier.name            = "EntryBarrier"
 	barrier.collision_layer = 1
 	barrier.collision_mask  = 0
-	barrier.position        = pos
+	barrier.position        = _map.cell_to_world3(_map.entry_tile)
 
-	var cs := CollisionShape2D.new()
-	var sh := RectangleShape2D.new()
-	sh.size  = Vector2(80, 16)
+	var cs := CollisionShape3D.new()
+	var sh := BoxShape3D.new()
+	sh.size  = Vector3(5.0, 1.4, 1.0)
 	cs.shape = sh
+	cs.position = Vector3(0, 0.7, 0)
 	barrier.add_child(cs)
 
-	# Visuel — barre de bois sombre
-	var rect := ColorRect.new()
-	rect.size     = Vector2(80, 14)
-	rect.position = Vector2(-40, -7)
-	rect.color    = Color(0.28, 0.18, 0.08, 0.92)
-	barrier.add_child(rect)
+	# Visuel — poutre de bois sombre en travers de l'entrée
+	var mi := MeshInstance3D.new()
+	var box := BoxMesh.new()
+	box.size = Vector3(5.0, 0.7, 0.55)
+	mi.mesh = box
+	mi.position = Vector3(0, 0.45, 0)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.28, 0.18, 0.08)
+	mat.roughness    = 0.9
+	mi.material_override = mat
+	barrier.add_child(mi)
 
 	add_child(barrier)
 	_entry_barrier = barrier
 
 
 func _spawn_exit_portals() -> void:
+	# get_exits() tire au hasard (biomes/dons) : en multijoueur, seule la
+	# version de l'HÔTE fait foi — elle est diffusée à tous les clients.
+	var exits_data := RunManager.inst().get_exits(2)
+	if _mp and multiplayer.is_server():
+		_net_exits.rpc(exits_data)
+	_spawn_exit_portals_from(exits_data)
+
+
+func _spawn_exit_portals_from(exits_data: Array) -> void:
+	_advancing = false   # nouvelles portes → nouveau choix possible
 	for p in _exit_portals:
 		if is_instance_valid(p): p.queue_free()
 	_exit_portals.clear()
@@ -827,7 +2028,6 @@ func _spawn_exit_portals() -> void:
 		get_tree().change_scene_to_file("res://scenes/hub/Hub.tscn")
 		return
 
-	var exits_data := RunManager.inst().get_exits(2)
 	var exit_tiles := [_map.exit_A, _map.exit_B, _map.exit_C]
 
 	hud.set_wave("Choisissez une sortie ↑")
@@ -836,7 +2036,7 @@ func _spawn_exit_portals() -> void:
 		var data: Dictionary = exits_data[i]
 		var tile: Vector2i   = exit_tiles[i]
 		var portal           := ExitPortal.new()
-		portal.position      = Vector2(tile.x * 16.0 + 8.0, tile.y * 16.0 + 8.0)
+		portal.position      = _map.cell_to_world3(tile)
 		portal.setup(data)
 		portal.chosen.connect(_on_exit_chosen)
 		add_child(portal)
@@ -844,12 +2044,46 @@ func _spawn_exit_portals() -> void:
 
 
 func _on_exit_chosen(data: Dictionary) -> void:
+	# Multijoueur : le premier joueur qui touche une porte décide pour tout
+	# le monde — la décision transite par l'hôte (anti-course), qui diffuse.
+	if _mp:
+		if multiplayer.is_server():
+			_host_advance(data)
+		else:
+			_net_request_advance.rpc_id(1, data)
+		return
+	_do_advance(data)
+
+
+var _advancing: bool = false
+
+func _host_advance(data: Dictionary) -> void:
+	if _advancing:
+		return
+	_advancing = true
+	_net_advance.rpc(data)
+	_do_advance(data)
+
+
+func _do_advance(data: Dictionary) -> void:
 	for p in _exit_portals:
 		if is_instance_valid(p): p.queue_free()
 	_exit_portals.clear()
 
-	_apply_bonus(data.get("bonus", ""))
-	RunManager.inst().advance(data.get("zone_idx", 0))
+	# Boutique quittée : referme l'écran et retire les PNJ (enfants de l'arène,
+	# ils survivraient sinon au changement de map).
+	if _boutique_active:
+		_boutique_active = false
+		_clear_boutique_nodes()
+		if is_instance_valid(_boutique_screen):
+			_boutique_screen.queue_free()
+			_boutique_screen = null
+
+	# La porte choisie fixe le biome ET le type de don de la zone suivante.
+	# (Plus de bonus appliqué à la porte : le don s'obtient au centre de la
+	# zone une fois nettoyée — cf. _spawn_boon.)
+	_clear_boon()
+	RunManager.inst().advance(data.get("biome", -1), data.get("bonus_type", -1))
 	_transition_to_next_zone()
 
 
@@ -876,6 +2110,7 @@ func _transition_to_next_zone() -> void:
 		add_child(_map)
 		move_child(_map, 0)
 		_refresh_map_bounds()
+		_apply_ambiance()
 
 		# Réinitialiser le combat
 		if is_instance_valid(_entry_barrier):
@@ -885,16 +2120,14 @@ func _transition_to_next_zone() -> void:
 		_killed     = 0
 		_room_total = 0
 
-		# Repositionner l'équipe à l'entrée + mini-soin
-		var et := _map.entry_tile
-		var spawn_center := Vector2(et.x * 16.0 + 8.0, (et.y - 4) * 16.0 + 8.0)
+		# Repositionner l'équipe à l'entrée (PAS de soin : les PV se conservent
+		# d'une zone à l'autre — la gestion des PV fait partie du risque de run).
+		var spawn_center := _map.cell_to_world3(_map.entry_tile + Vector2i(0, -4))
 		for i in _team.size():
 			if is_instance_valid(_team[i]):
 				_team[i].global_position = spawn_center + SPAWN_OFFSETS[i % SPAWN_OFFSETS.size()]
-				if not _team[i].pokemon_instance.is_fainted():
-					_team[i].pokemon_instance.heal_percent(0.20)
 
-		hud.set_wave(RunManager.inst().get_zone_name())
+		hud.set_wave(_zone_label())
 		hud.set_kills(0, 0)
 
 		# Fondu depuis le noir
@@ -903,11 +2136,16 @@ func _transition_to_next_zone() -> void:
 		tw2.tween_callback(func() -> void: fade_layer.queue_free())
 
 		await get_tree().process_frame
+		# Salle-boutique : détour non-combat (vendeur Perrserker)
+		if _is_shop_room(RunManager.inst().rooms_cleared):
+			_enter_boutique()
+			return
 		_spawn_entry_barrier()
 		_spawn_chests()
-		_spawn_cave_portals()
+		# Grotte : ouverte seulement après nettoyage (cf. _show_run_status)
 		_spawn_cs_triggers()
 		await get_tree().create_timer(0.8).timeout
+		await _net_zone_barrier()
 		_spawn_room_enemies()
 	)
 
@@ -918,25 +2156,33 @@ func _spawn_cave_portals() -> void:
 	for p in _cave_portals:
 		if is_instance_valid(p): p.queue_free()
 	_cave_portals.clear()
+	if _mp:
+		return   # v1 multijoueur : la grotte (détour solo avec save/restore) n'est pas synchronisée
 	if _cave_active or not is_instance_valid(_map):
 		return
 	for cell: Vector2i in _map.get_cave_cells():
-		var area := Area2D.new()
-		area.position        = Vector2(cell.x * 16.0 + 8.0, cell.y * 16.0 + 8.0)
+		var area := Area3D.new()
+		# L'entrée est dessinée sur la face sud du volume de falaise (plein) :
+		# le déclencheur est décalé devant la paroi, là où le joueur peut se tenir.
+		area.position        = _map.cell_to_world3(cell) + Vector3(0, 0, 0.85)
 		area.collision_layer = 0
 		area.collision_mask  = 1
-		var cs := CollisionShape2D.new()
-		var sh := RectangleShape2D.new()
-		sh.size  = Vector2(14, 14)
+		var cs := CollisionShape3D.new()
+		var sh := BoxShape3D.new()
+		sh.size  = Vector3(1.1, 1.6, 0.9)
 		cs.shape = sh
+		cs.position = Vector3(0, 0.8, 0)
 		area.add_child(cs)
-		var lbl := Label.new()
-		lbl.text     = "⛰ Grotte"
-		lbl.position = Vector2(-26, -34)
-		lbl.add_theme_font_size_override("font_size", 10)
-		lbl.add_theme_color_override("font_color", Color(0.95, 0.85, 0.5))
-		lbl.add_theme_color_override("font_outline_color", Color(0.12, 0.08, 0.02))
-		lbl.add_theme_constant_override("outline_size", 4)
+		var lbl := Label3D.new()
+		lbl.text      = "⛰ Grotte"
+		lbl.position  = Vector3(0, 2.4, 0)
+		lbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		lbl.no_depth_test = true
+		lbl.font_size  = 44
+		lbl.pixel_size = 0.009
+		lbl.modulate = Color(0.95, 0.85, 0.5)
+		lbl.outline_modulate = Color(0.12, 0.08, 0.02)
+		lbl.outline_size = 12
 		area.add_child(lbl)
 		var entrance := cell
 		area.body_entered.connect(func(body: Node) -> void:
@@ -952,6 +2198,7 @@ func _enter_cave(_entrance: Vector2i) -> void:
 	if _cave_active:
 		return
 	_cave_active = true
+	_clear_boon()   # le don de zone ne suit pas dans la grotte
 	_fade_transition(func() -> void:
 		_save_overworld()
 		_load_cave()
@@ -959,13 +2206,21 @@ func _enter_cave(_entrance: Vector2i) -> void:
 	)
 
 
+var _saved_wave_queue: Array = []
+var _saved_wave_num:   int   = 0
+var _saved_waves_total: int  = 0
+
 func _save_overworld() -> void:
 	_saved_alive      = _alive
 	_saved_killed     = _killed
 	_saved_room_total = _room_total
+	_saved_wave_queue  = _wave_queue.duplicate(true)
+	_saved_wave_num    = _wave_num
+	_saved_waves_total = _waves_total
+	_wave_queue.clear()
 	_saved_team_pos.clear()
 	for m in _team:
-		_saved_team_pos.append(m.global_position if is_instance_valid(m) else Vector2.ZERO)
+		_saved_team_pos.append(m.global_position if is_instance_valid(m) else Vector3.ZERO)
 
 	# Détache (gèle) tout l'overworld : ennemis, coffres, barrière, map
 	_saved_nodes.clear()
@@ -1000,28 +2255,63 @@ func _load_cave() -> void:
 	add_child(_map)
 	move_child(_map, 0)
 	_refresh_map_bounds()
+	_apply_ambiance()   # variante grotte : sombre, brumeuse, sans horizon
 	_alive = 0
 	_killed = 0
 	_room_total = 0
 
-	var et := _map.entry_tile
-	var spawn_center := Vector2(et.x * 16.0 + 8.0, (et.y - 2) * 16.0 + 8.0)
+	var spawn_center := _map.cell_to_world3(_map.entry_tile + Vector2i(0, -2))
 	for i in _team.size():
 		if is_instance_valid(_team[i]):
 			_team[i].global_position = spawn_center + SPAWN_OFFSETS[i % SPAWN_OFFSETS.size()]
 	_cam_pos = spawn_center
 
 
+var _cave_demiboss_pid: int = 0   # espèce du demi-boss (débloquée à sa défaite)
+
 func _spawn_cave_bosses() -> void:
 	var rooms := RunManager.inst().rooms_cleared
-	# 2 demi-boss renforcés (allure imposante) — costauds mais pas injustes.
-	_spawn_from_pool(POOL_CAVE_ELITE, CAVE_BOSS_COUNT, SEMI_BOSS_LEVEL + rooms * 3)
+	var lv := SEMI_BOSS_LEVEL + rooms * 3
+	# 1 demi-boss à aura rouge (espèce non évoluée à débloquer) + 3 sbires
+	# nettement plus faibles.
+	_cave_demiboss_pid = _spawn_cave_demiboss(lv + 4)
+	_spawn_from_pool(POOL_CAVE_ELITE, 3, maxi(PLAYER_LEVEL, lv - 5))
 	_room_total = _alive
 	hud.set_kills(0, _room_total)
 	if _alive > 0:
-		hud.set_wave("⛰ Arène d'élite — %d adversaires !" % _room_total)
+		var boss_name := "le demi-boss"
+		if _cave_demiboss_pid > 0 and _cache.has(str(_cave_demiboss_pid)):
+			boss_name = (_cache[str(_cave_demiboss_pid)] as PokemonData).name_fr.capitalize()
+		hud.set_wave("☠ Demi-boss : %s  —  bats-le pour le recruter !" % boss_name)
 	else:
 		_on_cave_cleared()   # sécurité : pool non chargé → récompense directe
+
+
+## Spawne le demi-boss : espèce non évoluée du pool, stats renforcées (mur à
+## aura rouge), au centre de l'arène. Retourne son pid (0 si échec).
+func _spawn_cave_demiboss(lv: int) -> int:
+	var pool: Array[int] = []
+	for pid: int in POOL_CAVE_DEMIBOSS:
+		if _cache.has(str(pid)):
+			pool.append(pid)
+	if pool.is_empty():
+		return 0
+	var id: int = pool[randi() % pool.size()]
+	var data: PokemonData = _cache[str(id)]
+	var instance := PokemonInstance.new(data, lv)
+	instance.init_moves()
+	# Renforts de demi-boss : gros sac de PV + frappe plus fort
+	instance.apply_hp_boost(2.4)
+	instance.attack_mult *= 1.4
+
+	var enemy = ENEMY_SCENE.instantiate()
+	add_child(enemy)
+	var sz := _map.get_map_cell_size()
+	enemy.global_position = _map.cell_to_world3(Vector2i(sz.x / 2, sz.y / 2))
+	enemy.setup(instance, false, false, true)   # demi_boss = true
+	enemy.died.connect(_on_enemy_died.bind(id, data.is_base_form))
+	_alive += 1
+	return id
 
 
 func _on_cave_cleared() -> void:
@@ -1034,8 +2324,19 @@ func _on_cave_cleared() -> void:
 			hud.update_team_hp(i, 1.0)
 	if _active_index < _team.size():
 		hud.update_hp(1.0)
-	hud.set_wave("⛰ Arène vaincue !  +%d Or" % gold)
-	await get_tree().create_timer(0.8).timeout
+
+	# Déblocage direct de l'espèce du demi-boss (pas de seuil de victoires) —
+	# la récompense clé de l'arène : recruter un Pokémon rare non évolué.
+	if _cave_demiboss_pid > 0 and _cave_demiboss_pid not in GameManager.unlocked_pokemon:
+		GameManager.unlock_pokemon(_cave_demiboss_pid)
+		var nm := (_cache[str(_cave_demiboss_pid)] as PokemonData).name_fr.capitalize() \
+			if _cache.has(str(_cave_demiboss_pid)) else "Pokémon"
+		hud.show_unlock(nm)
+		hud.set_wave("★ %s rejoint ton Pokédex !  +%d ₽" % [nm, gold])
+	else:
+		hud.set_wave("⛰ Arène vaincue !  +%d ₽" % gold)
+	Sfx.play("victory")
+	await get_tree().create_timer(1.4).timeout
 	_spawn_cave_reward()
 
 
@@ -1046,7 +2347,7 @@ func _spawn_cave_reward() -> void:
 	var sz   := _map.get_map_cell_size()
 	var cell := Vector2i(sz.x / 2, sz.y / 2)
 	var chest := Chest.new()
-	chest.position = Vector2(cell.x * 16.0 + 8.0, cell.y * 16.0 + 8.0)
+	chest.position = _map.cell_to_world3(cell)
 	# Objet garanti puissant (meilleur du pool)
 	chest.setup(_map.get_objects_layer(), cell, _map.source_id,
 		{"api_name": "choice-band", "effect": "atk", "mult": 1.5})
@@ -1065,7 +2366,7 @@ func _spawn_cave_return_portal() -> void:
 	var sz   := _map.get_map_cell_size()
 	var tile := Vector2i(sz.x / 2, 3)
 	var portal := ExitPortal.new()
-	portal.position = Vector2(tile.x * 16.0 + 8.0, tile.y * 16.0 + 8.0)
+	portal.position = _map.cell_to_world3(tile)
 	portal.setup({"zone_name": "Retour", "bonus_label": ""})
 	portal.chosen.connect(func(_d: Dictionary) -> void: _exit_cave(), CONNECT_ONE_SHOT)
 	add_child(portal)
@@ -1110,6 +2411,9 @@ func _restore_overworld() -> void:
 	_alive      = _saved_alive
 	_killed     = _saved_killed
 	_room_total = _saved_room_total
+	_wave_queue  = _saved_wave_queue
+	_wave_num    = _saved_wave_num
+	_waves_total = _saved_waves_total
 	hud.set_kills(_killed, _room_total)
 
 	for i in _team.size():
@@ -1119,7 +2423,8 @@ func _restore_overworld() -> void:
 				_cam_pos = _saved_team_pos[i]
 
 	_cave_active = false
-	hud.set_wave(RunManager.inst().get_zone_name())   # grotte consommée
+	_apply_ambiance()   # retour à l'ambiance du biome de la zone
+	hud.set_wave(_zone_label())   # grotte consommée
 
 
 func _fade_transition(mid: Callable) -> void:
@@ -1135,3 +2440,123 @@ func _fade_transition(mid: Callable) -> void:
 	tw.tween_callback(mid)
 	tw.tween_property(rect, "color:a", 0.0, 0.4).set_ease(Tween.EASE_OUT)
 	tw.tween_callback(func() -> void: fade_layer.queue_free())
+
+
+# ══════════════════════════════════════════════════════════════════════
+# MULTIJOUEUR — RPC côté arène (spawns/positions/HUD diffusés par l'hôte,
+# demandes d'avancée remontées par les clients). Les nœuds portent les
+# mêmes noms sur tous les pairs ("P<peer>" joueurs, "E<n>" ennemis).
+# ══════════════════════════════════════════════════════════════════════
+
+## Hôte → clients : un ennemi vient d'apparaître — instancie sa "coquille"
+## locale (même nom, mêmes données préchargées, pas d'IA ni de collision).
+@rpc("authority", "call_remote", "reliable")
+func _net_spawn_enemy(ename: String, pid: int, lv: int, pos: Vector3,
+		champion: bool, boss: bool) -> void:
+	var data: PokemonData = _cache.get(str(pid))
+	if data == null:
+		push_warning("MP: données absentes pour l'ennemi pid=%d — coquille ignorée." % pid)
+		return
+	var instance := PokemonInstance.new(data, lv)
+	instance.init_moves()
+	var enemy = ENEMY_SCENE.instantiate()
+	enemy.name = ename
+	add_child(enemy)
+	enemy.global_position = pos
+	enemy.setup(instance, champion, boss)
+	enemy.set_net_shell()
+
+
+## Hôte → clients : positions groupées de tous les ennemis vivants.
+@rpc("authority", "call_remote", "unreliable")
+func _net_enemy_positions(names: PackedStringArray, poss: PackedVector3Array) -> void:
+	for i in names.size():
+		var e := get_node_or_null(NodePath(names[i]))
+		if e != null and "net_target" in e:
+			e.net_target = poss[i]
+
+
+## Hôte → clients : mort d'un ennemi — anim de chute locale + XP pour NOTRE
+## Pokémon (l'hôte donne l'XP au sien dans _on_enemy_died).
+@rpc("authority", "call_remote", "reliable")
+func _net_enemy_died(ename: String, xp: int) -> void:
+	var e := get_node_or_null(NodePath(ename))
+	if e != null and e.has_method("_play_death_anim"):
+		e._play_death_anim()
+	var mine = _team[_active_index] if _active_index < _team.size() else null
+	if is_instance_valid(mine) and not mine.pokemon_instance.is_fainted():
+		mine.gain_xp(xp)
+
+
+## Hôte → clients : compteur de kills de la salle (le décompte fait foi chez lui).
+@rpc("authority", "call_remote", "reliable")
+func _net_kills(killed: int, total: int) -> void:
+	_killed     = killed
+	_room_total = total
+	hud.set_kills(killed, total)
+
+
+## Hôte → clients : salle nettoyée — même butin pour tout le monde, puis le
+## don au centre ; les portes arrivent juste après via _net_exits.
+@rpc("authority", "call_remote", "reliable")
+func _net_room_cleared(gold: int) -> void:
+	GameManager.add_run_money(gold)
+	hud.update_money(GameManager.run_money)
+	hud.set_wave("Salle libérée !  +%d ₽" % gold)
+	await get_tree().create_timer(0.8).timeout
+	_spawn_boon(RunManager.inst().current_zone_bonus)
+
+
+## Hôte → clients : les portes de sortie tirées par l'hôte (biomes + dons).
+@rpc("authority", "call_remote", "reliable")
+func _net_exits(exits_data: Array) -> void:
+	_spawn_exit_portals_from(exits_data)
+
+
+## Client → hôte : « je suis entré dans cette porte » — l'hôte tranche
+## (premier arrivé) et rediffuse la décision à tout le monde.
+@rpc("any_peer", "call_remote", "reliable")
+func _net_request_advance(data: Dictionary) -> void:
+	if multiplayer.is_server():
+		_host_advance(data)
+
+
+## Hôte → clients : transition actée vers la zone suivante.
+@rpc("authority", "call_remote", "reliable")
+func _net_advance(data: Dictionary) -> void:
+	_do_advance(data)
+
+
+# ── Barrière de chargement de zone (multijoueur) ──────────────────────
+# L'hôte ne lance pas les ennemis tant que chaque client n'a pas signalé
+# que SA zone est prête (préchargement API + map générée) — sinon les
+# premiers _net_spawn_enemy arriveraient avant que les clients puissent
+# instancier les coquilles. Clé par profondeur pour survivre aux zones
+# successives sans course entre clear() et signalements précoces.
+
+var _zone_ready: Dictionary = {}   # "depth:peer" → true
+
+
+func _net_zone_barrier() -> void:
+	if not _mp:
+		return
+	var depth := RunManager.inst().rooms_cleared
+	if multiplayer.is_server():
+		var deadline := Time.get_ticks_msec() + 20000   # filet : 20 s max
+		while Time.get_ticks_msec() < deadline:
+			var ok := true
+			for id in Net.players:
+				if id != 1 and not _zone_ready.has("%d:%d" % [depth, id]):
+					ok = false
+					break
+			if ok:
+				return
+			await get_tree().create_timer(0.2).timeout
+	else:
+		_net_zone_ready.rpc_id(1, depth)
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func _net_zone_ready(depth: int) -> void:
+	if multiplayer.is_server():
+		_zone_ready["%d:%d" % [depth, multiplayer.get_remote_sender_id()]] = true

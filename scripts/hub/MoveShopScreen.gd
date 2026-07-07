@@ -64,9 +64,21 @@ func _build() -> void:
 	panel.add_child(hdr)
 
 	_lbl(panel, "✦  TUTEUR DE CAPACITÉS", 24, 14, 700, 44, 22, C_GOLD_LT)
-	_lbl(panel, "◆ %d Or" % GameManager.gold, 900, 22, 230, 28, 16, C_GOLD)
+	_lbl(panel, "◆ %d Baies" % GameManager.gold, 900, 22, 230, 28, 16, C_GOLD)
 	_lbl(panel, "Capacités achetées disponibles dès le départ de chaque run",
 		24, 54, 800, 20, 12, C_DIM)
+
+	# Les CS (Capacités Spéciales) ont fusionné ici — l'ancien PNJ "Maître
+	# des CS" a été retiré du hub, son écran s'ouvre par ce bouton.
+	var cs_btn := Button.new()
+	cs_btn.text     = "⛰  CS / Capacités Spéciales"
+	cs_btn.position = Vector2(620, 16)
+	cs_btn.size     = Vector2(260, 40)
+	cs_btn.add_theme_font_size_override("font_size", 15)
+	cs_btn.add_theme_color_override("font_color", C_GOLD_LT)
+	_btn_neutral(cs_btn)
+	cs_btn.pressed.connect(_open_cs_screen)
+	panel.add_child(cs_btn)
 
 	# Grille 4×5
 	var cols   := 4
@@ -124,7 +136,7 @@ func _build_move_card(parent: Node, m: Dictionary, x: float, y: float,
 		_lbl(card, "✓ Apprise", 64, 34, w - 70, 20, 12, C_GOOD)
 		_lbl(card, "Disponible pour toute l'équipe", 6, 58, w - 12, 18, 10, C_DIM)
 	else:
-		_lbl(card, "%d Or" % price, 64, 34, 80, 20, 12, C_DIM)
+		_lbl(card, "%d Baies" % price, 64, 34, 80, 20, 12, C_DIM)
 
 		var can_buy := GameManager.gold >= price
 		var btn := Button.new()
@@ -147,6 +159,15 @@ func _build_move_card(parent: Node, m: Dictionary, x: float, y: float,
 		card.add_child(btn)
 
 		_lbl(card, "Toute l'équipe l'apprend dès la run", 6, 64, w - 12, 16, 10, C_DIM)
+
+
+## Ouvre l'écran d'attribution des CS par-dessus le tuteur (même flux de
+## fermeture : le bouton "Fermer" de l'écran CS ramène simplement ici).
+func _open_cs_screen() -> void:
+	var cs := CSAssignScreen.new()
+	cs.layer = layer + 1
+	add_child(cs)
+	cs.closed.connect(func() -> void: cs.queue_free(), CONNECT_ONE_SHOT)
 
 
 func _buy_move(api: String, price: int) -> void:

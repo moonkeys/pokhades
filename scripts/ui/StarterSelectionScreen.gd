@@ -2,6 +2,7 @@ class_name StarterSelectionScreen
 extends CanvasLayer
 
 signal starter_chosen(pokemon_id: int)
+signal test_mode_chosen(pokemon_id: int)   # « MODE TEST » : tout débloqué
 
 const BG_PATH := "res://assets/ui/starter_bg.jpeg"
 
@@ -253,6 +254,23 @@ func _build_start_button() -> void:
 	_btn_start.add_theme_font_size_override("font_size", 18)
 	_btn_start.pressed.connect(func() -> void: starter_chosen.emit(_selected_id))
 	add_child(_btn_start)
+
+	# Bouton « MODE TEST » — juste au-dessus : démarre avec tout débloqué
+	# (roster large, CS, emplacements max, Baies) pour tester en conditions.
+	var btn_test := Button.new()
+	btn_test.position = Vector2(898, 606)
+	btn_test.size     = Vector2(366, 44)
+	btn_test.text     = "🧪  MODE TEST  (tout débloqué)"
+	var tn := _liseré_style(Color(0.16, 0.22, 0.30), Color(0.45, 0.72, 0.92), 10, 3)
+	var th := _liseré_style(Color(0.22, 0.30, 0.40), Color(0.65, 0.86, 1.0), 10, 3)
+	btn_test.add_theme_stylebox_override("normal", tn)
+	btn_test.add_theme_stylebox_override("hover",  th)
+	btn_test.add_theme_stylebox_override("pressed", tn)
+	btn_test.add_theme_color_override("font_color", Color(0.80, 0.92, 1.0))
+	btn_test.add_theme_color_override("font_hover_color", Color.WHITE)
+	btn_test.add_theme_font_size_override("font_size", 16)
+	btn_test.pressed.connect(func() -> void: test_mode_chosen.emit(_selected_id))
+	add_child(btn_test)
 
 
 # ══════════════════════════════════════════════════════════════════════

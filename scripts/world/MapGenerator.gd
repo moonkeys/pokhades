@@ -4,7 +4,7 @@ extends MapBase  # MUST extend MapBase — CombatArena.gd cast: get_node("Map") 
 
 enum Terrain { GRASS = 0, PATH = 1, WATER = 2, TREE = 3 }
 enum GatingType { NONE = 0, SURF = 1, COUPE = 2, FORCE = 3 }
-enum MapTheme { FOREST = 0, SWAMP = 1, MEADOW = 2, ROCKY = 3 }
+enum MapTheme { FOREST = 0, SWAMP = 1, MEADOW = 2, ROCKY = 3, AUTUMN = 4, LAKE = 5 }
 
 ## Couche physique dédiée à l'eau — séparée des autres obstacles pour que
 ## seule la CS Surf puisse l'ignorer (cf. CombatArena._apply_cs_unlocks).
@@ -103,6 +103,27 @@ var _reachable: Dictionary = {}
 var _force_boulders: Dictionary = {}   # case rocher → case d'approche
 var _coupe_trees:     Array     = []   # [{"cells": Array[Vector2i], "approach": Vector2i}, ...]
 var _cell_collision:  Dictionary = {}  # case → CollisionShape2D (cf. _build_map_collision)
+var _cell_shadow:     Dictionary = {}  # case → Sprite2D (ombre blob associée)
+
+## Formations de falaises posées par _place_cliff_rect / l'arène —
+## consommées par MapRender3D pour instancier les volumes 3D avec leur
+## hauteur procédurale : [{"rect": Rect2i, "height": float, "cave": bool}, ...]
+var _cliff_formations: Array = []
+
+## Cases du pont du biome Lac (planches posées par MapRender3D au-dessus de
+## l'eau) — cases marchables reliant la rive sud à l'île centrale.
+var _bridge_cells: Array = []   # Array[Vector2i]
+
+## Couche de rendu HD-2D (sol baké + billboards + volumes + collisions 3D).
+## Les TileMapLayers restent le modèle de données mais sont cachés en jeu.
+var _render3d: MapRender3D = null
+
+## Ambiance (ciel/fog/lumière/backdrop) affichée UNIQUEMENT dans l'éditeur —
+## en jeu, c'est CombatArena qui possède l'unique BiomeAmbiance de la scène
+## (elle gère aussi la variante grotte et les transitions de zone) ; en
+## avoir une seconde ici entrerait en conflit avec elle (un seul
+## WorldEnvironment "actif" à la fois dans Godot).
+var _editor_ambiance: BiomeAmbiance = null
 
 ## ── État du thème courant (rempli par _apply_theme) ──────────────
 var _ground_tile:  Vector2i = Vector2i(56, 33)
@@ -127,17 +148,45 @@ void vertex() {
 
 func _ready() -> void:
 	_generate()
-	_setup_water_shader()
 	if not Engine.is_editor_hint():
-		_build_map_collision()
 		_build_pathfinding_grid()
 		add_to_group("combat_map")
-		_build_tall_grass_areas()
-		_setup_flower_shader()
+
+
+## Reconstruit la couche de rendu HD-2D (sol baké + billboards + volumes +
+## collisions 3D) à partir de l'état courant des TileMapLayers — appelé à la
+## fin de _generate()/_generate_arena(), donc AUSSI dans l'éditeur : ouvrir
+## une scène de map (ex: scenes/world/ForestMap.tscn) et cliquer
+## "⟳ Regénérer la map" montre directement le rendu 3D final dans le
+## viewport 3D de l'éditeur, sans avoir à lancer le jeu.
+func _refresh_render3d() -> void:
+	_ground.visible     = false
+	_water.visible      = false
+	_tall_grass.visible = false
+	_objects.visible    = false
+	if is_instance_valid(_render3d):
+		remove_child(_render3d)
+		_render3d.queue_free()
+	_render3d = MapRender3D.new()
+	_render3d.name = "Render3D"
+	add_child(_render3d)
+	_render3d.build(self)
+	if Engine.is_editor_hint():
+		_refresh_editor_ambiance()
+
+
+## Ciel/fog/lumière/backdrop du thème courant — éditeur seulement (cf. note
+## sur _editor_ambiance). `arena_mode` sert de proxy pour "grotte" en preview.
+func _refresh_editor_ambiance() -> void:
+	if not is_instance_valid(_editor_ambiance):
+		_editor_ambiance = BiomeAmbiance.new()
+		_editor_ambiance.name = "EditorAmbiance"
+		add_child(_editor_ambiance)
+	_editor_ambiance.apply_theme(theme, map_size, arena_mode, self)
 
 
 func _process(delta: float) -> void:
-	if Engine.is_editor_hint():
+	if not Engine.is_editor_hint():
 		return
 	if _water_mat:
 		var raw: Variant = _water_mat.get_shader_parameter("wave_t")
@@ -165,6 +214,10 @@ func _generate() -> void:
 			return
 		source_id = _ground.tile_set.get_source_id(0)
 
+	# Multijoueur : graine dérivée de la graine de run partagée + profondeur
+	# → tous les pairs génèrent exactement la même map, sans RPC.
+	if not Engine.is_editor_hint() and Net.in_run:
+		map_seed = Net.zone_seed(RunManager.inst().rooms_cleared)
 	_rng.seed = map_seed if map_seed != 0 else randi()
 
 	if arena_mode:
@@ -188,6 +241,8 @@ func _generate() -> void:
 	_gen_tree_noise()
 	_carve_border()
 	_carve_paths()
+	if theme == MapTheme.LAKE:
+		_carve_lake()   # après les chemins : le grand lac central prime
 	_apply_to_tilemap()
 	_gen_tall_grass()
 	_gen_decorations()
@@ -199,10 +254,16 @@ func _generate() -> void:
 			func(t: int) -> bool: return t != Terrain.WATER and t != Terrain.PATH)
 		_apply_blob(_water, tile_eau_sale - Vector2i(1, 1),
 			func(t: int) -> bool: return t == Terrain.WATER)
+	# Pont du lac : passe de nettoyage FINALE — quoi qu'aient posé les décors,
+	# coffres ou douves, on garantit un passage dégagé et marchable vers l'île.
+	if theme == MapTheme.LAKE:
+		_clear_bridge_obstructions()
 	_compute_reachable()
 	_clear_portal_zones()
 	_objects.y_sort_enabled = true
+	_compute_height_field()
 	print("MapGenerator: génération terminée.")
+	_refresh_render3d()
 
 
 ## ─────────────────────────────────────────────────────────────────
@@ -235,6 +296,16 @@ func _generate_arena() -> void:
 			if c < 2 or c >= W - 2 or r < 2 or r >= H - 2:
 				_objects.set_cell(Vector2i(c, r), source_id, cliff_center)
 				_grid[r][c] = Terrain.TREE
+	# Volumes 3D correspondants : anneau décomposé en 4 rectangles de hauteur
+	# uniforme — une grotte fermée doit avoir des parois régulières.
+	var arena_wall_h := 2.4
+	for rect: Rect2i in [
+		Rect2i(0, 0, W, 2),                  # haut
+		Rect2i(0, H - 2, W, 2),              # bas
+		Rect2i(0, 2, 2, H - 4),              # gauche
+		Rect2i(W - 2, 2, 2, H - 4),          # droite
+	]:
+		_cliff_formations.append({"rect": rect, "height": arena_wall_h, "cave": false})
 
 	# Couverture centrale : rochers/gros cailloux (évite l'entrée et le centre)
 	var center := Vector2i(W / 2, H / 2)
@@ -263,6 +334,7 @@ func _generate_arena() -> void:
 	_compute_reachable()
 	_objects.y_sort_enabled = true
 	print("MapGenerator: arène générée.")
+	_refresh_render3d()
 
 
 ## ─────────────────────────────────────────────────────────────────
@@ -271,7 +343,12 @@ func _generate_arena() -> void:
 
 func _apply_theme() -> void:
 	if random_theme:
-		theme = [MapTheme.FOREST, MapTheme.SWAMP, MapTheme.MEADOW, MapTheme.ROCKY][_rng.randi() % 4]
+		# En jeu : la suite des biomes est pilotée par RunManager (enchaînement
+		# logique par profondeur). En éditeur (aperçu) : tirage aléatoire.
+		if not Engine.is_editor_hint():
+			theme = RunManager.inst().current_biome()
+		else:
+			theme = [MapTheme.FOREST, MapTheme.SWAMP, MapTheme.MEADOW, MapTheme.ROCKY, MapTheme.AUTUMN, MapTheme.LAKE][_rng.randi() % 6]
 	var cfg := _theme_config(theme)
 	_ground_tile    = cfg["ground_tile"]
 	_water_tile     = cfg["water_tile"]
@@ -300,7 +377,7 @@ func _theme_config(t: MapTheme) -> Dictionary:
 				"tree_density":    0.50,
 				"water_threshold": 0.62,
 				"min_water_pools": 1,
-				"tg_threshold":    0.55,
+				"tg_threshold":    0.42,
 				"flower_density":  0.03,
 				"path_width":      3,
 				"gating":          GatingType.COUPE,
@@ -316,7 +393,7 @@ func _theme_config(t: MapTheme) -> Dictionary:
 				"tree_density":    0.14,
 				"water_threshold": 0.47,
 				"min_water_pools": 3,
-				"tg_threshold":    0.68,
+				"tg_threshold":    0.52,
 				"flower_density":  0.02,
 				"path_width":      4,   # corridors plus larges — marécage plus praticable
 				"gating":          GatingType.SURF,
@@ -330,7 +407,7 @@ func _theme_config(t: MapTheme) -> Dictionary:
 				"tree_density":    0.12,
 				"water_threshold": 0.58,
 				"min_water_pools": 1,
-				"tg_threshold":    0.55,
+				"tg_threshold":    0.40,
 				"flower_density":  0.16,
 				"path_width":      3,
 				"gating":          GatingType.FORCE,
@@ -346,10 +423,44 @@ func _theme_config(t: MapTheme) -> Dictionary:
 				"tree_density":    0.20,
 				"water_threshold": 0.60,
 				"min_water_pools": 1,
-				"tg_threshold":    0.70,
+				"tg_threshold":    0.55,
 				"flower_density":  0.02,
 				"path_width":      3,
 				"gating":          GatingType.FORCE,
+			}
+		MapTheme.AUTUMN:
+			return {
+				# Automne : forêt claire aux feuillages orange (variantes _fall
+				# du pack Kenney, cf. MapRender3D._kit_tree_pool), herbe dorée,
+				# lumière rasante — cf. le preset BiomeAmbiance assorti.
+				"ground_tile": tile_grass,
+				"water_tile":   tile_water,
+				"path_tiles":   [tile_chemin_terre],
+				"tree_origins": [tile_tree_origin],
+				"tree_density":    0.34,
+				"water_threshold": 0.60,
+				"min_water_pools": 1,
+				"tg_threshold":    0.46,
+				"flower_density":  0.06,
+				"path_width":      3,
+				"gating":          GatingType.COUPE,
+			}
+		MapTheme.LAKE:
+			return {
+				# Lac : grand plan d'eau central (carvé par _carve_lake), rives
+				# herbeuses, île reliée par un pont. Peu d'arbres pour dégager
+				# la vue sur l'eau. Gating Surf (thématique).
+				"ground_tile": tile_grass,
+				"water_tile":   tile_water,
+				"path_tiles":   [tile_chemin_terre],
+				"tree_origins": [tile_tree_origin],
+				"tree_density":    0.10,
+				"water_threshold": 0.72,   # quasi pas de mares de bruit — le lac suffit
+				"min_water_pools": 0,
+				"tg_threshold":    0.50,
+				"flower_density":  0.05,
+				"path_width":      3,
+				"gating":          GatingType.SURF,
 			}
 	return {}
 
@@ -369,6 +480,7 @@ func _stone_path_variants() -> Array[Vector2i]:
 func _init_grid() -> void:
 	var W := map_size.x
 	var H := map_size.y
+	_cliff_formations.clear()
 	_grid.clear()
 	_grid.resize(H)
 	for r in H:
@@ -561,6 +673,92 @@ func _carve_single_path(from: Vector2i, to: Vector2i) -> void:
 
 
 ## ─────────────────────────────────────────────────────────────────
+## 5b — LAC (biome LAKE) : grand plan d'eau central + île + pont
+## ─────────────────────────────────────────────────────────────────
+
+## Creuse un grand lac elliptique au centre, une île marchable au milieu, et
+## un pont (corridor marchable de 2 cases) reliant la rive sud à l'île. Les
+## rives latérales restent en terre ferme : on contourne le lac pour rejoindre
+## les sorties nord. Appelé après _carve_paths (le lac prime sur les chemins).
+func _carve_lake() -> void:
+	_bridge_cells.clear()
+	var W := map_size.x
+	var H := map_size.y
+	var cx := float(W) * 0.5
+	var cy := float(H) * 0.5
+	var lake_rx := float(W) * 0.30
+	var lake_rz := float(H) * 0.30
+	var isle_rx := maxf(3.0, float(W) * 0.06)
+	var isle_rz := maxf(2.5, float(H) * 0.06)
+
+	for r in range(5, H - 5):
+		for c in range(5, W - 5):
+			if _is_near_portal(c, r, 5):
+				continue
+			var dx := (float(c) + 0.5 - cx) / lake_rx
+			var dz := (float(r) + 0.5 - cy) / lake_rz
+			if dx * dx + dz * dz > 1.0:
+				continue
+			# Île centrale = terre ferme
+			var idx := (float(c) + 0.5 - cx) / isle_rx
+			var idz := (float(r) + 0.5 - cy) / isle_rz
+			if idx * idx + idz * idz <= 1.0:
+				_grid[r][c] = Terrain.GRASS
+			else:
+				_grid[r][c] = Terrain.WATER
+
+	# Pont : corridor marchable de 2 cases de large, de l'île vers la rive sud
+	var bx := int(cx)
+	for r in range(int(cy), H - 5):
+		var dx := (float(bx) + 0.5 - cx) / lake_rx
+		var dz := (float(r) + 0.5 - cy) / lake_rz
+		var over_water := dx * dx + dz * dz <= 1.0
+		for w in 2:
+			var col: int = bx + w
+			if col < 3 or col >= W - 3:
+				continue
+			if _grid[r][col] == Terrain.WATER:
+				_grid[r][col] = Terrain.GRASS
+				if over_water:
+					_bridge_cells.append(Vector2i(col, r))
+		# Sorti du lac par le sud → pont terminé
+		if not over_water and r > int(cy):
+			break
+	_rebuild_bridge_set()
+
+
+## Cases du pont (planches 3D par MapRender3D) — API publique.
+func get_bridge_cells() -> Array:
+	return _bridge_cells
+
+
+## Lookup O(1) : cette case fait-elle partie du pont ? Sert à interdire tout
+## objet (rondin, rocher, souche…) dessus — sinon un décor bloquant peut
+## barrer l'unique passage vers l'île. Reconstruit à chaque _carve_lake.
+var _bridge_set: Dictionary = {}
+
+func _is_bridge_cell(cell: Vector2i) -> bool:
+	return _bridge_set.has(cell)
+
+func _rebuild_bridge_set() -> void:
+	_bridge_set.clear()
+	for cell: Vector2i in _bridge_cells:
+		_bridge_set[cell] = true
+
+
+## Rend chaque case de pont dégagée et marchable : retire tout objet/eau,
+## repose le sol d'herbe et marque la case GRASS. Appelée en toute fin de
+## génération pour survivre aux placements ultérieurs (coffres, douves…).
+func _clear_bridge_obstructions() -> void:
+	for cell: Vector2i in _bridge_cells:
+		_objects.erase_cell(cell)
+		_water.erase_cell(cell)
+		_ground.set_cell(cell, source_id, _ground_tile)
+		if cell.y >= 0 and cell.y < _grid.size() and cell.x >= 0 and cell.x < _grid[cell.y].size():
+			_grid[cell.y][cell.x] = Terrain.GRASS
+
+
+## ─────────────────────────────────────────────────────────────────
 ## 6 — GRILLE → TILEMAPLAYERS
 ## ─────────────────────────────────────────────────────────────────
 
@@ -674,6 +872,7 @@ func _gen_decorations() -> void:
 			if _tall_grass.get_cell_source_id(cell) != -1: continue
 			if _grid[r][c] == Terrain.PATH:                continue
 			if _is_near_portal(c, r, 4):                   continue
+			if _is_bridge_cell(cell):                      continue   # rien sur le pont
 			var roll := _rng.randf()
 			if roll < flower_density:
 				_tall_grass.set_cell(cell, source_id, flowers[_rng.randi() % flowers.size()])
@@ -692,12 +891,34 @@ func _gen_theme_decorations() -> void:
 		MapTheme.FOREST: _decor_forest()
 		MapTheme.SWAMP:  _decor_swamp()
 		MapTheme.ROCKY:  _decor_rocky()
-		MapTheme.MEADOW: pass   # fleurs déjà denses via flower_density
+		MapTheme.MEADOW: _decor_meadow()
+		MapTheme.AUTUMN: _decor_forest()   # souches/champignons/affleurements — mêmes habitants qu'en forêt
+		MapTheme.LAKE:   _decor_meadow()   # rives dégagées, quelques affleurements — la vedette est le lac
+
+
+## Formations de falaise (variété procédurale : taille aléatoire, 9-slice) —
+## réutilisé par TOUS les thèmes pour donner du relief même hors rocailleux
+## (juste moins de formations, plus petites, sans grotte). `with_cave` :
+## la première formation reçoit une entrée de grotte dans sa base.
+func _place_cliff_outcrops(cells: Array, max_count: int, with_cave: bool,
+		w_min: int, w_max: int, h_min: int, h_max: int) -> void:
+	var placed := 0
+	var cave_done := not with_cave
+	for cell: Vector2i in cells:
+		if placed >= max_count: break
+		if _is_near_portal(cell.x, cell.y, 8): continue
+		var w: int = _rng.randi_range(w_min, w_max)
+		var h: int = _rng.randi_range(h_min, h_max)
+		if not _can_place_block(cell, w, h): continue
+		_place_cliff_rect(cell, w, h, not cave_done)
+		cave_done = true
+		placed += 1
 
 
 func _decor_forest() -> void:
 	var cells := _get_walkable_cells(5)
 	cells.shuffle()
+	_place_cliff_outcrops(cells, 2, false, 3, 5, 3, 4)
 	var stumps := [tile_souche_sombre, tile_souche_claire]
 	var champi := 0
 	var stump  := 0
@@ -720,6 +941,11 @@ func _decor_forest() -> void:
 
 
 func _decor_swamp() -> void:
+	var cells := _get_walkable_cells(6)
+	cells.shuffle()
+	# Bancs rocheux/berges élevées, discrets — le marécage reste surtout plat.
+	_place_cliff_outcrops(cells, 1, false, 3, 5, 3, 4)
+
 	var lily := tiles_nenuphars_fleur.duplicate()
 	lily.append(tile_nenuphar)
 	lily.append(tile_petit_nenuphar)
@@ -729,23 +955,20 @@ func _decor_swamp() -> void:
 			_objects.set_cell(cell, source_id, lily[_rng.randi() % lily.size()])
 
 
+func _decor_meadow() -> void:
+	var cells := _get_walkable_cells(6)
+	cells.shuffle()
+	_place_cliff_outcrops(cells, 2, false, 3, 6, 2, 4)
+	# Fleurs déjà denses via flower_density — pas d'autre décor thématique.
+
+
 func _decor_rocky() -> void:
 	var cells := _get_walkable_cells(7)
 	cells.shuffle()
 
 	# 1) Falaises — formations rocheuses allongées (taille variable, 9-slice
 	#    centre+bords). La première reçoit une entrée de grotte dans sa base.
-	var cliffs := 0
-	var cave_done := false
-	for cell: Vector2i in cells:
-		if cliffs >= 3: break
-		if _is_near_portal(cell.x, cell.y, 8): continue
-		var w: int = _rng.randi_range(3, 7)
-		var h: int = _rng.randi_range(3, 5)
-		if not _can_place_block(cell, w, h): continue
-		_place_cliff_rect(cell, w, h, not cave_done)
-		cave_done = true
-		cliffs   += 1
+	_place_cliff_outcrops(cells, 3, true, 3, 7, 3, 5)
 
 	# 2) Gros cailloux 2×2 (parfois groupés en amas) + petits cailloux épars
 	var small := 0
@@ -792,6 +1015,15 @@ func _place_cliff_rect(top_left: Vector2i, w: int, h: int, with_cave: bool) -> v
 		var mid := w / 2
 		_objects.set_cell(top_left + Vector2i(mid, h - 2), source_id, tile_grotte_haut)
 		_objects.set_cell(top_left + Vector2i(mid, h - 1), source_id, tile_grotte_bas)
+	# Hauteur procédurale du volume 3D — variété par formation (cf. MapRender3D).
+	# Une formation avec grotte reste au moins à 2.0 : garantit une arche
+	# d'entrée sur 2 étages de blocs pleins (cf. MapRender3D._build_cliff_formations),
+	# jamais un simple passage bas d'un seul bloc.
+	_cliff_formations.append({
+		"rect":   Rect2i(top_left, Vector2i(w, h)),
+		"height": _rng.randf_range(2.0, 2.6) if with_cave else _rng.randf_range(1.5, 2.6),
+		"cave":   with_cave,
+	})
 
 
 func _champi_fits(cell: Vector2i) -> bool:
@@ -826,6 +1058,7 @@ func _gen_logs() -> void:
 	for pos: Vector2i in candidates:
 		if placed >= 4: break
 		var right := pos + Vector2i(1, 0)
+		if _is_bridge_cell(pos) or _is_bridge_cell(right): continue   # pas de rondin sur le pont
 		if _objects.get_cell_source_id(pos)   != -1: continue
 		if _objects.get_cell_source_id(right) != -1: continue
 		if _water.get_cell_source_id(pos)     != -1: continue
@@ -841,6 +1074,10 @@ func _gen_logs() -> void:
 ## ─────────────────────────────────────────────────────────────────
 
 func _place_chest_gated() -> void:
+	# Entre 0 et 1 coffre par zone : ~1 zone sur 3 n'en a pas — la récompense
+	# redevient un événement, pas un dû.
+	if _rng.randf() < 0.35:
+		return
 	match gating_type:
 		GatingType.NONE:  _place_chest_free()
 		GatingType.SURF:  _place_chest_surf()
@@ -1098,6 +1335,124 @@ func _compute_reachable() -> void:
 			queue.append(n)
 
 
+## ─────────────────────────────────────────────────────────────────
+## RELIEF — collines douces (bruit + lissage), plaqué à plat sous l'eau,
+## les obstacles et les zones d'entrée/sortie. Purement du rendu/mouvement —
+## ne touche pas à la grille Terrain ni au pathfinding (toujours en 2D X/Z).
+## ─────────────────────────────────────────────────────────────────
+
+const HEIGHT_AMPLITUDE     := 0.55   # amplitude brute avant lissage (unités monde)
+const HEIGHT_NOISE_FREQ    := 0.045  # basse fréquence → collines larges et douces
+const HEIGHT_SMOOTH_PASSES := 2
+
+## Hauteur du sol par case (0.0 = plat) — nul par défaut (arène : volontairement
+## sans relief, terrain stable pour un combat de boss). Rempli par
+## _compute_height_field() en fin de génération d'une map normale.
+var _height_grid: Array = []   # Array[PackedFloat32Array]
+
+
+func _compute_height_field() -> void:
+	var W := map_size.x
+	var H := map_size.y
+	var noise := FastNoiseLite.new()
+	noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	noise.seed       = _rng.randi()
+	noise.frequency  = HEIGHT_NOISE_FREQ
+
+	var field: Array = []
+	field.resize(H)
+	for r in H:
+		var row := PackedFloat32Array()
+		row.resize(W)
+		for c in W:
+			row[c] = 0.0 if _is_height_flat_cell(c, r) else \
+				noise.get_noise_2d(float(c), float(r)) * HEIGHT_AMPLITUDE
+		field[r] = row
+
+	# Lissage (moyenne 3×3) — pentes douces façon collines, pas de bruit
+	# haute fréquence — puis on reverrouille à plat les cases occupées/eau/
+	# portails : jamais de dénivelé sous un obstacle ou une zone de passage.
+	for i in HEIGHT_SMOOTH_PASSES:
+		field = _smooth_height_field(field, W, H)
+	for r in H:
+		for c in W:
+			if _is_height_flat_cell(c, r):
+				field[r][c] = 0.0
+
+	_height_grid = field
+
+
+## Toute case occupée par un objet (falaise, arbre, rocher, chest…), sous
+## l'eau, ou proche d'un portail/de l'entrée — reste toujours plate.
+func _is_height_flat_cell(c: int, r: int) -> bool:
+	if _grid[r][c] == Terrain.WATER:
+		return true
+	if _objects.get_cell_source_id(Vector2i(c, r)) != -1:
+		return true
+	if _is_near_portal(c, r, 5):
+		return true
+	# Marge d'une case autour de l'eau : berge plate pour un raccord propre
+	# avec les franges d'herbe posées sur le contour des mares (cf. MapRender3D).
+	for dy in range(-1, 2):
+		for dx in range(-1, 2):
+			var ny := r + dy
+			var nx := c + dx
+			if ny < 0 or ny >= map_size.y or nx < 0 or nx >= map_size.x: continue
+			if _grid[ny][nx] == Terrain.WATER: return true
+	return false
+
+
+func _smooth_height_field(src: Array, W: int, H: int) -> Array:
+	var out: Array = []
+	out.resize(H)
+	for r in H:
+		var row := PackedFloat32Array()
+		row.resize(W)
+		for c in W:
+			var sum := 0.0
+			var count := 0
+			for dy in range(-1, 2):
+				for dx in range(-1, 2):
+					var nr := r + dy
+					var nc := c + dx
+					if nr < 0 or nr >= H or nc < 0 or nc >= W: continue
+					sum += (src[nr] as PackedFloat32Array)[nc]
+					count += 1
+			row[c] = sum / float(count)
+		out[r] = row
+	return out
+
+
+# Override de MapBase.get_height_at_cell — relief procédural par case.
+func get_height_at_cell(cell: Vector2i) -> float:
+	if _height_grid.is_empty(): return 0.0
+	if cell.y < 0 or cell.y >= _height_grid.size(): return 0.0
+	var row: PackedFloat32Array = _height_grid[cell.y]
+	if cell.x < 0 or cell.x >= row.size(): return 0.0
+	return row[cell.x]
+
+
+# Override de MapBase.get_height_at_world — interpolation bilinéaire pour un
+# suivi fluide du relief (acteurs/caméra), pas de "marches" entre les cases.
+func get_height_at_world(pos: Vector3) -> float:
+	if _height_grid.is_empty(): return 0.0
+	var H := _height_grid.size()
+	var W: int = (_height_grid[0] as PackedFloat32Array).size()
+	var fx := clampf(pos.x - 0.5, 0.0, float(W - 1))
+	var fy := clampf(pos.z - 0.5, 0.0, float(H - 1))
+	var x0 := int(fx)
+	var y0 := int(fy)
+	var x1 := mini(x0 + 1, W - 1)
+	var y1 := mini(y0 + 1, H - 1)
+	var tx := fx - float(x0)
+	var ty := fy - float(y0)
+	var row0: PackedFloat32Array = _height_grid[y0]
+	var row1: PackedFloat32Array = _height_grid[y1]
+	var top    := lerpf(row0[x0], row0[x1], tx)
+	var bottom := lerpf(row1[x0], row1[x1], tx)
+	return lerpf(top, bottom, ty)
+
+
 # Override de MapBase.is_valid_spawn — prend en compte la taille variable.
 func is_valid_spawn(world_pos: Vector2) -> bool:
 	return is_valid_spawn_cell(world_to_cell(world_pos))
@@ -1162,11 +1517,20 @@ func cut_tree_group(cells: Array) -> void:
 
 
 func _clear_cell_collision(cell: Vector2i) -> void:
+	# Rendu HD-2D : le visuel et la collision de la case vivent dans MapRender3D.
+	if is_instance_valid(_render3d):
+		_render3d.clear_cell(cell)
+	# Nettoyage 2D — ne concerne plus que l'aperçu éditeur / anciens restes.
 	if _cell_collision.has(cell):
 		var cs: CollisionShape2D = _cell_collision[cell]
 		if is_instance_valid(cs):
 			cs.queue_free()
 		_cell_collision.erase(cell)
+	if _cell_shadow.has(cell):
+		var shadow: Sprite2D = _cell_shadow[cell]
+		if is_instance_valid(shadow):
+			shadow.queue_free()
+		_cell_shadow.erase(cell)
 
 
 func get_entry_world_pos() -> Vector2:
@@ -1217,11 +1581,20 @@ func _build_map_collision() -> void:
 	_objects.collision_enabled    = false
 
 	_cell_collision.clear()
+	_cell_shadow.clear()
 
 	var body := StaticBody2D.new()
 	body.collision_layer = 1
 	body.collision_mask  = 0
 	add_child(body)
+
+	# Ombres "blob" — un léger disque sombre sous chaque objet solide,
+	# inséré juste avant _objects dans l'arbre pour dessiner en-dessous.
+	var obj_idx := _objects.get_index()
+	var shadows := Node2D.new()
+	shadows.name = "Shadows"
+	add_child(shadows)
+	move_child(shadows, obj_idx)
 
 	for cell: Vector2i in _objects.get_used_cells():
 		var atlas := _objects.get_cell_atlas_coords(cell)
@@ -1233,11 +1606,17 @@ func _build_map_collision() -> void:
 			continue
 		var cs := CollisionShape2D.new()
 		var sh := RectangleShape2D.new()
-		sh.size     = _col_size(atlas)
+		var csize := _col_size(atlas)
+		sh.size     = csize
 		cs.position = _objects.map_to_local(cell)
 		cs.shape    = sh
 		body.add_child(cs)
 		_cell_collision[cell] = cs
+
+		var shadow := ShadowTexture.make_shadow_sprite(csize * 0.85)
+		shadow.position = cs.position + Vector2(0, csize.y * 0.32)
+		shadows.add_child(shadow)
+		_cell_shadow[cell] = shadow
 
 	# L'eau est sur sa propre couche physique : seule la CS Surf permet de
 	# l'ignorer (cf. CombatArena), sans affecter les autres obstacles.
@@ -1333,6 +1712,7 @@ func _get_walkable_cells(margin: int) -> Array[Vector2i]:
 			if _water.get_cell_source_id(cell)   != -1: continue
 			if _objects.get_cell_source_id(cell) != -1: continue
 			if _ground.get_cell_source_id(cell)  == -1: continue
+			if _is_bridge_cell(cell):                   continue   # le pont reste dégagé
 			result.append(cell)
 	return result
 

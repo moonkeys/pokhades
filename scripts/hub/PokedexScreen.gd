@@ -3,17 +3,17 @@ extends CanvasLayer
 
 signal closed
 
-const C_BG      := Color(0.10, 0.08, 0.05, 0.90)
-const C_PANEL   := Color(0.91, 0.85, 0.70)
+const C_BG      := Color(0.04, 0.03, 0.02, 0.82)
+const C_PANEL   := Color(0.10, 0.075, 0.045, 0.96)
 const C_BORDER  := Color(0.62, 0.50, 0.32)
-const C_TEXT    := Color(0.18, 0.13, 0.06)
-const C_DIM     := Color(0.48, 0.38, 0.22)
-const C_GOLD    := Color(0.76, 0.53, 0.17)
+const C_TEXT    := Color(0.96, 0.92, 0.80)
+const C_DIM     := Color(0.62, 0.55, 0.42)
+const C_GOLD    := Color(0.92, 0.72, 0.25)
 const C_GOLD_LT := Color(0.94, 0.88, 0.72)
-const C_CARD    := Color(0.86, 0.80, 0.65)
-const C_CARD_SEL:= Color(0.96, 0.90, 0.78)
-const C_GOOD    := Color(0.20, 0.62, 0.30)
-const C_BAR_BG  := Color(0.68, 0.60, 0.45)
+const C_CARD    := Color(0.16, 0.12, 0.07, 0.95)
+const C_CARD_SEL:= Color(0.26, 0.21, 0.12)
+const C_GOOD    := Color(0.38, 0.82, 0.45)
+const C_BAR_BG  := Color(0, 0, 0, 0.55)
 
 const STAT_NAMES: Array[String] = ["PV", "Attaque", "Défense", "Atq. Sp.", "Déf. Sp.", "Vitesse"]
 const STAT_COLORS: Array[Color] = [
@@ -125,7 +125,7 @@ func _refresh_team_strip() -> void:
 
 		if i < GameManager.hub_team.size():
 			var pid: int = GameManager.hub_team[i]
-			_style(slot, Color(0.82, 0.92, 0.82), C_GOOD, 6)
+			_style(slot, Color(0.13, 0.24, 0.13), C_GOOD, 6)
 			if _portraits.has(pid):
 				var tr := TextureRect.new()
 				tr.position = Vector2(2, 2)
@@ -144,7 +144,7 @@ func _refresh_team_strip() -> void:
 						get_viewport().set_input_as_handled()
 			)
 		else:
-			_style(slot, Color(0.80, 0.72, 0.56), C_BORDER, 6)
+			_style(slot, Color(0.16, 0.12, 0.07), C_BORDER, 6)
 
 		_team_strip_root.add_child(slot)
 
@@ -190,7 +190,7 @@ func _build_entry(parent: Control, pid: int, x: int, y: int, w: int, h: int) -> 
 	ph.name     = "PH"
 	ph.position = Vector2(6, 6)
 	ph.size     = Vector2(56, 56)
-	ph.color    = Color(0.74, 0.66, 0.50)
+	ph.color    = Color(0.20, 0.17, 0.12)
 	ph.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_card_ph[pid] = ph
 	card.add_child(ph)
@@ -297,7 +297,7 @@ func _build_detail_panel(panel: Panel) -> void:
 	var frame := Panel.new()
 	frame.position = Vector2(488, 82)
 	frame.size     = Vector2(576, 488)
-	_style(frame, Color(0.86, 0.80, 0.65), C_BORDER, 8)
+	_style(frame, Color(0.16, 0.12, 0.07, 0.95), C_BORDER, 8)
 	panel.add_child(frame)
 
 	_detail_root = Control.new()
@@ -345,6 +345,80 @@ func _refresh_detail_locked(pd: PokemonData) -> void:
 	_detail_root.add_child(_lbl_node(msg, 16, 178, 544, 24, 13, C_DIM))
 
 
+## Ligne "objet tenu" : icône + nom de l'objet assigné à `pid`, bouton pour
+## cycler parmi les objets possédés (dont « Aucun »), et bouton Super Bonbon.
+func _build_item_row(pid: int, x: int, y: int) -> void:
+	var held := GameManager.get_assigned_item(pid)
+
+	# Icône (si un objet est tenu)
+	if held != "":
+		var tex := ItemCatalog.icon(held)
+		if tex != null:
+			var icon := TextureRect.new()
+			icon.texture        = tex
+			icon.position       = Vector2(x, y)
+			icon.size           = Vector2(30, 30)
+			icon.stretch_mode   = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+			_detail_root.add_child(icon)
+
+	var item_name := "Aucun objet"
+	if held != "":
+		item_name = str(ItemCatalog.get_item(held).get("name", held))
+	_detail_root.add_child(_lbl_node("Objet : " + item_name, x + 34, y + 4, 240, 22, 13, C_TEXT))
+
+	# Bouton cycle d'objet
+	var cap_pid := pid
+	var cyc := Button.new()
+	cyc.text     = "Changer"
+	cyc.position = Vector2(x + 250, y)
+	cyc.size     = Vector2(90, 30)
+	cyc.add_theme_font_size_override("font_size", 12)
+	_style_button(cyc, Color(0.34, 0.28, 0.16), C_GOLD_LT)
+	cyc.pressed.connect(func() -> void:
+		_cycle_item(cap_pid)
+		_refresh_detail()
+	)
+	_detail_root.add_child(cyc)
+
+	# Super Bonbon
+	var candies := GameManager.get_item_count("rare-candy")
+	var bonus := GameManager.get_start_level_bonus(pid)
+	var candy_txt := "Bonbon (+%d) ×%d" % [ItemCatalog.CANDY_LEVELS, candies]
+	if bonus > 0:
+		candy_txt = "Niv.+%d  |  " % bonus + candy_txt
+	var candy := Button.new()
+	candy.text     = candy_txt
+	candy.position = Vector2(x + 344, y)
+	candy.size     = Vector2(184, 30)
+	candy.disabled = candies <= 0 or bonus >= ItemCatalog.CANDY_MAX_BONUS
+	candy.add_theme_font_size_override("font_size", 11)
+	_style_button(candy, Color(0.60, 0.28, 0.42) if not candy.disabled else Color(0.55, 0.48, 0.38), Color.WHITE)
+	candy.pressed.connect(func() -> void:
+		if GameManager.use_candy(cap_pid):
+			Sfx.play("levelup", -4.0)
+			_refresh_detail()
+	)
+	_detail_root.add_child(candy)
+
+
+## Passe à l'objet tenu suivant pour `pid` : parcourt [Aucun] + les objets
+## tenus dont il reste des copies libres (ou celui déjà tenu).
+func _cycle_item(pid: int) -> void:
+	var held := GameManager.get_assigned_item(pid)
+	var options: Array = [""]   # "Aucun"
+	for it: Dictionary in ItemCatalog.held_items():
+		var api: String = it["api"]
+		if api == held or GameManager.get_item_count(api) > 0:
+			options.append(api)
+	var idx := options.find(held)
+	var next: String = options[(idx + 1) % options.size()]
+	if next == "":
+		GameManager.unassign_item(pid)
+	else:
+		GameManager.assign_item(pid, next)
+
+
 func _refresh_detail() -> void:
 	if not is_instance_valid(_detail_root): return
 	for ch in _detail_root.get_children():
@@ -364,7 +438,7 @@ func _refresh_detail() -> void:
 	var p_bg := ColorRect.new()
 	p_bg.position = Vector2(16, 12)
 	p_bg.size     = Vector2(96, 96)
-	p_bg.color    = Color(0.74, 0.66, 0.50)
+	p_bg.color    = Color(0.20, 0.17, 0.12)
 	_detail_root.add_child(p_bg)
 
 	var tex := TextureRect.new()
@@ -412,6 +486,9 @@ func _refresh_detail() -> void:
 		_refresh_team_strip()
 	)
 	_detail_root.add_child(team_btn)
+
+	# Objet tenu (assignable uniquement ici, cf. cahier des charges) + Super Bonbon
+	_build_item_row(_selected_pid, 122, 82)
 
 	# Stats
 	var sy0 := 122
@@ -467,12 +544,19 @@ func _refresh_detail() -> void:
 		var label: String = str(m.get("label", api))
 		var mtype: String  = str(m.get("type", "normal"))
 		var equipped := api in loadout
+		# Hors movepool : capacité achetée mais que CE Pokémon ne peut pas
+		# apprendre (ex : Séisme sur Absol) → carte grisée, non cliquable.
+		var learnable := pd.can_learn(api)
 
 		var card := Panel.new()
 		card.position = Vector2(mx, my)
 		card.size     = Vector2(col_w - 6, 56)
 		card.mouse_filter = Control.MOUSE_FILTER_STOP
-		_style(card, C_CARD_SEL if equipped else C_CARD, C_GOOD if equipped else C_BORDER, 6)
+		var border := C_GOOD if equipped else C_BORDER
+		if not learnable:
+			border = Color(0.55, 0.30, 0.28)
+		_style(card, C_CARD_SEL if equipped else C_CARD, border, 6)
+		card.modulate = Color(1, 1, 1, 0.45) if not learnable else Color.WHITE
 		_detail_root.add_child(card)
 
 		var tpill := TypeIcon.make_pill(mtype, 70.0, 16.0, 8)
@@ -480,23 +564,26 @@ func _refresh_detail() -> void:
 		card.add_child(tpill)
 
 		card.add_child(_lbl_node(label, 4, 24, col_w - 14, 18, 11, C_TEXT))
-		if equipped:
+		if not learnable:
+			card.add_child(_lbl_node("✗ Hors movepool", 4, 40, col_w - 14, 14, 10, Color(0.80, 0.40, 0.36)))
+		elif equipped:
 			card.add_child(_lbl_node("✓ Équipée", 4, 40, col_w - 14, 14, 10, C_GOOD))
 		elif loadout.size() >= GameManager.move_slot_count:
 			card.add_child(_lbl_node("Slots pleins", 4, 40, col_w - 14, 14, 10, C_DIM))
 		else:
 			card.add_child(_lbl_node("Clic pour équiper", 4, 40, col_w - 14, 14, 10, C_DIM))
 
-		var move_pid := _selected_pid
-		var capture_api := api
-		card.gui_input.connect(func(event: InputEvent) -> void:
-			if event is InputEventMouseButton:
-				var mbe := event as InputEventMouseButton
-				if mbe.pressed and mbe.button_index == MOUSE_BUTTON_LEFT:
-					GameManager.toggle_move_in_loadout(move_pid, capture_api)
-					_refresh_detail()
-					get_viewport().set_input_as_handled()
-		)
+		if learnable:
+			var move_pid := _selected_pid
+			var capture_api := api
+			card.gui_input.connect(func(event: InputEvent) -> void:
+				if event is InputEventMouseButton:
+					var mbe := event as InputEventMouseButton
+					if mbe.pressed and mbe.button_index == MOUSE_BUTTON_LEFT:
+						GameManager.toggle_move_in_loadout(move_pid, capture_api)
+						_refresh_detail()
+						get_viewport().set_input_as_handled()
+			)
 
 		mx += col_w
 		if mx + col_w > 560:
@@ -613,8 +700,8 @@ func _style_col(p: Panel, bg: Color, radius: int, top_only: bool = false) -> voi
 
 func _btn_neutral(btn: Button) -> void:
 	var s := StyleBoxFlat.new()
-	s.bg_color = Color(0.74, 0.66, 0.52); s.set_corner_radius_all(8)
+	s.bg_color = Color(0.22, 0.18, 0.11); s.set_corner_radius_all(8)
 	btn.add_theme_stylebox_override("normal", s)
 	var sh := s.duplicate() as StyleBoxFlat
-	sh.bg_color = Color(0.82, 0.74, 0.60)
+	sh.bg_color = Color(0.30, 0.25, 0.15)
 	btn.add_theme_stylebox_override("hover", sh)

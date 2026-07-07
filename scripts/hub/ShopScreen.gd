@@ -3,14 +3,14 @@ extends CanvasLayer
 
 signal closed
 
-const C_BG      := Color(0.10, 0.08, 0.05, 0.90)
-const C_PANEL   := Color(0.91, 0.85, 0.70)
+const C_BG      := Color(0.04, 0.03, 0.02, 0.82)
+const C_PANEL   := Color(0.10, 0.075, 0.045, 0.96)
 const C_BORDER  := Color(0.62, 0.50, 0.32)
-const C_TEXT    := Color(0.18, 0.13, 0.06)
-const C_DIM     := Color(0.48, 0.38, 0.22)
-const C_GOLD    := Color(0.76, 0.53, 0.17)
+const C_TEXT    := Color(0.96, 0.92, 0.80)
+const C_DIM     := Color(0.62, 0.55, 0.42)
+const C_GOLD    := Color(0.92, 0.72, 0.25)
 const C_GOLD_LT := Color(0.94, 0.88, 0.72)
-const C_OWNED   := Color(0.22, 0.60, 0.28)
+const C_OWNED   := Color(0.38, 0.82, 0.45)
 
 var _gold_lbl: Label = null
 var _feedback_lbl: Label = null
@@ -44,7 +44,7 @@ func _build() -> void:
 	var title: Label = _lbl("◈  BOUTIQUE DE MIRA", 24, 14, 700, 44, 24, C_GOLD_LT)
 	panel.add_child(title)
 
-	_gold_lbl = _lbl("◆ %d or" % GameManager.gold, 860, 18, 220, 36, 20, C_GOLD_LT, true)
+	_gold_lbl = _lbl("◆ %d Baies" % GameManager.gold, 860, 18, 220, 36, 20, C_GOLD_LT, true)
 	panel.add_child(_gold_lbl)
 
 	# Bouton fermer
@@ -84,7 +84,7 @@ func _build_item(parent: Panel, def: Dictionary, x: int, y: int, w: int, h: int)
 	var card := Panel.new()
 	card.position = Vector2(x, y)
 	card.size     = Vector2(w, h)
-	_style(card, Color(0.86, 0.80, 0.65), C_BORDER, 10)
+	_style(card, Color(0.16, 0.12, 0.07, 0.95), C_BORDER, 10)
 	parent.add_child(card)
 
 	# Accent top bar
@@ -106,7 +106,7 @@ func _build_item(parent: Panel, def: Dictionary, x: int, y: int, w: int, h: int)
 	card.add_child(desc)
 
 	# Prix + bouton
-	var price_lbl: Label = _lbl("◆ %d or" % def["price"], 12, 140, 140, 28, 15, C_GOLD)
+	var price_lbl: Label = _lbl("◆ %d Baies" % def["price"], 12, 140, 140, 28, 15, C_GOLD)
 	card.add_child(price_lbl)
 
 	var btn := Button.new()
@@ -114,7 +114,7 @@ func _build_item(parent: Panel, def: Dictionary, x: int, y: int, w: int, h: int)
 	btn.position = Vector2(w - 120, 138)
 	btn.size     = Vector2(108, 32)
 	btn.add_theme_font_size_override("font_size", 14)
-	btn.add_theme_color_override("font_color", C_TEXT)
+	btn.add_theme_color_override("font_color", Color(0.15, 0.11, 0.05))
 	_btn_buy(btn, accent)
 	var item_id: String = def["id"]
 	var item_name: String = def["name"]
@@ -126,7 +126,7 @@ func _build_item(parent: Panel, def: Dictionary, x: int, y: int, w: int, h: int)
 func _buy(id: String, name: String, price: int) -> void:
 	if GameManager.spend_gold(price):
 		GameManager.owned_items.append(id)
-		_gold_lbl.text = "◆ %d or" % GameManager.gold
+		_gold_lbl.text = "◆ %d Baies" % GameManager.gold
 		_show_feedback("✓  %s acheté !" % name, true)
 	else:
 		_show_feedback("✗  Pas assez d'or (%d requis)" % price, false)
@@ -190,8 +190,8 @@ func _btn_buy(btn: Button, accent: Color) -> void:
 
 func _btn_neutral(btn: Button) -> void:
 	var s := StyleBoxFlat.new()
-	s.bg_color = Color(0.74, 0.66, 0.52); s.set_corner_radius_all(8)
+	s.bg_color = Color(0.22, 0.18, 0.11); s.set_corner_radius_all(8)
 	btn.add_theme_stylebox_override("normal", s)
 	var sh := s.duplicate() as StyleBoxFlat
-	sh.bg_color = Color(0.82, 0.74, 0.60)
+	sh.bg_color = Color(0.30, 0.25, 0.15)
 	btn.add_theme_stylebox_override("hover", sh)

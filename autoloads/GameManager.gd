@@ -36,6 +36,73 @@ var hub_team:         Array[int] = []
 var owned_items:      Array[String] = []
 var run_items:        Array         = []  # items ramassés pendant la run courante
 
+# ── Inventaire d'objets tenus (Gromago) — persistant entre les runs ──────
+# item_inventory : api → nb de copies LIBRES (non assignées).
+# pokemon_item   : pid → api de l'objet tenu par ce Pokémon (une copie déjà
+#                  consommée de l'inventaire).
+# start_level_bonus : pid → niveaux de départ bonus (Super Bonbon).
+var item_inventory:    Dictionary = {}
+var pokemon_item:      Dictionary = {}
+var start_level_bonus: Dictionary = {}
+
+## Amélioration permanente : les baies au sol s'attirent vers le joueur
+## (cf. BerryPickup). Achetée chez les Améliorations du hub.
+var berry_magnet: bool = false
+const BERRY_MAGNET_COST := 300
+
+
+func get_item_count(api: String) -> int:
+	return int(item_inventory.get(api, 0))
+
+
+## Achète une copie d'un objet du catalogue contre des Baies.
+func buy_item(api: String) -> bool:
+	var it := ItemCatalog.get_item(api)
+	if it.is_empty() or not spend_gold(int(it["price"])):
+		return false
+	item_inventory[api] = get_item_count(api) + 1
+	return true
+
+
+func get_assigned_item(pid: int) -> String:
+	return pokemon_item.get(pid, "")
+
+
+## Assigne un objet tenu à `pid` (consomme une copie libre). Rend d'abord à
+## l'inventaire l'objet précédemment tenu par ce Pokémon.
+func assign_item(pid: int, api: String) -> bool:
+	if get_item_count(api) <= 0:
+		return false
+	unassign_item(pid)
+	item_inventory[api] = get_item_count(api) - 1
+	pokemon_item[pid] = api
+	return true
+
+
+func unassign_item(pid: int) -> void:
+	var cur: String = pokemon_item.get(pid, "")
+	if cur != "":
+		item_inventory[cur] = get_item_count(cur) + 1
+		pokemon_item.erase(pid)
+
+
+## Consomme un Super Bonbon de l'inventaire pour augmenter le niveau de
+## départ de `pid` (plafonné à CANDY_MAX_BONUS). Retourne false si pas de
+## bonbon ou plafond atteint.
+func use_candy(pid: int) -> bool:
+	if get_item_count("rare-candy") <= 0:
+		return false
+	var cur: int = int(start_level_bonus.get(pid, 0))
+	if cur >= ItemCatalog.CANDY_MAX_BONUS:
+		return false
+	item_inventory["rare-candy"] = get_item_count("rare-candy") - 1
+	start_level_bonus[pid] = cur + ItemCatalog.CANDY_LEVELS
+	return true
+
+
+func get_start_level_bonus(pid: int) -> int:
+	return int(start_level_bonus.get(pid, 0))
+
 # ── Améliorations permanentes achetées au hub ─────────────────────────
 var move_slot_count:       int           = 1   # emplacements capacités (1-4)
 var team_slot_count:       int           = 1   # taille équipe (1-6)
@@ -85,9 +152,22 @@ const CS_CATALOG: Array[Dictionary] = [
 # pid:int -> "cs_surf"/"cs_coupe"/"cs_force" assigné à ce Pokémon (au plus 1 CS par Pokémon)
 var cs_holders: Dictionary = {}
 
+## CS possédées — stockage DÉDIÉ et permanent (toutes les runs). Ne surtout
+## pas les mettre dans owned_items : celui-ci est consommé/vidé à chaque
+## entrée en run (cf. CombatArena._apply_hub_items), ce qui effaçait les CS
+## achetées — c'était le bug « la touche A ne fait rien ».
+var owned_cs: Array[String] = []
+
 
 func owns_cs(cs_id: String) -> bool:
-	return cs_id in owned_items
+	return cs_id in owned_cs
+
+
+func buy_cs(cs_id: String, price: int) -> bool:
+	if owns_cs(cs_id) or not spend_gold(price):
+		return false
+	owned_cs.append(cs_id)
+	return true
 
 
 ## Assigne `cs_id` au Pokémon `pid` — un Pokémon ne peut tenir qu'une seule
@@ -129,6 +209,36 @@ func unlock_pokemon(id: int) -> void:
 		unlocked_pokemon.append(id)
 
 
+# ── Mode test ───────────────────────────────────────────────────────────
+# Débloque tout pour tester en conditions réelles sans avoir à farmer :
+# roster large, toutes les CS, emplacements/équipe au max, Baies à gogo,
+# aimant à baies. Déclenché par le bouton « MODE TEST » de l'accueil.
+const TEST_ROSTER: Array[int] = [
+	25, 6, 9, 3, 448, 445, 282, 260, 65, 94,   # Pikachu, Dracaufeu, Tortank, Florizarre, Lucario, Carchacrok, Gardevoir, Laggron, Alakazam, Ectoplasma
+	149, 130, 143, 248, 461, 212, 373, 359, 197, 468,  # Dracolosse, Léviator, Ronflex, Tyranocif, Dimoret, Cizayox, Drattak, Absol, Noctali, Togekiss
+]
+
+func enable_test_mode(starter_id: int) -> void:
+	selected_starter_id = starter_id
+	for pid in TEST_ROSTER:
+		unlock_pokemon(pid)
+	unlock_pokemon(starter_id)
+	# Équipe de départ : le starter + 3 premiers du roster (distincts)
+	hub_team = [starter_id]
+	for pid in TEST_ROSTER:
+		if pid != starter_id and hub_team.size() < 4:
+			hub_team.append(pid)
+	# Toutes les CS + monnaie + emplacements max
+	for cs: Dictionary in CS_CATALOG:
+		if cs["id"] not in owned_cs:
+			owned_cs.append(cs["id"])
+	gold             = 9999
+	move_slot_count  = 4
+	team_slot_count  = 6
+	berry_magnet     = true
+	is_first_run     = false
+
+
 # ── Déblocage par victoires cumulées ────────────────────────────────────
 const UNLOCK_DEFEAT_THRESHOLD := 20
 
@@ -149,6 +259,21 @@ func record_defeat(pid: int, is_base_form: bool = true) -> bool:
 		return true
 	return false
 
+## Pokédollars (₽) — monnaie DE RUN : gagnée en libérant des salles,
+## dépensée dans la boutique de fin de salle, remise à zéro à chaque départ
+## de run. La monnaie PERSISTANTE du hub est `gold`, affichée "Baies".
+var run_money: int = 0
+
+func add_run_money(amount: int) -> void:
+	run_money = max(0, run_money + amount)
+
+func spend_run_money(amount: int) -> bool:
+	if run_money < amount:
+		return false
+	run_money -= amount
+	return true
+
+
 func add_gold(amount: int) -> void:
 	gold = max(0, gold + amount)
 
@@ -162,3 +287,15 @@ func get_run_team() -> Array[int]:
 	if hub_team.is_empty():
 		return [selected_starter_id]
 	return hub_team
+
+
+## Niveau + forme de DÉPART d'un Pokémon d'équipe, une fois appliqués les
+## Super Bonbons (niveaux bonus) puis la chaîne d'évolution jusqu'au niveau
+## atteint. Retourne {"base": pid, "id": forme finale, "level": niveau}.
+## `base` reste l'id original (clé de pokemon_item pour l'objet tenu).
+func get_effective_start(pid: int, base_level: int) -> Dictionary:
+	var level := base_level + get_start_level_bonus(pid)
+	var id := pid
+	while EVOLUTIONS.has(id) and level >= int(EVOLUTIONS[id]["level"]):
+		id = int(EVOLUTIONS[id]["evolves_to"])
+	return {"base": pid, "id": id, "level": level}

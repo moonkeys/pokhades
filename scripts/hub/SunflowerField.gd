@@ -1,36 +1,43 @@
 class_name SunflowerField
-extends Node2D
+extends Node3D
 
-# Champ de tournesols animé "vent" — remplace les tiles statiques HubMap
-# Positionner à la tile (col, row) * 16 pour aligner avec la grille
+## Champ de tournesols — vrais meshes 3D du kit nature (fleurs jaunes, même
+## famille d'assets que KitProps.FLOWERS_YELLOW), avec un léger balancement
+## animé.
 
-const COLS := 3
-const ROWS := 3
-const T    := 16.0  # taille d'une tile en pixels
+const WIDTH := 1.1
+const SPREAD := 1.4
+const NATIVE_H := 0.30   # hauteur native approx. des fleurs du kit
 
 var _t: float = 0.0
+var _flowers: Array = []
+
+
+func _ready() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	for i in 3:
+		var file: String = KitProps.FLOWERS_YELLOW[rng.randi() % KitProps.FLOWERS_YELLOW.size()]
+		var offset := Vector3(rng.randf_range(-SPREAD, SPREAD), 0, rng.randf_range(-SPREAD, SPREAD))
+		_spawn_flower(file, offset, rng.randf() * TAU)
+
+
+func _spawn_flower(file: String, local_pos: Vector3, phase: float) -> void:
+	var root := Node3D.new()
+	root.position = local_pos
+	root.set_meta("phase", phase)
+	add_child(root)
+	_flowers.append(root)
+
+	var flower := KitProps.instance(file)
+	flower.scale = Vector3.ONE * (WIDTH / NATIVE_H)
+	root.add_child(flower)
 
 
 func _process(delta: float) -> void:
 	_t += delta
-	queue_redraw()
-
-
-func _draw() -> void:
-	for row in ROWS:
-		for col in COLS:
-			var cx := col * T + T * 0.5
-			var cy := row * T + T * 0.5
-			var phase := float(row * COLS + col) * 0.45
-
-			# Tige verte
-			var sway := sin(_t * 1.6 + phase) * 2.2
-			var stem_top := Vector2(cx + sway, cy - 2)
-			var stem_bot := Vector2(cx, cy + 6)
-			draw_line(stem_bot, stem_top, Color(0.25, 0.55, 0.18), 2.0)
-
-			# Pétales jaunes (couche de mouvement — légèrement transparentes)
-			draw_circle(stem_top, 4.5, Color(0.95, 0.78, 0.08, 0.55))
-
-			# Centre brun
-			draw_circle(stem_top, 2.0, Color(0.40, 0.22, 0.06, 0.70))
+	for f: Node3D in _flowers:
+		if not is_instance_valid(f):
+			continue
+		var phase: float = f.get_meta("phase", 0.0)
+		f.rotation.z = sin(_t * 1.4 + phase) * 0.06

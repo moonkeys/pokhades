@@ -275,9 +275,11 @@ func _gen_chests() -> void:
 			if ga == tile_chemin_terre or ga == tile_dalle_bois: continue
 			candidates.append(cell)
 	candidates.shuffle()
-	var count := mini(2, candidates.size())
-	for i in count:
-		_objects.set_cell(candidates[i], source_id, tile_chest_closed)
+	# Aligné sur MapGenerator._place_chest_gated : 0 ou 1 coffre par zone
+	# (~1 zone sur 3 sans coffre) — jamais plusieurs.
+	if rng.randf() < 0.35 or candidates.is_empty():
+		return
+	_objects.set_cell(candidates[0], source_id, tile_chest_closed)
 
 
 func _clear_exit_gaps() -> void:
@@ -421,6 +423,51 @@ func _build_tall_grass_areas() -> void:
 ## Dimensions réelles de la map en pixels — override dans MapGenerator.
 func get_map_pixel_size() -> Vector2:
 	return Vector2(W * 16, H * 16)
+
+
+# ── Pont 2D → 3D (rendu HD-2D, cf. MapRender3D) ──────────────────────────
+# 1 unité monde 3D = 1 tuile (16 px). La grille/le pathfinding restent en
+# coordonnées de cases ; ces helpers font la conversion pour les acteurs 3D.
+
+func cell_to_world3(cell: Vector2i) -> Vector3:
+	return Vector3(cell.x + 0.5, get_height_at_cell(cell), cell.y + 0.5)
+
+
+func world3_to_cell(pos: Vector3) -> Vector2i:
+	return Vector2i(floori(pos.x), floori(pos.z))
+
+
+## Relief procédural (collines douces) — surchargé dans MapGenerator.
+## Par défaut toujours plat (0.0), utilisé tel quel par l'arène de grotte
+## (volontairement sans relief — terrain stable pour un combat de boss).
+func get_height_at_cell(_cell: Vector2i) -> float:
+	return 0.0
+
+
+## Équivalent continu de get_height_at_cell (interpolé), pour le suivi de
+## relief des acteurs/de la caméra en jeu — surchargé dans MapGenerator.
+func get_height_at_world(_pos: Vector3) -> float:
+	return 0.0
+
+
+func is_valid_spawn_cell(cell: Vector2i) -> bool:
+	return is_valid_spawn(Vector2(cell.x * 16.0 + 8.0, cell.y * 16.0 + 8.0))
+
+
+## Équivalent 3D de get_next_path_point — même grille A*, coordonnées monde 3D.
+func get_next_path_point_3d(from_world: Vector3, to_world: Vector3) -> Vector3:
+	if not is_instance_valid(_astar):
+		return to_world
+	var from_cell := world3_to_cell(from_world)
+	var to_cell   := world3_to_cell(to_world)
+	if not _astar.is_in_boundsv(from_cell) or not _astar.is_in_boundsv(to_cell):
+		return to_world
+	if _astar.is_point_solid(from_cell) or _astar.is_point_solid(to_cell):
+		return to_world
+	var ids: Array = _astar.get_id_path(from_cell, to_cell)
+	if ids.size() < 2:
+		return to_world
+	return cell_to_world3(ids[1])
 
 
 func is_valid_spawn(world_pos: Vector2) -> bool:

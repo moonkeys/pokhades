@@ -1,23 +1,46 @@
-extends CharacterBody2D
+extends CharacterBody3D
 
-const SPEED        := 150.0
-const ATTACK_RANGE    := 65.0
+## Membre d'équipe en combat — HD-2D (phase 2) : CharacterBody3D + sprite PMD
+## billboardé via Billboard3D, comme HubPlayer. La logique (IA compagnon,
+## attaques, XP, évolution) est inchangée ; seules les coordonnées passent en
+## 3D (plan XZ, 1 unité monde = 1 ancienne tuile de 16 px — toutes les
+## distances/vitesses ci-dessous sont les valeurs 2D divisées par 16).
+
+const SPEED           := 9.4
+const ATTACK_RANGE    := 4.0
 const ATTACK_COOLDOWN := 0.7
-const DISPLAY_SIZE    := 28.0
+const DISPLAY_UNITS   := 1.75   # largeur monde cible du sprite (28 px / 16)
+const FOOT_LIFT        := 0.05
 
-# Projection iso 30° — inverse pour garder les sprites debout (billboard)
-# sin(30°)/cos(30°) = tan(30°) ≈ 0.5774
+# Dash — esquive rapide dans la direction de déplacement (membre contrôlé)
+const DASH_SPEED    := 26.0
+const DASH_TIME     := 0.16
+const DASH_RECHARGE := 2.5   # secondes pour regagner une charge
 
 # IA compagnon
-const AI_SPEED        := 120.0
-const AI_SEEK_RADIUS  := 300.0   # cherche un ennemi dans ce rayon
-const AI_FOLLOW_DIST  := 90.0    # se rapproche du leader si plus loin que ça
-const REPATH_INTERVAL  := 0.4
+const AI_SPEED        := 7.5
+const AI_SEEK_RADIUS  := 18.75  # cherche un ennemi dans ce rayon
+const AI_FOLLOW_DIST  := 5.6    # se rapproche du leader si plus loin que ça
+const REPATH_INTERVAL := 0.4
 
 var pokemon_instance: PokemonInstance
 var team_index: int  = 0
 var is_active:  bool = false
-var _leader: Node2D = null        # membre actif à suivre (compagnons seulement)
+var _leader: Node3D = null        # membre actif à suivre (compagnons seulement)
+
+# ── Modificateurs de run (bonus de fin de zone, cf. CombatArena._apply_bonus) ──
+var dash_max_charges: int   = 1     # +1 par bonus "dash_plus"
+var cooldown_mult:    float = 1.0   # ×0.85 par bonus "atk_rate"
+var xp_mult:          float = 1.0   # ×1.25 par bonus "xp_up"
+
+var _dash_charges:  int   = 1
+var _dash_recharge: float = 0.0
+var _dash_timer:    float = 0.0
+var _dash_dir:      Vector3 = Vector3.ZERO
+
+## Verrou d'animation d'action (attaque/dégâts PMD) — tant qu'il court,
+## _update_anim ne reprend pas la main sur l'animation en cours.
+var _action_lock: float = 0.0
 
 var _attack_timer:       float = 0.0
 var _attack_flash:       float = 0.0
@@ -25,11 +48,15 @@ var _current_anim:       String = "idle"
 var _has_directional:    bool = false
 var _evolving:           bool = false
 var _selected_move_idx:  int  = 0   # capacité active (touches 1-4)
+var _sprite_base_pos:    Vector3 = Vector3.ZERO   # position du sprite après ancrage des pieds
 
 # Pathfinding (contournement d'obstacles, mode compagnon)
 var _map:               MapBase = null
 var _path_repath_timer: float   = 0.0
-var _path_waypoint:     Vector2 = Vector2.ZERO
+var _path_waypoint:     Vector3 = Vector3.ZERO
+
+var _range_ring: MeshInstance3D       = null
+var _ring_mat:   StandardMaterial3D   = null
 
 signal hp_changed(ratio: float)
 signal cooldown_changed(ratio: float)
@@ -38,9 +65,22 @@ signal leveled_up(level: int)
 signal evolved(name_fr: String)
 signal portrait_ready(idx: int, texture: Texture2D)
 signal move_selected(idx: int)
+signal dash_changed(charges: int, max_charges: int)
 signal died
 
-@onready var sprite: AnimatedSprite2D = $AnimatedSprite2D
+@onready var sprite: AnimatedSprite3D = $AnimatedSprite3D
+
+
+## ── Multijoueur ───────────────────────────────────────────────────────
+## remote_peer != 0 → ce membre est la copie locale du Pokémon d'un AUTRE
+## joueur : pas d'input ni d'IA, il rejoue l'état diffusé par son
+## propriétaire (position/anim à NET_SEND_HZ, PV en fiable).
+const NET_SEND_HZ := 15.0
+var remote_peer:  int     = 0
+var _net_target:  Vector3 = Vector3.ZERO
+var _net_anim:    String  = "idle"
+var _net_flip:    bool    = false
+var _net_accum:   float   = 0.0
 
 
 func setup(instance: PokemonInstance, idx: int, active: bool) -> void:
@@ -48,16 +88,93 @@ func setup(instance: PokemonInstance, idx: int, active: bool) -> void:
 	pokemon_instance = instance
 	team_index = idx
 	is_active  = active
+	Billboard3D.setup_sprite(sprite)
+	_add_shadow()
+	_build_range_ring()
 	var col := Color(1.0, 0.55, 0.0) if active else Color(0.35, 0.55, 1.0)
 	_add_placeholder(col)
 	PMDSprites.get_walk_sprites(instance.data.id, self, _on_pmd_loaded)
 	_map = get_tree().get_first_node_in_group("combat_map") as MapBase
+	_net_target = global_position
 	if active:
 		_register_move_keys()
 
 
+func _remote_process(delta: float) -> void:
+	var to := _net_target - global_position
+	global_position = global_position.lerp(_net_target, minf(1.0, delta * 12.0))
+	if sprite.sprite_frames != null:
+		var anim := _net_anim if to.length() > 0.06 else "idle"
+		if anim != _current_anim and sprite.sprite_frames.has_animation(anim):
+			_current_anim = anim
+			sprite.play(anim)
+		if not _has_directional:
+			sprite.flip_h = _net_flip
+
+
+## État de mouvement diffusé par le propriétaire — appliqué sur ses copies.
+@rpc("any_peer", "call_remote", "unreliable")
+func _net_state(pos: Vector3, anim: String, flip: bool) -> void:
+	_net_target = pos
+	_net_anim   = anim
+	_net_flip   = flip
+
+
+## PV diffusés par le propriétaire (source de vérité de SON Pokémon) — met
+## à jour la copie locale + le HUD (via hp_changed) + détection de mort.
+@rpc("any_peer", "call_remote", "reliable")
+func _net_hp(hp: int, max_hp_v: int) -> void:
+	pokemon_instance.max_hp     = max_hp_v
+	pokemon_instance.current_hp = hp
+	hp_changed.emit(pokemon_instance.hp_ratio())
+	if hp <= 0:
+		_play_faint_anim()
+
+
+## Dégâts calculés par l'hôte (les ennemis ne vivent que chez lui) et
+## relayés au propriétaire du Pokémon touché — qui les applique pour de
+## vrai puis rediffuse ses PV à tout le monde.
+@rpc("any_peer", "call_remote", "reliable")
+func _net_take_damage(amount: int, source_pos: Vector3) -> void:
+	if remote_peer != 0:
+		return   # seul le propriétaire applique
+	take_damage(amount, source_pos)
+
+
+## Diffuse nos PV après tout changement local (dégâts, soin, level up).
+func net_broadcast_hp() -> void:
+	if Net.in_run and remote_peer == 0:
+		_net_hp.rpc(pokemon_instance.current_hp, pokemon_instance.max_hp)
+
+
+func _add_shadow() -> void:
+	add_child(Billboard3D.make_blob_shadow(Vector2(1.25, 0.7)))
+
+
+## Anneau de portée d'attaque au sol — remplace l'ancien _draw() 2D. Visible
+## seulement pour le membre contrôlé, pulse brièvement à chaque attaque.
+func _build_range_ring() -> void:
+	_range_ring = MeshInstance3D.new()
+	var torus := TorusMesh.new()
+	torus.inner_radius = ATTACK_RANGE - 0.06
+	torus.outer_radius = ATTACK_RANGE + 0.06
+	_range_ring.mesh = torus
+	_range_ring.scale = Vector3(1.0, 0.05, 1.0)   # écrasé : simple trait au sol
+	_range_ring.position.y = 0.03
+	_ring_mat = StandardMaterial3D.new()
+	_ring_mat.albedo_color   = Color(1.0, 0.85, 0.0, 0.18)
+	_ring_mat.transparency    = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_ring_mat.shading_mode    = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_range_ring.material_override = _ring_mat
+	_range_ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(_range_ring)
+
+
 func _register_move_keys() -> void:
-	var keys := [KEY_1, KEY_2, KEY_3, KEY_4]
+	# Deux jeux de touches par capacité : Q/Z/S/D (main gauche, AZERTY) et
+	# 1/2/3/4 — les flèches gardent le déplacement.
+	var keys      := [KEY_1, KEY_2, KEY_3, KEY_4]
+	var keys_alt  := [KEY_Q, KEY_Z, KEY_S, KEY_D]
 	for i in 4:
 		var action := "use_move_%d" % (i + 1)
 		if not InputMap.has_action(action):
@@ -65,15 +182,28 @@ func _register_move_keys() -> void:
 			var ev := InputEventKey.new()
 			ev.keycode = keys[i]
 			InputMap.action_add_event(action, ev)
+			var ev_alt := InputEventKey.new()
+			ev_alt.keycode = keys_alt[i]
+			InputMap.action_add_event(action, ev_alt)
+
+	if not InputMap.has_action("dash"):
+		InputMap.add_action("dash")
+		var ev_dash := InputEventKey.new()
+		ev_dash.keycode = KEY_SHIFT
+		InputMap.action_add_event("dash", ev_dash)
 
 
 func _add_placeholder(color: Color) -> void:
-	var rect := ColorRect.new()
-	rect.size = Vector2(32, 32)
-	rect.position = Vector2(-16, -16)
-	rect.color = color
-	rect.name = "Placeholder"
-	add_child(rect)
+	var mi := MeshInstance3D.new()
+	var box := BoxMesh.new()
+	box.size = Vector3(0.9, 0.9, 0.2)
+	mi.mesh = box
+	mi.position = Vector3(0, 0.45, 0)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mi.material_override = mat
+	mi.name = "Placeholder"
+	add_child(mi)
 
 
 func _on_pmd_loaded(result: Dictionary) -> void:
@@ -82,12 +212,21 @@ func _on_pmd_loaded(result: Dictionary) -> void:
 		return
 	_has_directional = true
 	sprite.sprite_frames = result.frames
-	var s := DISPLAY_SIZE / float(max(result.frame_size.x, 1))
-	sprite.transform = _billboard_tf(s)
+	_apply_sprite_scale(result)
 	sprite.play("idle")
 	_remove_placeholder()
 	if result.frames.has_animation("walk_down") and result.frames.get_frame_count("walk_down") > 0:
 		portrait_ready.emit(team_index, result.frames.get_frame_texture("walk_down", 0))
+
+
+## Dimensionne le sprite pour occuper DISPLAY_UNITS de large (équivalent du
+## scale 2D DISPLAY_SIZE/frame_w) et ancre les pieds au sol.
+func _apply_sprite_scale(result: Dictionary) -> void:
+	var frame_size: Vector2i = result.get("frame_size", Vector2i(32, 40))
+	var ps := DISPLAY_UNITS / float(maxi(frame_size.x, 1))
+	sprite.pixel_size = ps
+	Billboard3D.align_feet(sprite, result, FOOT_LIFT, ps)
+	_sprite_base_pos = sprite.position
 
 
 func _load_fallback_sprite(url: String) -> void:
@@ -108,8 +247,10 @@ func _load_fallback_sprite(url: String) -> void:
 					frames.set_animation_loop(anim, true)
 					frames.add_frame(anim, tex)
 				sprite.sprite_frames = frames
-				var s := DISPLAY_SIZE / float(max(img.get_width(), img.get_height()))
-				sprite.transform = _billboard_tf(s)
+				var ps := DISPLAY_UNITS / float(maxi(maxi(img.get_width(), img.get_height()), 1))
+				sprite.pixel_size = ps
+				sprite.position.y = img.get_height() * ps * 0.5   # sprite centré → pieds ~au sol
+				_sprite_base_pos = sprite.position
 				sprite.play("idle")
 				_remove_placeholder()
 				portrait_ready.emit(team_index, tex)
@@ -124,57 +265,134 @@ func _remove_placeholder() -> void:
 		ph.queue_free()
 
 
-func _billboard_tf(s: float) -> Transform2D:
-	return Transform2D(Vector2(s, 0), Vector2(0, s), Vector2.ZERO)
-
-
-func _draw() -> void:
-	if not is_active:
-		return
-	draw_circle(Vector2.ZERO, ATTACK_RANGE, Color(1.0, 0.9, 0.0, 0.03 + _attack_flash * 0.10))
-	draw_arc(Vector2.ZERO, ATTACK_RANGE, 0.0, TAU, 48, Color(1.0, 0.85, 0.0, 0.18 + _attack_flash * 0.55), 2.0)
-
-
 func _physics_process(delta: float) -> void:
 	if not is_instance_valid(pokemon_instance) or pokemon_instance.is_fainted():
 		return
 
+	# Copie d'un joueur distant (multijoueur) : pas d'IA ni de statut local —
+	# on suit simplement l'état diffusé par son propriétaire.
+	if remote_peer != 0:
+		_remote_process(delta)
+		return
+
 	_attack_timer = max(0.0, _attack_timer - delta)
 	_attack_flash = max(0.0, _attack_flash - delta * 4.0)
-	queue_redraw()
+	_action_lock  = max(0.0, _action_lock - delta)
+	_update_range_ring()
+
+	# Diffusion de notre état aux autres joueurs (membre contrôlé localement)
+	if is_active and Net.in_run:
+		_net_accum += delta
+		if _net_accum >= 1.0 / NET_SEND_HZ:
+			_net_accum = 0.0
+			_net_state.rpc(global_position, _current_anim, sprite.flip_h)
+
+	# Recharge des dashs (chaque membre garde ses charges, actif ou non)
+	if _dash_charges < dash_max_charges:
+		_dash_recharge += delta
+		if _dash_recharge >= DASH_RECHARGE:
+			_dash_recharge = 0.0
+			_dash_charges += 1
+			dash_changed.emit(_dash_charges, dash_max_charges)
+	if _dash_timer > 0.0:
+		_dash_timer -= delta
+
+	# Altération de statut : dégâts sur la durée + blocage (sommeil/gel)
+	if _tick_status(delta):
+		return   # bloqué cette frame — pas d'action
 
 	if is_active:
 		_player_process()
-		cooldown_changed.emit(1.0 - (_attack_timer / ATTACK_COOLDOWN))
+		cooldown_changed.emit(1.0 - (_attack_timer / (ATTACK_COOLDOWN * cooldown_mult)))
 	else:
 		_companion_process(delta)
+
+
+var _status_icon: Label3D = null
+var _status_shown: String = ""
+
+## Applique le statut courant : dégâts périodiques, gestion du logo flottant.
+## Retourne true si le Pokémon est bloqué (sommeil/gel) → pas d'action.
+func _tick_status(delta: float) -> bool:
+	var inst := pokemon_instance
+	var dot := inst.tick_status(delta)
+	if dot > 0:
+		inst.take_damage(dot)
+		hp_changed.emit(inst.hp_ratio())
+		CombatVFX.spawn_damage_number(get_parent(), global_position, dot, "player")
+		if inst.is_fainted():
+			_play_faint_anim()
+			return true
+
+	# Logo flottant synchronisé avec l'état courant
+	if inst.status != _status_shown:
+		_status_shown = inst.status
+		if is_instance_valid(_status_icon):
+			_status_icon.queue_free()
+			_status_icon = null
+		if inst.status != "":
+			_status_icon = StatusFx.make_icon(inst.status)
+			_status_icon.position = Vector3(0, 2.5, 0)
+			add_child(_status_icon)
+
+	return not inst.status_can_act()
+
+
+func _update_range_ring() -> void:
+	if not is_instance_valid(_range_ring):
+		return
+	_range_ring.visible = is_active
+	if is_active:
+		_ring_mat.albedo_color = Color(1.0, 0.85, 0.0, 0.16 + _attack_flash * 0.45)
 
 
 # ── Mode joueur ───────────────────────────────────────────────────────
 
 func _player_process() -> void:
-	# Sélection de capacité 1-4
+	# Capacités 1-4 : chaque touche LANCE directement sa capacité (et la
+	# garde sélectionnée pour l'auto-attaque qui suit)
 	for i in 4:
 		if Input.is_action_just_pressed("use_move_%d" % (i + 1)):
 			if i < pokemon_instance.equipped_moves.size():
 				_selected_move_idx = i
 				move_selected.emit(_selected_move_idx)
+				if _attack_timer <= 0.0 and not _evolving:
+					_attack()
 			break
 
-	var dir := Vector2(
+	var dir := Vector3(
 		Input.get_axis("ui_left", "ui_right"),
+		0.0,
 		Input.get_axis("ui_up", "ui_down")
-	).normalized()
+	)
+	if dir.length() > 1.0:
+		dir = dir.normalized()
 
-	velocity = dir * SPEED
-	_update_anim(dir)
+	# Dash — burst de vitesse dans la direction courante, consomme une charge
+	if Input.is_action_just_pressed("dash") and _dash_charges > 0 \
+			and dir.length() > 0.1 and _dash_timer <= 0.0:
+		_dash_charges -= 1
+		_dash_timer = DASH_TIME
+		_dash_dir = dir.normalized()
+		dash_changed.emit(_dash_charges, dash_max_charges)
+		Sfx.play("dash", -6.0)
+		sprite.modulate = Color(1.7, 1.7, 2.2)   # flash bleuté pendant l'esquive
+		get_tree().create_timer(DASH_TIME + 0.05).timeout.connect(func():
+			if is_instance_valid(self) and not _evolving:
+				sprite.modulate = Color.WHITE
+		)
+
+	if _dash_timer > 0.0:
+		velocity = _dash_dir * DASH_SPEED
+	else:
+		velocity = dir * SPEED * pokemon_instance.status_speed_mult()   # paralysie = ralenti
+	_update_anim(Vector2(dir.x, dir.z))
 	move_and_slide()
+	_snap_to_ground()
 
-	if _attack_timer <= 0.0 and not _evolving:
-		if Input.is_action_pressed("ui_accept"):
-			_attack()
-		else:
-			_try_auto_attack()
+	# Plus d'attaque automatique : le membre contrôlé n'attaque que sur
+	# pression de touche (Q/Z/S/D ou 1-4) — le cooldown limite le spam.
+	# Les compagnons IA, eux, attaquent toujours seuls (cf. _companion_process).
 
 
 # ── IA compagnon ──────────────────────────────────────────────────────
@@ -185,35 +403,45 @@ func _companion_process(delta: float) -> void:
 	if nearest:
 		var dist := global_position.distance_to(nearest.global_position)
 		if dist <= ATTACK_RANGE:
-			velocity = Vector2.ZERO
+			velocity = Vector3.ZERO
 			_update_anim(Vector2.ZERO)
 			if _attack_timer <= 0.0 and not _evolving:
 				_attack()
 		else:
-			var steer_pos := _get_steer_target(nearest.global_position, delta)
-			var dir := (steer_pos - global_position).normalized()
-			velocity = dir * AI_SPEED
-			_update_anim(dir)
-			move_and_slide()
+			_steer_toward(nearest.global_position, delta)
 	elif is_instance_valid(_leader):
 		var dist_leader := global_position.distance_to(_leader.global_position)
 		if dist_leader > AI_FOLLOW_DIST:
-			var steer_pos := _get_steer_target(_leader.global_position, delta)
-			var dir := (steer_pos - global_position).normalized()
-			velocity = dir * AI_SPEED
-			_update_anim(dir)
-			move_and_slide()
+			_steer_toward(_leader.global_position, delta)
 		else:
-			velocity = Vector2.ZERO
+			velocity = Vector3.ZERO
 			_update_anim(Vector2.ZERO)
 	else:
-		velocity = Vector2.ZERO
+		velocity = Vector3.ZERO
 		_update_anim(Vector2.ZERO)
+
+
+func _steer_toward(target_pos: Vector3, delta: float) -> void:
+	var steer_pos := _get_steer_target(target_pos, delta)
+	var dir := (steer_pos - global_position)
+	dir.y = 0.0
+	dir = dir.normalized()
+	velocity = dir * AI_SPEED * pokemon_instance.status_speed_mult()
+	_update_anim(Vector2(dir.x, dir.z))
+	move_and_slide()
+	_snap_to_ground()
+
+
+## Colle le personnage au relief procédural (collines douces) sous ses pieds
+## — la map reste plate par défaut (arène) donc ce suivi ne fait rien de
+## visible en dehors des maps normales.
+func _snap_to_ground() -> void:
+	position.y = _map.get_height_at_world(global_position) if is_instance_valid(_map) else 0.0
 
 
 ## Renvoie le point vers lequel diriger le compagnon : ligne droite si la vue
 ## est dégagée, sinon le prochain point de détour via la grille A* de la map.
-func _get_steer_target(target_pos: Vector2, delta: float) -> Vector2:
+func _get_steer_target(target_pos: Vector3, delta: float) -> Vector3:
 	_path_repath_timer -= delta
 	if _has_clear_line_of_sight(target_pos):
 		_path_repath_timer = 0.0
@@ -224,25 +452,26 @@ func _get_steer_target(target_pos: Vector2, delta: float) -> Vector2:
 
 	if _path_repath_timer <= 0.0:
 		_path_repath_timer = REPATH_INTERVAL
-		_path_waypoint = _map.get_next_path_point(global_position, target_pos)
+		_path_waypoint = _map.get_next_path_point_3d(global_position, target_pos)
 
-	if global_position.distance_to(_path_waypoint) < 10.0:
+	if global_position.distance_to(_path_waypoint) < 0.6:
 		return target_pos
 
 	return _path_waypoint
 
 
-func _has_clear_line_of_sight(target_pos: Vector2) -> bool:
-	var space := get_world_2d().direct_space_state
-	var query := PhysicsRayQueryParameters2D.create(global_position, target_pos)
+func _has_clear_line_of_sight(target_pos: Vector3) -> bool:
+	var space := get_world_3d().direct_space_state
+	var lift := Vector3(0, 0.5, 0)   # rayon à mi-hauteur, au-dessus du sol
+	var query := PhysicsRayQueryParameters3D.create(global_position + lift, target_pos + lift)
 	query.collision_mask = 1
-	query.exclude        = [self]
+	query.exclude        = [get_rid()]
 	var result := space.intersect_ray(query)
 	return result.is_empty()
 
 
-func _nearest_enemy(max_dist: float) -> CharacterBody2D:
-	var nearest: CharacterBody2D = null
+func _nearest_enemy(max_dist: float) -> CharacterBody3D:
+	var nearest: CharacterBody3D = null
 	var min_d := max_dist
 	for enemy in get_tree().get_nodes_in_group("enemies"):
 		if not is_instance_valid(enemy):
@@ -259,20 +488,9 @@ func _nearest_enemy(max_dist: float) -> CharacterBody2D:
 func _update_anim(dir: Vector2) -> void:
 	if not sprite.sprite_frames or _evolving:
 		return
-	var anim: String
-	if dir.length() < 0.1:
-		anim = "idle"
-	else:
-		var sector := int(round(fposmod(dir.angle(), TAU) / (TAU / 8.0))) % 8
-		match sector:
-			0: anim = "walk_right"
-			1: anim = "walk_downright"
-			2: anim = "walk_down"
-			3: anim = "walk_downleft"
-			4: anim = "walk_left"
-			5: anim = "walk_upleft"
-			6: anim = "walk_up"
-			_: anim = "walk_upright"
+	if _action_lock > 0.0:
+		return   # une animation d'attaque/dégâts est en cours
+	var anim := Billboard3D.dir_to_anim(dir)
 
 	if not _has_directional and dir.x != 0:
 		sprite.flip_h = dir.x < 0
@@ -283,19 +501,42 @@ func _update_anim(dir: Vector2) -> void:
 			sprite.play(anim)
 
 
+## Joue la première animation d'action PMD disponible parmi `prefixes`
+## (chaîne de repli, ex ["shoot","charge","attack"]), orientée vers `dir`
+## (Vector2 XZ, ZERO = garder l'orientation courante) — no-op si aucune
+## feuille ne la fournit (le lunge/flash existants restent).
+func _play_action_anim(prefixes: Array, dir: Vector2, lock: float) -> void:
+	if not sprite.sprite_frames or _evolving:
+		return
+	var suffix := _facing_suffix() if dir.length() < 0.1 else \
+		Billboard3D.dir_to_anim(dir).trim_prefix("walk_")
+	for prefix: String in prefixes:
+		var anim := "%s_%s" % [prefix, suffix]
+		if sprite.sprite_frames.has_animation(anim) \
+				and sprite.sprite_frames.get_frame_count(anim) > 0:
+			_action_lock  = lock
+			_current_anim = anim
+			sprite.play(anim)
+			return
+
+
+## Suffixe directionnel de l'animation courante ("walk_downright" → "downright").
+func _facing_suffix() -> String:
+	for s in ["downright", "downleft", "upright", "upleft", "down", "up", "left", "right"]:
+		if _current_anim.ends_with(s):
+			return s
+	return "down"
+
+
 # ── Attaque ───────────────────────────────────────────────────────────
-
-func _try_auto_attack() -> void:
-	if _nearest_enemy(ATTACK_RANGE):
-		_attack()
-
 
 func _attack() -> void:
 	_attack_flash = 1.0
-	_attack_timer = ATTACK_COOLDOWN
+	_attack_timer = ATTACK_COOLDOWN * cooldown_mult
 
 	var move_type:  String
 	var move_power: int
+	var move_class: String = "physical"
 	var moves: Array = pokemon_instance.equipped_moves
 	if not moves.is_empty():
 		var idx  := clampi(_selected_move_idx, 0, moves.size() - 1)
@@ -303,6 +544,7 @@ func _attack() -> void:
 		if move and move.power > 0:
 			move_type  = move.type
 			move_power = move.power
+			move_class = move.damage_class
 		else:
 			move_type  = pokemon_instance.get_attack_type()
 			move_power = pokemon_instance.get_attack_power()
@@ -310,20 +552,55 @@ func _attack() -> void:
 		move_type  = pokemon_instance.get_attack_type()
 		move_power = pokemon_instance.get_attack_power()
 
-	var lunge_pos := Vector2.ZERO
+	# Attaque spéciale → anim de projection PMD si la feuille existe
+	# (chaîne de repli : Shoot → Charge → Attack)
+	var anim_prefixes: Array = ["shoot", "charge", "attack"] if move_class == "special" else ["attack"]
+
+	var lunge_pos := Vector3.ZERO
 	var hit_count := 0
 	for enemy in get_tree().get_nodes_in_group("enemies"):
 		if not is_instance_valid(enemy):
 			continue
 		if global_position.distance_to(enemy.global_position) <= ATTACK_RANGE:
 			var dmg := DamageCalculator.calculate(pokemon_instance, enemy.pokemon_instance, move_power, move_type)
-			enemy.take_damage(dmg)
+			enemy.take_damage(dmg, global_position, CombatVFX.type_color(move_type))
+			# Animation d'attaque Essentials (planche du type) jouée sur la cible
+			AttackAnim.play(get_parent(), enemy.global_position, move_type)
+			# Chance d'infliger un statut selon le type de l'attaque
+			var st := StatusFx.roll(move_type)
+			if st != "":
+				enemy.pokemon_instance.apply_status(st, StatusFx.duration(st))
+			# Chiffre de dégâts coloré selon l'efficacité de type — le retour
+			# visuel apprend au joueur les matchups sans ouvrir de menu.
+			var mult := DamageCalculator.type_multiplier(move_type, enemy.pokemon_instance.data.types)
+			CombatVFX.spawn_damage_number(get_parent(), enemy.global_position, dmg,
+				CombatVFX.kind_from_multiplier(mult))
 			lunge_pos += enemy.global_position
 			hit_count += 1
 
+	# Les attaques cassent aussi les arbres à baies à portée (récolte de Baies)
+	for tree in get_tree().get_nodes_in_group("berry_trees"):
+		if not is_instance_valid(tree):
+			continue
+		if global_position.distance_to(tree.global_position) <= ATTACK_RANGE:
+			tree.take_hit(global_position)
+			if hit_count == 0:
+				lunge_pos += tree.global_position
+				hit_count += 1
+
+	# … et les décors cassables (souches, rondins, champignons — cosmétique)
+	for prop in get_tree().get_nodes_in_group("breakables"):
+		if not is_instance_valid(prop):
+			continue
+		if global_position.distance_to(prop.global_position) <= ATTACK_RANGE:
+			prop.take_hit(global_position)
+			if hit_count == 0:
+				lunge_pos += prop.global_position
+				hit_count += 1
+
 	if not _evolving:
 		if hit_count > 0:
-			_play_attack_lunge(lunge_pos / hit_count)
+			_play_attack_lunge(lunge_pos / hit_count, anim_prefixes)
 		else:
 			sprite.modulate = Color(2.2, 2.2, 2.2)
 			get_tree().create_timer(0.1).timeout.connect(func():
@@ -332,12 +609,14 @@ func _attack() -> void:
 			)
 
 
-func _play_attack_lunge(target_pos: Vector2) -> void:
-	var dir := (target_pos - global_position).normalized()
-	var offset := dir * 14.0
+func _play_attack_lunge(target_pos: Vector3, anim_prefixes: Array = ["attack"]) -> void:
+	var dir := (target_pos - global_position)
+	dir.y = 0.0
+	dir = dir.normalized()
+	_play_action_anim(anim_prefixes, Vector2(dir.x, dir.z), 0.4)
 	var tw := create_tween()
-	tw.tween_property(sprite, "position", offset, 0.07).set_ease(Tween.EASE_OUT)
-	tw.tween_property(sprite, "position", Vector2.ZERO, 0.14).set_ease(Tween.EASE_IN)
+	tw.tween_property(sprite, "position", _sprite_base_pos + dir * 0.9, 0.07).set_ease(Tween.EASE_OUT)
+	tw.tween_property(sprite, "position", _sprite_base_pos, 0.14).set_ease(Tween.EASE_IN)
 	sprite.modulate = Color(2.2, 2.2, 2.2)
 	get_tree().create_timer(0.1).timeout.connect(func():
 		if is_instance_valid(self) and not _evolving:
@@ -345,14 +624,34 @@ func _play_attack_lunge(target_pos: Vector2) -> void:
 	)
 
 
-func take_damage(amount: int) -> void:
+func take_damage(amount: int, source_pos: Vector3 = Vector3(INF, INF, INF)) -> void:
+	# Multijoueur : les ennemis (hôte) frappent la COPIE locale d'un joueur
+	# distant → on relaie au propriétaire, qui applique et rediffuse ses PV.
+	if remote_peer != 0:
+		if multiplayer.is_server():
+			_net_take_damage.rpc_id(remote_peer, amount, source_pos)
+		return
 	pokemon_instance.take_damage(amount)
+	net_broadcast_hp()
 	if not _evolving:
+		_play_action_anim(["hurt"], Vector2.ZERO, 0.3)
+		Sfx.play("hurt", 0.0 if is_active else -6.0)
 		sprite.modulate = Color(2.0, 0.3, 0.3)
 		get_tree().create_timer(0.15).timeout.connect(func():
 			if is_instance_valid(self) and not _evolving:
 				sprite.modulate = Color.WHITE
 		)
+		# Étincelle d'impact orientée vers l'agresseur (teinte "dégâts subis")
+		var dir := Vector3.ZERO
+		if source_pos.x != INF:
+			dir = global_position - source_pos
+			dir.y = 0.0
+			dir = dir.normalized() if dir.length() > 0.01 else Vector3.ZERO
+		CombatVFX.spawn_impact(get_parent(), global_position + Vector3(0, 0.6, 0) - dir * 0.35,
+			Color(1.0, 0.42, 0.35))
+		# Hit-pause seulement quand le Pokémon CONTRÔLÉ encaisse (le coup se sent)
+		if is_active:
+			get_tree().call_group("combat_arena", "request_hitstop", 0.05)
 	hp_changed.emit(pokemon_instance.hp_ratio())
 	if pokemon_instance.is_fainted():
 		_play_faint_anim()
@@ -361,18 +660,36 @@ func take_damage(amount: int) -> void:
 func _play_faint_anim() -> void:
 	set_physics_process(false)
 	remove_from_group("players")
+	if is_instance_valid(_range_ring):
+		_range_ring.visible = false
+	CombatVFX.spawn_death_poof(get_parent(), global_position, Color(0.95, 0.55, 0.50))
 	var tw := create_tween().set_parallel(true)
 	tw.tween_property(sprite, "modulate", Color(0.9, 0.3, 0.3, 0.0), 0.55).set_ease(Tween.EASE_IN)
-	tw.tween_property(sprite, "position", Vector2(0.0, 18.0), 0.4).set_ease(Tween.EASE_IN)
+	tw.tween_property(sprite, "position", _sprite_base_pos + Vector3(0, -0.4, 0), 0.4).set_ease(Tween.EASE_IN)
 	tw.chain().tween_callback(func() -> void: died.emit())
+
+
+## Ranime un membre K.O. (bonus de fin de zone "revive") — restaure les PV
+## au pourcentage donné et réactive le membre là où il est tombé.
+func revive(hp_pct: float) -> void:
+	if not is_instance_valid(pokemon_instance) or not pokemon_instance.is_fainted():
+		return
+	pokemon_instance.current_hp = maxi(1, int(pokemon_instance.max_hp * hp_pct))
+	add_to_group("players")
+	set_physics_process(true)
+	sprite.modulate = Color.WHITE
+	sprite.position = _sprite_base_pos
+	hp_changed.emit(pokemon_instance.hp_ratio())
+	CombatVFX.spawn_death_poof(get_parent(), global_position, Color(0.55, 1.0, 0.60))
 
 
 # ── XP & Évolution ───────────────────────────────────────────────────
 
 func gain_xp(amount: int) -> void:
-	var leveled := pokemon_instance.add_xp(amount)
+	var leveled := pokemon_instance.add_xp(maxi(1, int(amount * xp_mult)))
 	xp_changed.emit(pokemon_instance.xp_ratio(), pokemon_instance.level)
 	if leveled:
+		Sfx.play("levelup", -3.0)
 		leveled_up.emit(pokemon_instance.level)
 		hp_changed.emit(pokemon_instance.hp_ratio())
 		_check_evolution()
@@ -412,8 +729,7 @@ func _start_evolution(new_id: int) -> void:
 			if not result.is_empty():
 				_has_directional = true
 				sprite.sprite_frames = result.frames
-				var s := DISPLAY_SIZE / float(max(result.frame_size.x, 1))
-				sprite.transform = _billboard_tf(s)
+				_apply_sprite_scale(result)
 				if result.frames.has_animation("walk_down") and result.frames.get_frame_count("walk_down") > 0:
 					portrait_ready.emit(team_index, result.frames.get_frame_texture("walk_down", 0))
 			else:

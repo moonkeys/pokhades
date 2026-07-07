@@ -1,44 +1,51 @@
 class_name HubPlayer
-extends CharacterBody2D
+extends CharacterBody3D
 
-const SPEED        := 130.0
-const DISPLAY_SIZE := 32.0
+# Vitesse + dash ALIGNÉS sur le combat (TeamMember) : le Hub et l'arène
+# partagent la même base de déplacement. Le dash à charges remplace l'ancien
+# sprint maintenu.
+const SPEED         := 9.4    # unités/s (cf. TeamMember.SPEED)
+const DASH_SPEED    := 26.0
+const DASH_TIME     := 0.16
+const DASH_RECHARGE := 2.5    # secondes pour regagner une charge
+const DASH_MAX      := 1
+const FOOT_LIFT     := 0.06
 
-var _sprite:    AnimatedSprite2D = null
-var _anim:      String = "idle"
-var _has_dirs:  bool   = false
+var _sprite:   AnimatedSprite3D = null
+var _anim:     String = "idle"
+var _has_dirs: bool   = false
+
+# Dash (esquive/burst) — même logique qu'en combat
+var _dash_charges:  int     = DASH_MAX
+var _dash_recharge: float   = 0.0
+var _dash_timer:    float   = 0.0
+var _dash_dir:      Vector3 = Vector3.ZERO
+
+## Relief du hub (HubMap) — assigné par HubWorld pour coller le joueur aux
+## collines douces. Null = sol plat (comportement d'origine).
+var terrain: Node3D = null
 
 
 func _ready() -> void:
-	# Hitbox joueur
-	collision_layer = 2
-	collision_mask  = 1   # collide avec les murs (layer 1 = static world)
-	var cs := CollisionShape2D.new()
-	var sh := CapsuleShape2D.new()
-	sh.radius = 8.0
-	sh.height = 18.0
-	cs.position = Vector2(0, 4)
-	cs.shape    = sh
+	# Action "dash" (Maj) — enregistrée paresseusement comme en combat, pour
+	# que le Hub fonctionne même sans être passé par une arène auparavant.
+	if not InputMap.has_action("dash"):
+		InputMap.add_action("dash")
+		var ev_dash := InputEventKey.new()
+		ev_dash.keycode = KEY_SHIFT
+		InputMap.action_add_event("dash", ev_dash)
+
+	var cs := CollisionShape3D.new()
+	var shape := CapsuleShape3D.new()
+	shape.radius = 0.28
+	shape.height = 1.1
+	cs.shape    = shape
+	cs.position = Vector3(0, 0.55, 0)
 	add_child(cs)
 
-	# Ombre
-	var shadow := ColorRect.new()
-	shadow.name     = "Shadow"
-	shadow.size     = Vector2(32, 12)
-	shadow.position = Vector2(-16, 6)
-	shadow.color    = Color(0, 0, 0, 0.22)
-	add_child(shadow)
-
-	_sprite = AnimatedSprite2D.new()
+	_sprite = AnimatedSprite3D.new()
+	Billboard3D.setup_sprite(_sprite)
 	add_child(_sprite)
-
-	# Placeholder
-	var ph := ColorRect.new()
-	ph.name     = "Placeholder"
-	ph.size     = Vector2(32, 40)
-	ph.position = Vector2(-16, -36)
-	ph.color    = Color(1.0, 0.55, 0.0)
-	add_child(ph)
 
 	var pid := GameManager.selected_starter_id
 	if pid > 0:
@@ -46,58 +53,72 @@ func _ready() -> void:
 
 
 func _on_sprites(result: Dictionary) -> void:
-	if result.is_empty():
+	if result.is_empty() or not is_instance_valid(_sprite):
 		return
 	_sprite.sprite_frames = result.frames
-	var s := DISPLAY_SIZE / float(max(result.frame_size.x, 1))
-	_sprite.scale = Vector2(s, s)
+	# Même taille qu'en combat (1,75 u) pour un zoom cohérent entre les modes
+	Billboard3D.size_to_width(_sprite, result, Billboard3D.CHAR_WIDTH, FOOT_LIFT)
 	_has_dirs = true
 	_sprite.play("idle")
-	var ph := get_node_or_null("Placeholder")
-	if ph:
-		ph.queue_free()
 
 
 func move_tick(delta: float, blocked: bool) -> void:
+	# Recharge du dash même à l'arrêt / en dialogue (comme en combat)
+	if _dash_charges < DASH_MAX:
+		_dash_recharge += delta
+		if _dash_recharge >= DASH_RECHARGE:
+			_dash_recharge = 0.0
+			_dash_charges += 1
+	if _dash_timer > 0.0:
+		_dash_timer -= delta
+
 	if blocked:
-		velocity = Vector2.ZERO
+		velocity = Vector3.ZERO
 		if is_instance_valid(_sprite) and _sprite.sprite_frames:
 			if _sprite.sprite_frames.has_animation("idle") and _sprite.animation != "idle":
 				_sprite.play("idle")
 		return
 
-	var dir := Vector2(
+	var dir := Vector3(
 		Input.get_axis("ui_left", "ui_right"),
-		Input.get_axis("ui_up",   "ui_down")
-	).normalized()
+		0.0,
+		Input.get_axis("ui_up", "ui_down")
+	)
+	if dir.length() > 1.0:
+		dir = dir.normalized()
 
-	velocity = dir * SPEED
+	# Dash — burst dans la direction courante, consomme une charge (cf. combat)
+	if Input.is_action_just_pressed("dash") and _dash_charges > 0 \
+			and dir.length() > 0.1 and _dash_timer <= 0.0:
+		_dash_charges -= 1
+		_dash_timer = DASH_TIME
+		_dash_dir   = dir.normalized()
+		Sfx.play("dash", -6.0)
+		if is_instance_valid(_sprite):
+			_sprite.modulate = Color(1.7, 1.7, 2.2)   # flash bleuté pendant l'esquive
+			get_tree().create_timer(DASH_TIME + 0.05).timeout.connect(func() -> void:
+				if is_instance_valid(_sprite):
+					_sprite.modulate = Color.WHITE
+			)
+
+	if _dash_timer > 0.0:
+		velocity = _dash_dir * DASH_SPEED
+	else:
+		velocity = dir * SPEED
 	move_and_slide()
-	_update_anim(dir)
+	position.y = terrain.get_height_at_world(global_position) if is_instance_valid(terrain) else 0.0
+	_update_anim(Vector2(dir.x, dir.z))
 
 
 func _update_anim(dir: Vector2) -> void:
 	if not is_instance_valid(_sprite) or not _sprite.sprite_frames:
 		return
 
-	var target: String
-	if dir.length() < 0.05:
-		target = "idle"
-	elif not _has_dirs:
+	var target := Billboard3D.dir_to_anim(dir)
+	if not _has_dirs and target != "idle":
+		# Fallback avant chargement complet des directions (rarement atteint,
+		# les sprites sont en cache disque la plupart du temps).
 		target = "walk_down" if dir.y >= 0 else "walk_up"
-		if is_instance_valid(_sprite):
-			_sprite.flip_h = dir.x < 0
-	else:
-		var sector := int(round(fposmod(dir.angle(), TAU) / (TAU / 8.0))) % 8
-		match sector:
-			0: target = "walk_right"
-			1: target = "walk_downright"
-			2: target = "walk_down"
-			3: target = "walk_downleft"
-			4: target = "walk_left"
-			5: target = "walk_upleft"
-			6: target = "walk_up"
-			_: target = "walk_upright"
 
 	if target == _anim:
 		return
