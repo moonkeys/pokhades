@@ -36,6 +36,9 @@ var _offers: Array = []
 var _sel_member: int = 0        # onglet Pokémon sélectionné
 var _replace_option: int = -1   # offre en attente d'un remplacement (-1 = aucune)
 var _panel: Panel = null
+var _tabs: Array = []           # onglets Pokémon (restauration du focus)
+var _focus_tab: int = -1        # onglet à refocaliser après _rebuild (navigation flèches)
+var _first_build: bool = true   # pop d'apparition uniquement à l'ouverture
 
 
 func setup(team: Array, offers: Array, kind: String = "vendor") -> void:
@@ -87,13 +90,24 @@ func _rebuild() -> void:
 
 	_panel = UiKit.main_panel(Vector2(200, 34), Vector2(880, 636))
 	add_child(_panel)
+	_tabs.clear()
 
 	if _kind == "stat":
 		_build_stat_boon()
 	else:
 		_build_attack_scroll()
 
-	MenuNav.focus_first(_panel)
+	if _first_build:
+		_first_build = false
+		UiKit.pop_in(_panel)
+
+	# Navigation flèches : si la reconstruction vient d'un changement
+	# d'onglet, on rend le focus à cet onglet (le parcours continue).
+	if _focus_tab >= 0 and _focus_tab < _tabs.size():
+		(_tabs[_focus_tab] as Button).grab_focus.call_deferred()
+		_focus_tab = -1
+	else:
+		MenuNav.focus_first(_panel)
 
 
 # ── Don « stats » : grille 2×2 (mockup 1) ─────────────────────────────
@@ -126,30 +140,55 @@ func _build_attack_scroll() -> void:
 		UiKit.label(_panel, "Bourse : %d ₽    Baies : %d ◆" % [GameManager.run_money, GameManager.gold],
 			Vector2(0, 62), 15, UiKit.GOLD, 880, HORIZONTAL_ALIGNMENT_CENTER)
 
-	# Onglets Pokémon (sélection du Pokémon à améliorer)
+	# Onglets Pokémon RICHES (portrait + nom + niveau + type) — le contenu
+	# change dès que le FOCUS arrive sur l'onglet (flèches) : plus besoin
+	# d'appuyer sur Entrée pour comparer les Pokémon.
 	_sel_member = clampi(_sel_member, 0, maxi(0, _team.size() - 1))
-	var tab_w := 128.0
-	var tabs_x := (880.0 - _team.size() * (tab_w + 10.0)) * 0.5
+	var tab_w := 168.0
+	var tabs_x := (880.0 - _team.size() * (tab_w + 12.0)) * 0.5
 	for i in _team.size():
 		var inst: PokemonInstance = _team[i].pokemon_instance
-		var tab := Button.new()
-		tab.position = Vector2(tabs_x + i * (tab_w + 10.0), 86)
-		tab.size     = Vector2(tab_w, 44)
-		tab.text     = inst.data.name_fr.capitalize()
-		tab.add_theme_font_size_override("font_size", 15)
 		var sel := i == _sel_member
+		var tab := Button.new()
+		tab.position = Vector2(tabs_x + i * (tab_w + 12.0), 74)
+		tab.size     = Vector2(tab_w, 60)
 		tab.add_theme_stylebox_override("normal",
-			UiKit.style(UiKit.TAN if sel else UiKit.BROWN_CARD, UiKit.CYAN_SEL if sel else UiKit.WOOD_EDGE, 8, 3))
+			UiKit.style(UiKit.TAN if sel else UiKit.BROWN_CARD, UiKit.CYAN_SEL if sel else UiKit.WOOD_EDGE, 10, 4 if sel else 3))
 		tab.add_theme_stylebox_override("hover",
-			UiKit.style(UiKit.TAN_DARK, UiKit.CYAN_SEL if sel else UiKit.WOOD_EDGE, 8, 3))
+			UiKit.style(UiKit.TAN_DARK, UiKit.CYAN_SEL if sel else UiKit.WOOD_EDGE, 10, 3))
 		tab.add_theme_stylebox_override("pressed", tab.get_theme_stylebox("normal"))
 		tab.add_theme_stylebox_override("focus",
-			UiKit.style(UiKit.TAN_DARK, UiKit.CYAN_SEL, 8, 4))
-		tab.add_theme_color_override("font_color", UiKit.TEXT_DARK if sel else UiKit.CREAM)
-		var ci := i
-		tab.pressed.connect(func() -> void:
-			_sel_member = ci; _replace_option = -1; _rebuild())
+			UiKit.style(UiKit.TAN if sel else UiKit.TAN_DARK, UiKit.CYAN_SEL, 10, 4))
 		_panel.add_child(tab)
+
+		if is_instance_valid(inst.portrait_texture):
+			var tex := TextureRect.new()
+			tex.texture      = inst.portrait_texture
+			tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			tex.position     = Vector2(4, 4)
+			tex.size         = Vector2(52, 52)
+			tex.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			tab.add_child(tex)
+		var name_col := UiKit.TEXT_DARK if sel else UiKit.CREAM
+		UiKit.label(tab, inst.data.name_fr.capitalize(), Vector2(60, 5), 14, name_col, 106)
+		UiKit.label(tab, "Niv. %d" % inst.level, Vector2(60, 24), 11, name_col.lightened(0.15) if sel else name_col.darkened(0.1), 100)
+		if not inst.data.types.is_empty():
+			UiKit.type_badge(tab, Vector2(58, 39), inst.data.types[0], 17.0)
+
+		var ci := i
+		# FOCUS = sélection immédiate (le panneau se reconstruit et rend le
+		# focus à l'onglet — la navigation aux flèches reste fluide)
+		tab.focus_entered.connect(func() -> void:
+			if _sel_member != ci:
+				_sel_member = ci
+				_replace_option = -1
+				_focus_tab = ci
+				_rebuild()
+		)
+		tab.pressed.connect(func() -> void:
+			if _sel_member != ci:
+				_sel_member = ci; _replace_option = -1; _rebuild())
+		_tabs.append(tab)
 
 	var inst: PokemonInstance = _team[_sel_member].pokemon_instance
 	UiKit.label(_panel, "📜  Parchemin d'Attaque", Vector2(0, 140), 21, UiKit.GOLD,
@@ -193,10 +232,11 @@ func _build_attack_scroll() -> void:
 		var afford: bool = price <= 0 or GameManager.run_money >= price
 		var ocard := UiKit.card(_panel, Vector2(452, y), Vector2(392, 76), _replace_option == i)
 		UiKit.icon_square(ocard, Vector2(10, 14), UiKit.type_sym(str(mv.get("type", ""))), 48.0)
-		UiKit.label(ocard, str(mv.get("label", "")), Vector2(68, 8), 17, UiKit.TEXT_DARK, 210)
-		UiKit.label(ocard, "%s · Puiss. %d%s" % [str(mv.get("type", "")).capitalize(),
-			int(mv.get("power", 0)), ("  ·  %d ₽" % price) if price > 0 else ""],
-			Vector2(68, 36), 13, UiKit.TEXT_DARK.lightened(0.25), 220)
+		UiKit.label(ocard, str(mv.get("label", "")), Vector2(68, 7), 17, UiKit.TEXT_DARK, 210)
+		UiKit.type_badge(ocard, Vector2(68, 34), str(mv.get("type", "")), 21.0)
+		UiKit.label(ocard, "Puiss. %d%s" % [int(mv.get("power", 0)),
+			("  ·  %d ₽" % price) if price > 0 else ""],
+			Vector2(152, 38), 13, UiKit.TEXT_DARK.lightened(0.25), 130)
 		var learn := UiKit.button("Apprendre", Vector2(104, 40))
 		learn.position = Vector2(392 - 116, 18)
 		learn.disabled = not afford
@@ -246,10 +286,11 @@ func _build_attack_scroll() -> void:
 
 func _fill_move_row(card: Panel, md: MoveData) -> void:
 	UiKit.icon_square(card, Vector2(8, 8), UiKit.type_sym(md.type), 40.0)
-	UiKit.label(card, md.display_name, Vector2(58, 6), 16, UiKit.TEXT_DARK, 220)
-	UiKit.label(card, "%s · %s · Puiss. %d" % [md.type.capitalize(),
-		"Spéciale" if md.damage_class == "special" else "Physique", md.power],
-		Vector2(58, 30), 12, UiKit.TEXT_DARK.lightened(0.25), 240)
+	UiKit.label(card, md.display_name, Vector2(58, 5), 16, UiKit.TEXT_DARK, 220)
+	UiKit.type_badge(card, Vector2(58, 29), md.type, 20.0)
+	UiKit.label(card, "%s · Puiss. %d" %
+		["Spéciale" if md.damage_class == "special" else "Physique", md.power],
+		Vector2(138, 31), 12, UiKit.TEXT_DARK.lightened(0.25), 160)
 
 
 func _add_continue(y: float) -> void:

@@ -186,12 +186,10 @@ func _bake_ground_plane() -> void:
 	mesh_inst.name = "GroundPlane"
 	mesh_inst.mesh = _build_heightfield_mesh(sz)
 
-	var mat := StandardMaterial3D.new()
-	mat.albedo_texture    = ImageTexture.create_from_image(img)
-	mat.texture_filter    = BaseMaterial3D.TEXTURE_FILTER_NEAREST
-	mat.roughness         = 1.0
-	mat.metallic_specular = 0.0   # pas de reflet spéculaire sur le sol pixel-art
-	mesh_inst.material_override = mat
+	# Sol SATURÉ/assombri via shader (cf. GrassPatch.ground_material) — la
+	# texture bakée sortait trop claire et délavée par rapport aux sprites.
+	mesh_inst.material_override = GrassPatch.ground_material(
+		ImageTexture.create_from_image(img))
 	mesh_inst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON   # les collines portent maintenant une ombre
 	add_child(mesh_inst)
 
@@ -893,12 +891,15 @@ func _add_prop_sprite(origin: Vector2i, top_left: Vector2i, cw: int, ch: int,
 ##     (teinte olive-brun) au lieu de l'ancien billboard plat ;
 ##   autres → verts par défaut du pack. Pool vide = billboard (non couvert).
 func _kit_tree_config(origin: Vector2i) -> Dictionary:
+	# Feuillages SATURÉS : les verts par défaut du pack Kenney sont pâles —
+	# on reteinte vers des verts francs (référence : mockups utilisateur).
+	var lush := {"leafsGreen": Color(0.22, 0.55, 0.16), "leafsDark": Color(0.14, 0.40, 0.14)}
 	if origin == _map.tile_tree_origin:
 		if _map.theme == MapGenerator.MapTheme.AUTUMN:
 			return {"pool": KitProps.TREES_FALL, "tints": {}}
-		return {"pool": KitProps.TREES_ROUND, "tints": {}}
+		return {"pool": KitProps.TREES_ROUND, "tints": lush}
 	if origin == _map.tile_sapin_origin:
-		return {"pool": KitProps.TREES_PINE, "tints": {}}
+		return {"pool": KitProps.TREES_PINE, "tints": lush}
 	if origin == _map.tile_arbre_mort_orig:
 		return {"pool": KitProps.TREES_ROUND, "tints": {
 			"leafsGreen": Color(0.34, 0.36, 0.22),   # feuillage moribond

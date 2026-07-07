@@ -69,6 +69,38 @@ static func _get_shader() -> Shader:
 	return _shader
 
 
+## ── Matériau de SOL saturé (retour utilisateur : le sol baké était trop
+## clair/délavé alors que les sprites 2D allaient bien — on sature et
+## assombrit UNIQUEMENT le terrain, pas le reste de la scène). Partagé par
+## MapRender3D (maps de run) et HubMap. ──────────────────────────────────
+static var _ground_shader: Shader = null
+
+const _GROUND_SHADER := """
+shader_type spatial;
+uniform sampler2D tex : source_color, filter_nearest;
+uniform float sat = 1.45;
+uniform float val = 0.88;
+
+void fragment() {
+	vec3 c = texture(tex, UV).rgb;
+	float g = dot(c, vec3(0.299, 0.587, 0.114));
+	ALBEDO = clamp(mix(vec3(g), c, sat) * val, 0.0, 1.0);
+	ROUGHNESS = 1.0;
+}
+"""
+
+static func ground_material(tex: Texture2D, sat: float = 1.45, val: float = 0.88) -> ShaderMaterial:
+	if _ground_shader == null:
+		_ground_shader = Shader.new()
+		_ground_shader.code = _GROUND_SHADER
+	var mat := ShaderMaterial.new()
+	mat.shader = _ground_shader
+	mat.set_shader_parameter("tex", tex)
+	mat.set_shader_parameter("sat", sat)
+	mat.set_shader_parameter("val", val)
+	return mat
+
+
 ## Deux quads croisés en X (4 triangles double-face via cull_disabled),
 ## pied à y=0, UV.y = 0 en HAUT (poids d'ondulation du shader).
 static func _get_mesh() -> ArrayMesh:

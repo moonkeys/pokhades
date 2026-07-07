@@ -105,6 +105,7 @@ static func button(text: String, size: Vector2, green: bool = true) -> Button:
 	b.add_theme_color_override("font_hover_color", Color.WHITE if green else TEXT_DARK)
 	b.add_theme_color_override("font_disabled_color", Color(1, 1, 1, 0.45) if green else TEXT_DARK.lightened(0.3))
 	b.add_theme_font_size_override("font_size", 17)
+	juice(b)   # survol/focus = pop, clic = son — tous les boutons du kit
 	return b
 
 
@@ -150,3 +151,65 @@ const TYPE_SYMS := {
 
 static func type_sym(t: String) -> String:
 	return TYPE_SYMS.get(t, "◎")
+
+
+## Noms français des types (pastilles).
+const TYPE_FR := {
+	"normal": "Normal", "fire": "Feu", "water": "Eau", "grass": "Plante",
+	"electric": "Électrik", "ice": "Glace", "fighting": "Combat",
+	"poison": "Poison", "ground": "Sol", "flying": "Vol", "psychic": "Psy",
+	"bug": "Insecte", "rock": "Roche", "ghost": "Spectre", "dragon": "Dragon",
+	"dark": "Ténèbres", "steel": "Acier", "fairy": "Fée",
+}
+
+## PASTILLE DE TYPE colorée (comme en combat) : fond = couleur officielle du
+## type (CombatVFX.TYPE_COLORS), icône + nom FR en blanc. LE standard pour
+## afficher un type dans toute l'interface.
+static func type_badge(parent: Control, pos: Vector2, t: String, h: float = 22.0) -> Panel:
+	var col := CombatVFX.type_color(t).darkened(0.12)
+	var pill := Panel.new()
+	pill.position = pos
+	pill.size     = Vector2(h * 3.6, h)
+	pill.add_theme_stylebox_override("panel", style(col, col.darkened(0.45), int(h * 0.5), 2))
+	pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(pill)
+	var l := Label.new()
+	l.text = "%s %s" % [type_sym(t), TYPE_FR.get(t, t.capitalize())]
+	l.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.vertical_alignment   = VERTICAL_ALIGNMENT_CENTER
+	l.add_theme_font_size_override("font_size", int(h * 0.55))
+	l.add_theme_color_override("font_color", Color.WHITE)
+	l.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.5))
+	l.add_theme_constant_override("shadow_offset_y", 1)
+	pill.add_child(l)
+	return pill
+
+
+# ── Juice : micro-animations + sons d'interface ────────────────────────
+## Pop d'apparition d'un panneau/carte (échelle 0.92 → 1 avec rebond).
+static func pop_in(ctrl: Control, delay: float = 0.0) -> void:
+	ctrl.pivot_offset = ctrl.size * 0.5
+	ctrl.scale = Vector2.ONE * 0.92
+	ctrl.modulate.a = 0.0
+	var tw := ctrl.create_tween().set_parallel(true)
+	tw.tween_property(ctrl, "scale", Vector2.ONE, 0.22) \
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT).set_delay(delay)
+	tw.tween_property(ctrl, "modulate:a", 1.0, 0.14).set_delay(delay)
+
+
+## Rend un bouton « vivant » : grossit au survol/focus, clic sonore.
+static func juice(btn: Button) -> void:
+	btn.pivot_offset = btn.size * 0.5
+	var grow := func() -> void:
+		var tw := btn.create_tween()
+		tw.tween_property(btn, "scale", Vector2.ONE * 1.06, 0.08) \
+			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	var shrink := func() -> void:
+		var tw := btn.create_tween()
+		tw.tween_property(btn, "scale", Vector2.ONE, 0.08)
+	btn.mouse_entered.connect(grow)
+	btn.focus_entered.connect(grow)
+	btn.mouse_exited.connect(shrink)
+	btn.focus_exited.connect(shrink)
+	btn.pressed.connect(func() -> void: Sfx.play("click", -6.0))

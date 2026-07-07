@@ -413,11 +413,8 @@ func _fill_ground() -> void:
 	var mesh_inst := MeshInstance3D.new()
 	mesh_inst.name = "Ground"
 	mesh_inst.mesh = st.commit()
-	var mat := StandardMaterial3D.new()
-	mat.albedo_texture  = load(NATURE_DIR + "grass.png")
-	mat.texture_filter  = BaseMaterial3D.TEXTURE_FILTER_NEAREST
-	mat.roughness       = 0.9
-	mesh_inst.material_override = mat
+	# Sol saturé/assombri (shader partagé avec les maps de run)
+	mesh_inst.material_override = GrassPatch.ground_material(load(NATURE_DIR + "grass.png"))
 	mesh_inst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	add_child(mesh_inst)
 
