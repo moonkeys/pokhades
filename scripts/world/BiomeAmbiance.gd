@@ -109,6 +109,7 @@ const _FOREST_PALETTE := {
 	"cloud_tint":   Color(0.95, 0.97, 0.95),
 	"leaves":       true,
 	"leaves_color": Color(0.45, 0.58, 0.22, 0.85),
+	"ground_tint":  Color(0.30, 0.50, 0.26),
 }
 
 const _SWAMP_PALETTE := {
@@ -127,6 +128,7 @@ const _SWAMP_PALETTE := {
 	"mist":         true,
 	"mist_color":   Color(0.72, 0.78, 0.66, 0.09),
 	"fireflies":    Color(0.85, 1.0, 0.45),
+	"ground_tint":  Color(0.36, 0.40, 0.28),
 }
 
 const _ROCKY_PALETTE := {
@@ -141,6 +143,7 @@ const _ROCKY_PALETTE := {
 	"hill_b":       Color(0.44, 0.40, 0.36),
 	"cloud_tint":   Color(1.0, 0.98, 0.94),
 	"midground_cliffs": true,
+	"ground_tint":  Color(0.44, 0.48, 0.34),
 }
 
 const _AUTUMN_PALETTE := {
@@ -156,6 +159,7 @@ const _AUTUMN_PALETTE := {
 	"leaves":       true,
 	"leaves_color": Color(0.85, 0.45, 0.12, 0.9),
 	"butterflies":  3,
+	"ground_tint":  Color(0.72, 0.56, 0.24),
 }
 
 const _LAKE_PALETTE := {
@@ -169,6 +173,7 @@ const _LAKE_PALETTE := {
 	"hill_b":       Color(0.36, 0.52, 0.62),
 	"cloud_alpha":  0.62,
 	"butterflies":  4,
+	"ground_tint":  Color(0.30, 0.52, 0.46),
 }
 
 const _MEADOW_PALETTE := {
@@ -182,6 +187,7 @@ const _MEADOW_PALETTE := {
 	"hill_b":       Color(0.40, 0.54, 0.56),
 	"cloud_alpha":  0.62,
 	"butterflies":  6,
+	"ground_tint":  Color(0.42, 0.64, 0.32),
 }
 
 const _CAVE_PALETTE := {
@@ -204,6 +210,7 @@ const _CAVE_PALETTE := {
 	"mist":         true,
 	"mist_color":   Color(0.55, 0.55, 0.62, 0.06),
 	"fireflies":    Color(0.55, 0.75, 1.0),
+	"ground_tint":  Color(0.20, 0.18, 0.20),
 }
 
 
@@ -470,13 +477,12 @@ func _build_ground_apron(cfg: Dictionary, center: Vector3) -> void:
 	# Même texture d'herbe/shader que le sol jouable (cf. GrassPatch.
 	# ground_material) au lieu d'un aplat de couleur : le tablier lointain
 	# se lisait comme du vide/de la terre nue à côté du sol texturé de la
-	# map. Teinte accordée à la couleur de collines du biome, tuilée
-	# densément pour rester nette même de très loin.
-	var plain := (cfg["hill_a"] as Color).lerp(cfg["hill_b"], 0.4)
-	var g := plain.get_luminance()
-	plain = Color(g, g, g).lerp(plain, 1.4) * 0.92
+	# map. Recoloré (tint_strength=1) exactement à la couleur d'herbe/sol
+	# du biome (`ground_tint`, cf. palettes) — pas un dérivé des couleurs
+	# de collines qui pouvait diverger du vert (ou de l'ocre, etc.) réel.
+	var plain: Color = cfg.get("ground_tint", (cfg["hill_a"] as Color).lerp(cfg["hill_b"], 0.4))
 	apron.material_override = GrassPatch.ground_material(
-		load("res://assets/nature/grass.png"), 1.45, 0.88, span, plain)
+		load("res://assets/nature/grass.png"), 1.45, 0.88, span, plain, 1.0)
 	apron.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_backdrop.add_child(apron)
 
@@ -602,9 +608,12 @@ func _disable_shadows(node: Node) -> void:
 ## la distance (perspective atmosphérique). C'est LE point de fuite qui
 ## comble le vide de l'horizon.
 func _build_mountains(cfg: Dictionary, rng: RandomNumberGenerator, center: Vector3) -> void:
-	# Roche de base SOMBRE (bleu-gris) : les montagnes doivent trancher sur
-	# le ciel pâle, pas s'y fondre (c'était ça le « vide » de l'horizon).
-	var rock: Color = Color(0.30, 0.34, 0.45).lerp(cfg["hill_b"], 0.20)
+	# Roche de base ASSOMBRIE à partir de la couleur de sol du biome
+	# (`ground_tint`) — les montagnes doivent trancher sur le ciel pâle tout
+	# en restant dans la même famille de teinte que l'herbe/le sol (avant :
+	# un bleu-gris fixe qui ne matchait aucun biome, ex. gris sur prairie).
+	var ground_tint: Color = cfg.get("ground_tint", cfg["hill_b"])
+	var rock: Color = (ground_tint as Color).darkened(0.35).lerp(cfg["hill_b"], 0.25)
 	var base_r := maxf(_map_size.x, _map_size.y) * 0.5
 	var big: bool = cfg.get("midground_cliffs", false)
 

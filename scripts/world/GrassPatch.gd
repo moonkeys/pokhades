@@ -82,9 +82,17 @@ uniform float sat = 1.45;
 uniform float val = 0.88;
 uniform float uv_scale = 1.0;
 uniform vec4 tint : source_color = vec4(1.0, 1.0, 1.0, 1.0);
+uniform float tint_strength = 0.0;
 
 void fragment() {
-	vec3 c = texture(tex, UV * uv_scale).rgb * tint.rgb;
+	vec3 raw = texture(tex, UV * uv_scale).rgb;
+	// tint_strength=0 : couleur de la texture inchangée (comportement d'origine).
+	// tint_strength=1 : ne garde que le RELIEF (luminance) de la texture, la
+	// TEINTE vient entièrement de `tint` — pour recolorer l'herbe partagée
+	// exactement à la couleur du sol du biome (tablier lointain, montagnes).
+	float lum = dot(raw, vec3(0.299, 0.587, 0.114));
+	vec3 recolored = lum * tint.rgb * 1.7;
+	vec3 c = mix(raw, recolored, tint_strength);
 	float g = dot(c, vec3(0.299, 0.587, 0.114));
 	ALBEDO = clamp(mix(vec3(g), c, sat) * val, 0.0, 1.0);
 	ROUGHNESS = 1.0;
@@ -92,10 +100,13 @@ void fragment() {
 """
 
 ## `uv_scale` : nb de tuiles de texture par unité d'UV (1.0 = comportement
-## d'origine). `tint` : multiplie la couleur échantillonnée — permet de
-## teinter l'herbe partagée selon la couleur du biome (ex : tablier lointain).
+## d'origine). `tint` + `tint_strength` : au-delà de 0, recolore l'herbe
+## partagée à la couleur exacte du sol du biome (ne garde que le relief de
+## la texture d'origine) — utilisé pour le tablier lointain/montagnes afin
+## qu'ils matchent le vert (ou l'ocre, etc.) du sol jouable, quelle que soit
+## la teinte propre de grass.png.
 static func ground_material(tex: Texture2D, sat: float = 1.45, val: float = 0.88,
-		uv_scale: float = 1.0, tint: Color = Color.WHITE) -> ShaderMaterial:
+		uv_scale: float = 1.0, tint: Color = Color.WHITE, tint_strength: float = 0.0) -> ShaderMaterial:
 	if _ground_shader == null:
 		_ground_shader = Shader.new()
 		_ground_shader.code = _GROUND_SHADER
@@ -103,6 +114,7 @@ static func ground_material(tex: Texture2D, sat: float = 1.45, val: float = 0.88
 	mat.shader = _ground_shader
 	mat.set_shader_parameter("tex", tex)
 	mat.set_shader_parameter("uv_scale", uv_scale)
+	mat.set_shader_parameter("tint_strength", tint_strength)
 	mat.set_shader_parameter("tint", tint)
 	mat.set_shader_parameter("sat", sat)
 	mat.set_shader_parameter("val", val)
