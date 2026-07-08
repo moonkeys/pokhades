@@ -837,27 +837,36 @@ func _spawn_room_enemies() -> void:
 	_waves_total = 1
 
 	if _is_boss_room(room):
-		# ── BOSS D'ACTE = COMBAT DE DRESSEUR : la compo du champion de
-		# l'acte (cf. RunManager.champion_for_act, jamais le même deux fois
-		# par run) envoyée en vagues — un Pokémon par vague, l'AS du champion
-		# en dernier (anneau doré). L'équipe GRANDIT avec les actes :
-		# 3, 4, 5 puis 6 Pokémon au Dresseur Final, niveaux croissants.
+		# ── BOSS D'ACTE = COMBAT DE DRESSEUR : la compo COMPLÈTE du champion
+		# de l'acte (cf. RunManager.champion_for_act, jamais le même deux fois
+		# par run) — TOUJOURS 6 vagues, une par Pokémon de l'équipe, l'AS en
+		# dernier (anneau doré). Chaque vague envoie la forme ÉVOLUÉE de son
+		# Pokémon comme "boss", escortée de sbires à la forme DE BASE de la
+		# même lignée (ex : Steelix + des Onix) — un vrai combat de dresseur
+		# expérimenté, pas un simple face-à-face 1v1.
 		var act := RunManager.inst().act_of(room)
 		var comp: Dictionary = RunManager.inst().champion_for_act(act)
-		var all_ids: Array = comp["ids"]
-		var n_waves := clampi(3 + act, 3, all_ids.size())
-		var comp_ids: Array = all_ids.slice(0, n_waves - 1)
-		comp_ids.append(all_ids[all_ids.size() - 1])   # l'as ferme toujours la marche
+		var comp_ids: Array = comp["ids"]
 		_waves_total = comp_ids.size()
 		for w in _waves_total:
 			var is_ace := w == _waves_total - 1
+			var boss_id: int   = GameManager.final_evolution_of(int(comp_ids[w]))
+			var minion_id: int = GameManager.base_species_of(boss_id)
+			var boss_lv := BOSS_LEVEL + room + w * 2
 			var specs: Array = [
-				{"pool": [comp_ids[w]], "count": 1,
-					"lv": BOSS_LEVEL + room + w * 2,
+				{"pool": [boss_id], "count": 1, "lv": boss_lv,
 					"champion": not is_ace, "boss": is_ace},
 			]
+			# Sbires = la forme de base de la même lignée, en escorte (aucun
+			# sbire si le boss est déjà une forme sans évolution possible).
+			if minion_id != boss_id:
+				specs.append({"pool": [minion_id], "count": 3,
+					"lv": maxi(1, boss_lv - 6), "champion": false, "boss": false})
 			_wave_queue.append(specs)
-		_room_total = _waves_total
+		_room_total = 0
+		for specs: Array in _wave_queue:
+			for s: Dictionary in specs:
+				_room_total += int(s["count"])
 		hud.set_kills(0, _room_total)
 		var title := "DRESSEUR FINAL" if _is_final_boss_room(room) else "CHAMPION"
 		hud.set_wave("☠☠ %s %s (%s) — son équipe de %d t'attend !"

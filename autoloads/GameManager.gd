@@ -147,7 +147,55 @@ const EVOLUTIONS: Dictionary = {
 	886: {"level": 60, "evolves_to": 887},   # → Lanssorien
 	996: {"level": 35, "evolves_to": 997},   # Frigodo → Cryodo
 	997: {"level": 54, "evolves_to": 998},   # → Glaivodo
+	# ── Lignées des CHAMPIONS D'ACTE (cf. PokePools.CHAMPION_TEAMS) —
+	# manquaient pour que chaque vague de boss ait une paire évolué/sbire
+	# de base cohérente (cf. CombatArena._spawn_room_enemies).
+	95:  {"level": 30, "evolves_to": 208},   # Onix → Steelix
+	111: {"level": 42, "evolves_to": 112},   # Rhinocorne → Rhinoféros
+	100: {"level": 30, "evolves_to": 101},   # Voltorbe → Électrode
+	81:  {"level": 30, "evolves_to": 82},    # Magnéti → Magnéton
+	120: {"level": 20, "evolves_to": 121},   # Stari → Staross (pierre)
+	116: {"level": 32, "evolves_to": 117},   # Hypotrempe → Tacle
+	102: {"level": 20, "evolves_to": 103},   # Noeunoeuf → Noadkoko (pierre)
+	109: {"level": 35, "evolves_to": 110},   # Smogo → Smogogo
+	48:  {"level": 31, "evolves_to": 49},    # Mimitoss → Aéromite
+	96:  {"level": 26, "evolves_to": 97},    # Soporifik → Hypnomade
+	77:  {"level": 40, "evolves_to": 78},    # Ponyta → Galopa
+	58:  {"level": 20, "evolves_to": 59},    # Caninos → Arcanin (pierre)
+	50:  {"level": 26, "evolves_to": 51},    # Taupiqueur → Triopikeur
+	29:  {"level": 16, "evolves_to": 30},    # Nidoran♀ → Nidorina
+	30:  {"level": 36, "evolves_to": 31},    # → Nidoqueen (pierre)
+	104: {"level": 28, "evolves_to": 105},   # Osselait → Ossatueur
 }
+
+# ── Navigation dans les lignées d'évolution (combats de dresseur, boss) ──
+
+## Pré-évolution DIRECTE de `pid` (l'espèce qui évolue vers lui), ou -1 si
+## `pid` est déjà une forme de base.
+static func pre_evolution_of(pid: int) -> int:
+	for base_id in EVOLUTIONS:
+		if EVOLUTIONS[base_id]["evolves_to"] == pid:
+			return int(base_id)
+	return -1
+
+
+## Remonte la lignée jusqu'à la forme de base (ex : Golem → Geodude).
+static func base_species_of(pid: int) -> int:
+	var cur := pid
+	var prev := pre_evolution_of(cur)
+	while prev != -1:
+		cur = prev
+		prev = pre_evolution_of(cur)
+	return cur
+
+
+## Descend la lignée jusqu'à la forme finale (ex : Geodude → Golem).
+static func final_evolution_of(pid: int) -> int:
+	var cur := pid
+	while EVOLUTIONS.has(cur):
+		cur = int(EVOLUTIONS[cur]["evolves_to"])
+	return cur
+
 
 # ── État du Hub ──────────────────────────────────────────────────────
 var gold:             int        = 200
