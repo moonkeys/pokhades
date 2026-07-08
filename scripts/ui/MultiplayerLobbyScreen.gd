@@ -2,34 +2,28 @@ class_name MultiplayerLobbyScreen
 extends CanvasLayer
 
 ## Lobby multijoueur (jusqu'à 6) — héberger ou rejoindre par code, choisir
-## son Pokémon parmi les débloqués (starters + Pokédex), se déclarer prêt.
-## L'hôte lance la partie quand tout le monde est prêt. Style calqué sur
-## ShopScreen (palette parchemin).
+## son Pokémon (parmi les débloqués DE L'HÔTE) et un objet tenu, se déclarer
+## prêt. L'hôte lance la partie quand tout le monde est prêt. Habillage
+## UiKit (bois & parchemin) — même langage visuel que tous les autres menus
+## (Boutique, Pokédex, etc.).
 
 signal closed
-
-const C_BG      := Color(0.04, 0.03, 0.02, 0.82)
-const C_PANEL   := Color(0.10, 0.075, 0.045, 0.96)
-const C_BORDER  := Color(0.62, 0.50, 0.32)
-const C_TEXT    := Color(0.96, 0.92, 0.80)
-const C_DIM     := Color(0.62, 0.55, 0.42)
-const C_GOLD    := Color(0.92, 0.72, 0.25)
-const C_GOLD_LT := Color(0.94, 0.88, 0.72)
-const C_OK      := Color(0.38, 0.82, 0.45)
-const C_ERR     := Color(0.80, 0.20, 0.20)
 
 var _panel:       Panel = null
 var _mode:        String = "menu"   # menu | lobby
 var _my_pid:      int  = 0
 var _my_item:     String = ""       # api du catalogue, "" = aucun
 var _my_ready:    bool = false
-var _name_cache:  Dictionary = {}   # pid → nom FR
 var _status_lbl:  Label = null
 var _code_input:  LineEdit = null
+
+## pid → {"name": String, "types": Array, "portrait": Texture2D}
+var _data_cache:  Dictionary = {}
 
 
 func _ready() -> void:
 	layer = 30
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	_my_pid = GameManager.selected_starter_id
 	Net.players_changed.connect(_rebuild)
 	Net.join_failed.connect(func(reason: String) -> void:
@@ -44,7 +38,7 @@ func _ready() -> void:
 		_set_status("L'hôte a quitté la partie.", false)
 	)
 	for pid in _selectable_pids():
-		_resolve_name(pid)
+		_resolve_data(pid)
 	_rebuild()
 
 
@@ -74,32 +68,21 @@ func _rebuild() -> void:
 	# Passage automatique menu → lobby dès que le registre nous contient
 	if Net.active and Net.players.has(Net.local_id()):
 		_mode = "lobby"
-	_panel = Panel.new()
-	_panel.position = Vector2(140, 30)
-	_panel.size     = Vector2(1000, 660)
-	_style(_panel, C_PANEL, C_BORDER, 14)
+
+	_panel = UiKit.main_panel(Vector2(140, 20), Vector2(1000, 680))
 	add_child(_panel)
+	UiKit.banner(_panel, "MULTIJOUEUR")
 
-	var hdr := Panel.new()
-	hdr.size = Vector2(1000, 64)
-	_style_color(hdr, Color(0.24, 0.18, 0.08), 14)
-	_panel.add_child(hdr)
-	_panel.add_child(_lbl("⚔  MULTIJOUEUR", 24, 12, 500, 40, 22, C_GOLD_LT))
-
-	var close := Button.new()
-	close.text = "✕  Quitter"
-	close.position = Vector2(24, 600)
-	close.size     = Vector2(170, 42)
-	close.add_theme_font_size_override("font_size", 15)
-	_btn_neutral(close)
+	var close := UiKit.button("✕  Quitter", Vector2(170, 44), false)
+	close.position = Vector2(24, 616)
 	close.pressed.connect(func() -> void:
 		Net.reset()
 		closed.emit()
 	)
 	_panel.add_child(close)
 
-	_status_lbl = _lbl("", 220, 604, 560, 34, 14, C_OK, true)
-	_panel.add_child(_status_lbl)
+	_status_lbl = UiKit.label(_panel, "", Vector2(220, 626), 14, UiKit.GREEN, 560, HORIZONTAL_ALIGNMENT_CENTER)
+	_status_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	if _mode == "menu":
 		_build_menu()
@@ -110,15 +93,11 @@ func _rebuild() -> void:
 # ── Menu : héberger / rejoindre ────────────────────────────────────────
 
 func _build_menu() -> void:
-	_panel.add_child(_lbl("Jouez jusqu'à 6 — l'hôte partage son code de partie.",
-		0, 100, 1000, 30, 16, C_DIM, true))
+	UiKit.label(_panel, "Jouez jusqu'à 6 — l'hôte partage son code de partie.",
+		Vector2(0, 78), 16, UiKit.CREAM, 1000, HORIZONTAL_ALIGNMENT_CENTER)
 
-	var host_btn := Button.new()
-	host_btn.text = "⚑  Héberger une partie"
-	host_btn.position = Vector2(300, 180)
-	host_btn.size     = Vector2(400, 64)
-	host_btn.add_theme_font_size_override("font_size", 20)
-	_btn_gold(host_btn)
+	var host_btn := UiKit.button("⚑  Héberger une partie", Vector2(400, 64))
+	host_btn.position = Vector2(300, 150)
 	host_btn.pressed.connect(func() -> void:
 		if Net.host_game(_player_name()) == OK:
 			_mode = "lobby"
@@ -128,22 +107,18 @@ func _build_menu() -> void:
 	)
 	_panel.add_child(host_btn)
 
-	_panel.add_child(_lbl("— ou —", 0, 270, 1000, 26, 15, C_DIM, true))
+	UiKit.label(_panel, "— ou —", Vector2(0, 234), 15, UiKit.CREAM, 1000, HORIZONTAL_ALIGNMENT_CENTER)
 
 	_code_input = LineEdit.new()
 	_code_input.placeholder_text = "CODE DE PARTIE"
-	_code_input.position  = Vector2(300, 320)
+	_code_input.position  = Vector2(300, 280)
 	_code_input.size      = Vector2(250, 54)
 	_code_input.max_length = 7
 	_code_input.add_theme_font_size_override("font_size", 20)
 	_panel.add_child(_code_input)
 
-	var join_btn := Button.new()
-	join_btn.text = "➜  Rejoindre"
-	join_btn.position = Vector2(566, 320)
-	join_btn.size     = Vector2(134, 54)
-	join_btn.add_theme_font_size_override("font_size", 16)
-	_btn_gold(join_btn)
+	var join_btn := UiKit.button("➜  Rejoindre", Vector2(134, 54))
+	join_btn.position = Vector2(566, 280)
 	join_btn.pressed.connect(func() -> void:
 		if _code_input.text.strip_edges().length() != 7:
 			_set_status("Le code fait 7 caractères.", false)
@@ -159,7 +134,7 @@ func _player_name() -> String:
 	return n if n != "" else "Dresseur"
 
 
-# ── Lobby : roster + choix Pokémon + prêt ──────────────────────────────
+# ── Lobby : roster + choix Pokémon + objet + prêt ──────────────────────
 
 func _build_lobby() -> void:
 	# Code de partie (hôte) — deux codes distincts pour éviter la confusion
@@ -167,89 +142,70 @@ func _build_lobby() -> void:
 	# MÊME réseau doit utiliser le code "réseau local", pas le code Internet
 	# (certaines box ne routent pas leur propre IP publique en interne).
 	if Net.is_host():
-		_panel.add_child(_lbl("Code (même Wi-Fi/réseau) :", 40, 78, 320, 24, 14, C_DIM))
-		_panel.add_child(_lbl(Net.join_code, 40, 100, 300, 36, 26, C_GOLD))
+		UiKit.label(_panel, "Code (même Wi-Fi/réseau) :", Vector2(40, 78), 14, UiKit.CREAM, 320)
+		UiKit.label(_panel, Net.join_code, Vector2(40, 100), 26, UiKit.GOLD, 300)
 		if Net.join_code_public != "" and Net.join_code_public != Net.join_code:
-			_panel.add_child(_lbl("Code (Internet, autre réseau) :", 40, 142, 320, 24, 14, C_DIM))
-			_panel.add_child(_lbl(Net.join_code_public, 40, 164, 300, 32, 22, C_GOLD))
+			UiKit.label(_panel, "Code (Internet, autre réseau) :", Vector2(40, 142), 14, UiKit.CREAM, 320)
+			UiKit.label(_panel, Net.join_code_public, Vector2(40, 164), 22, UiKit.GOLD, 300)
 	else:
-		_panel.add_child(_lbl("Connecté — en attente du lancement par l'hôte.",
-			40, 92, 500, 28, 14, C_DIM))
+		UiKit.label(_panel, "Connecté — en attente du lancement par l'hôte.",
+			Vector2(40, 92), 14, UiKit.CREAM, 500)
 
 	# Roster (droite)
-	_panel.add_child(_lbl("Joueurs  (%d/6)" % Net.players.size(), 620, 80, 300, 28, 16, C_TEXT))
+	UiKit.label(_panel, "Joueurs  (%d/6)" % Net.players.size(), Vector2(640, 78), 16, UiKit.CREAM, 300)
 	var order := Net.player_order()
 	for i in order.size():
 		var id: int = order[i]
 		var p: Dictionary = Net.players[id]
-		var row := Panel.new()
-		row.position = Vector2(620, 112 + i * 52)
-		row.size     = Vector2(340, 44)
-		_style(row, Color(0.16, 0.12, 0.07, 0.95), C_BORDER, 8)
-		_panel.add_child(row)
+		var row := UiKit.card(_panel, Vector2(640, 112 + i * 52), Vector2(320, 44))
 		var who: String = str(p["name"]) + ("  (hôte)" if id == 1 else "")
-		row.add_child(_lbl(who, 12, 2, 200, 40, 14, C_TEXT))
-		row.add_child(_lbl(_name_cache.get(p["pid"], "#%d" % p["pid"]), 12, 22, 200, 20, 11, C_DIM))
-		row.add_child(_lbl("✓ prêt" if p["ready"] else "…", 250, 10, 80, 24, 14,
-			C_OK if p["ready"] else C_DIM))
+		UiKit.label(row, who, Vector2(12, 2), 14, UiKit.TEXT_DARK, 200)
+		var pinfo: Dictionary = _data_cache.get(p["pid"], {})
+		UiKit.label(row, str(pinfo.get("name", "#%d" % int(p["pid"]))),
+			Vector2(12, 22), 11, UiKit.TEXT_DARK.lightened(0.2), 200)
+		UiKit.label(row, "✓ prêt" if p["ready"] else "…", Vector2(250, 10), 14,
+			UiKit.GREEN_DARK if p["ready"] else UiKit.TEXT_DARK.lightened(0.3), 80)
 
-	# Choix du Pokémon (gauche) — verrouillé une fois prêt. Décalé assez bas
-	# pour laisser la place aux DEUX codes (LAN + Internet) affichés au-dessus.
-	# Pioche dans les débloqués de L'HÔTE (cf. _selectable_pids).
-	_panel.add_child(_lbl("Ton Pokémon :", 40, 210, 300, 28, 16, C_TEXT))
-	var pids := _selectable_pids()
-	var cols := 4
-	for i in pids.size():
-		var pid: int = pids[i]
-		var b := Button.new()
-		b.text = _name_cache.get(pid, "#%d" % pid)
-		b.position = Vector2(40 + (i % cols) * 135, 244 + (i / cols) * 44)
-		b.size     = Vector2(126, 36)
-		b.add_theme_font_size_override("font_size", 12)
-		b.disabled = _my_ready
-		if pid == _my_pid: _btn_gold(b)
-		else:              _btn_neutral(b)
-		var captured := pid
-		b.pressed.connect(func() -> void:
-			_my_pid = captured
-			Net.set_my_choice(_my_pid, _my_item, _my_ready)
-		)
-		_panel.add_child(b)
-	var grid_rows := ceili(float(pids.size()) / float(cols))
-	var grid_bottom := 244.0 + grid_rows * 44.0
+	# Choix du Pokémon (gauche) : liste défilante (icône + nom + type) +
+	# aperçu du Pokémon sélectionné (grand sprite + type) — pioche dans les
+	# débloqués de L'HÔTE (cf. _selectable_pids).
+	UiKit.label(_panel, "Ton Pokémon :", Vector2(40, 210), 16, UiKit.CREAM, 300)
+	var pid_scroll := ScrollContainer.new()
+	pid_scroll.position = Vector2(40, 240)
+	pid_scroll.size     = Vector2(340, 160)
+	pid_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_panel.add_child(pid_scroll)
+	var pid_list := VBoxContainer.new()
+	pid_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	pid_list.add_theme_constant_override("separation", 6)
+	pid_scroll.add_child(pid_list)
+	for pid in _selectable_pids():
+		pid_list.add_child(_build_pid_row(pid))
 
-	# Objet tenu (optionnel) — piochés dans l'inventaire de L'HÔTE (cf.
-	# _selectable_items), même logique que le choix du Pokémon.
-	_panel.add_child(_lbl("Objet tenu (optionnel) :", 40, grid_bottom + 10, 320, 24, 14, C_TEXT))
+	_build_pid_preview(Vector2(400, 240), Vector2(200, 160))
+
+	# Objet tenu (optionnel) — liste défilante, mêmes règles que le Pokémon
+	# (piochée dans l'inventaire de L'HÔTE, cf. _selectable_items).
+	UiKit.label(_panel, "Objet tenu (optionnel) :", Vector2(40, 414), 14, UiKit.CREAM, 320)
+	var item_scroll := ScrollContainer.new()
+	item_scroll.position = Vector2(40, 440)
+	item_scroll.size     = Vector2(560, 66)
+	item_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_panel.add_child(item_scroll)
+	var item_list := VBoxContainer.new()
+	item_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	item_list.add_theme_constant_override("separation", 6)
+	item_scroll.add_child(item_list)
 	var item_choices: Array = [""]
 	item_choices.append_array(_selectable_items())
-	for i in item_choices.size():
-		var api: String = item_choices[i]
-		var b := Button.new()
-		b.text = "Aucun" if api == "" else str(ItemCatalog.get_item(api).get("name_fr", api)).capitalize()
-		b.position = Vector2(40 + (i % cols) * 135, grid_bottom + 40 + (i / cols) * 38)
-		b.size     = Vector2(126, 32)
-		b.add_theme_font_size_override("font_size", 12)
-		b.disabled = _my_ready
-		if api == _my_item: _btn_gold(b)
-		else:                _btn_neutral(b)
-		var captured_api := api
-		b.pressed.connect(func() -> void:
-			_my_item = captured_api
-			Net.set_my_choice(_my_pid, _my_item, _my_ready)
-		)
-		_panel.add_child(b)
-	var item_rows := ceili(float(item_choices.size()) / float(cols))
-	var content_bottom := grid_bottom + 40 + item_rows * 38 + 20
+	for api in item_choices:
+		item_list.add_child(_build_item_row(api))
 
 	# Prêt / lancer
-	var action_y := maxf(520.0, content_bottom)
-	var ready_btn := Button.new()
-	ready_btn.text = "✓  Prêt !" if not _my_ready else "✎  Modifier"
+	var action_y := 528.0
+	var ready_btn := UiKit.button("✓  Prêt !" if not _my_ready else "✎  Modifier", Vector2(220, 52))
 	ready_btn.position = Vector2(40, action_y)
-	ready_btn.size     = Vector2(220, 52)
-	ready_btn.add_theme_font_size_override("font_size", 17)
-	_btn_gold(ready_btn)
+	ready_btn.disabled = _selectable_pids().is_empty()
 	ready_btn.pressed.connect(func() -> void:
 		_my_ready = not _my_ready
 		Net.set_my_choice(_my_pid, _my_item, _my_ready)
@@ -257,83 +213,148 @@ func _build_lobby() -> void:
 	_panel.add_child(ready_btn)
 
 	if Net.is_host():
-		var start := Button.new()
-		start.text = "⚔  LANCER LA RUN"
-		start.position = Vector2(620, action_y)
-		start.size     = Vector2(340, 52)
-		start.add_theme_font_size_override("font_size", 18)
+		var start := UiKit.button("⚔  LANCER LA RUN", Vector2(340, 52))
+		start.position = Vector2(640, action_y)
 		start.disabled = not Net.all_ready()
-		_btn_gold(start)
 		start.pressed.connect(func() -> void: Net.start_game())
 		_panel.add_child(start)
 		if not Net.all_ready():
-			_panel.add_child(_lbl("Il faut au moins 2 joueurs, tous prêts.",
-				620, action_y + 56, 340, 24, 12, C_DIM))
+			UiKit.label(_panel, "Il faut au moins 2 joueurs, tous prêts.",
+				Vector2(640, action_y + 56), 12, UiKit.CREAM, 340)
+
+
+## Ligne cliquable de la liste défilante des Pokémon (icône PMD + nom +
+## pastille de type) — sélection immédiate au clic, même quand verrouillé
+## par "Prêt" (désactivée dans ce cas, cf. `disabled`).
+func _build_pid_row(pid: int) -> Button:
+	var sel := pid == _my_pid
+	var row := Button.new()
+	row.custom_minimum_size = Vector2(320, 48)
+	row.size = Vector2(320, 48)
+	row.disabled = _my_ready
+	row.add_theme_stylebox_override("normal",
+		UiKit.style(UiKit.TAN if sel else UiKit.BROWN_CARD, UiKit.CYAN_SEL if sel else UiKit.WOOD_EDGE, 8, 3 if sel else 2))
+	row.add_theme_stylebox_override("hover",
+		UiKit.style(UiKit.TAN_DARK, UiKit.CYAN_SEL if sel else UiKit.WOOD_EDGE, 8, 2))
+	row.add_theme_stylebox_override("disabled", row.get_theme_stylebox("normal"))
+	row.add_theme_stylebox_override("focus", UiKit.style(UiKit.TAN, UiKit.CYAN_SEL, 8, 3))
+	UiKit.juice(row)
+
+	var data: Dictionary = _data_cache.get(pid, {})
+	var portrait: Texture2D = data.get("portrait", null)
+	if is_instance_valid(portrait):
+		var tex := TextureRect.new()
+		tex.texture      = portrait
+		tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		tex.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		tex.position     = Vector2(4, 4)
+		tex.size         = Vector2(40, 40)
+		tex.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(tex)
+
+	var name_col := UiKit.TEXT_DARK if sel else UiKit.CREAM
+	UiKit.label(row, str(data.get("name", "#%d" % pid)), Vector2(52, 4), 14, name_col, 150)
+	var types: Array = data.get("types", [])
+	if not types.is_empty():
+		UiKit.type_badge(row, Vector2(50, 24), str(types[0]), 18.0)
+
+	row.pressed.connect(func() -> void:
+		_my_pid = pid
+		Net.set_my_choice(_my_pid, _my_item, _my_ready)
+		_rebuild()
+	)
+	return row
+
+
+## Aperçu du Pokémon sélectionné — grand sprite + nom + type (cf. demande :
+## voir les types ET les sprites quand on sélectionne).
+func _build_pid_preview(pos: Vector2, size: Vector2) -> void:
+	var card := UiKit.dark_card(_panel, pos, size)
+	var data: Dictionary = _data_cache.get(_my_pid, {})
+	var portrait: Texture2D = data.get("portrait", null)
+	if is_instance_valid(portrait):
+		var tex := TextureRect.new()
+		tex.texture      = portrait
+		tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		tex.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		tex.position     = Vector2((size.x - 84) * 0.5, 10)
+		tex.size         = Vector2(84, 84)
+		card.add_child(tex)
+	UiKit.label(card, str(data.get("name", "#%d" % _my_pid)), Vector2(0, 98), 15,
+		UiKit.CREAM, size.x, HORIZONTAL_ALIGNMENT_CENTER)
+	var types: Array = data.get("types", [])
+	if not types.is_empty():
+		UiKit.type_badge(card, Vector2((size.x - 64.8) * 0.5, 122), str(types[0]), 18.0)
+
+
+## Ligne cliquable de la liste défilante des objets tenus (icône + nom).
+func _build_item_row(api: String) -> Button:
+	var sel := api == _my_item
+	var row := Button.new()
+	row.custom_minimum_size = Vector2(540, 44)
+	row.size = Vector2(540, 44)
+	row.disabled = _my_ready
+	row.add_theme_stylebox_override("normal",
+		UiKit.style(UiKit.TAN if sel else UiKit.BROWN_CARD, UiKit.CYAN_SEL if sel else UiKit.WOOD_EDGE, 8, 3 if sel else 2))
+	row.add_theme_stylebox_override("hover",
+		UiKit.style(UiKit.TAN_DARK, UiKit.CYAN_SEL if sel else UiKit.WOOD_EDGE, 8, 2))
+	row.add_theme_stylebox_override("disabled", row.get_theme_stylebox("normal"))
+	row.add_theme_stylebox_override("focus", UiKit.style(UiKit.TAN, UiKit.CYAN_SEL, 8, 3))
+	UiKit.juice(row)
+
+	var name_col := UiKit.TEXT_DARK if sel else UiKit.CREAM
+	if api == "":
+		UiKit.label(row, "Aucun", Vector2(12, 4), 14, name_col, 300)
+	else:
+		var it := ItemCatalog.get_item(api)
+		var icon_tex: Texture2D = ItemCatalog.icon(api)
+		if is_instance_valid(icon_tex):
+			var tex := TextureRect.new()
+			tex.texture      = icon_tex
+			tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			tex.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+			tex.position     = Vector2(4, 4)
+			tex.size         = Vector2(36, 36)
+			tex.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			row.add_child(tex)
+		UiKit.label(row, str(it.get("name_fr", api)).capitalize(), Vector2(48, 4), 14, name_col, 300)
+
+	row.pressed.connect(func() -> void:
+		_my_item = api
+		Net.set_my_choice(_my_pid, _my_item, _my_ready)
+		_rebuild()
+	)
+	return row
 
 
 # ── Helpers ────────────────────────────────────────────────────────────
 
-func _resolve_name(pid: int) -> void:
-	if _name_cache.has(pid):
+## Récupère nom FR + types (PokemonAPI) et portrait (sprite PMD "walk_down",
+## même source que les portraits en combat/Boutique) — met à jour l'écran
+## dès que chaque donnée arrive (chargement async).
+func _resolve_data(pid: int) -> void:
+	if _data_cache.has(pid) and _data_cache[pid].has("types"):
 		return
+	if not _data_cache.has(pid):
+		_data_cache[pid] = {}
 	PokemonAPI.get_pokemon(pid, func(data: Dictionary) -> void:
 		if data.is_empty() or not is_instance_valid(self):
 			return
-		_name_cache[pid] = str(data.get("name_fr", "#%d" % pid)).capitalize()
+		_data_cache[pid]["name"]  = str(data.get("name_fr", "#%d" % pid)).capitalize()
+		_data_cache[pid]["types"] = data.get("types", [])
 		_rebuild()
+	)
+	PMDSprites.get_walk_sprites(pid, self, func(result: Dictionary) -> void:
+		if result.is_empty() or not is_instance_valid(self):
+			return
+		var frames: SpriteFrames = result.frames
+		if frames.has_animation("walk_down"):
+			_data_cache[pid]["portrait"] = frames.get_frame_texture("walk_down", 0)
+			_rebuild()
 	)
 
 
 func _set_status(msg: String, ok: bool) -> void:
 	if is_instance_valid(_status_lbl):
 		_status_lbl.text = msg
-		_status_lbl.add_theme_color_override("font_color", C_OK if ok else C_ERR)
-
-
-func _lbl(text: String, x: float, y: float, w: float, h: float,
-		fs: int, color: Color, centered: bool = false) -> Label:
-	var l := Label.new()
-	l.text = text
-	l.position = Vector2(x, y)
-	l.size     = Vector2(w, h)
-	l.add_theme_font_size_override("font_size", fs)
-	l.add_theme_color_override("font_color", color)
-	if centered:
-		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	return l
-
-
-func _style(p: Panel, bg: Color, border: Color, radius: int) -> void:
-	var s := StyleBoxFlat.new()
-	s.bg_color = bg; s.border_color = border
-	s.set_border_width_all(2)
-	s.set_corner_radius_all(radius)
-	s.shadow_color = Color(0, 0, 0, 0.20); s.shadow_size = 5
-	p.add_theme_stylebox_override("panel", s)
-
-
-func _style_color(p: Panel, bg: Color, radius: int) -> void:
-	var s := StyleBoxFlat.new()
-	s.bg_color = bg
-	s.corner_radius_top_left = radius; s.corner_radius_top_right = radius
-	p.add_theme_stylebox_override("panel", s)
-
-
-func _btn_gold(btn: Button) -> void:
-	var sn := StyleBoxFlat.new()
-	sn.bg_color = C_GOLD.lightened(0.15); sn.set_corner_radius_all(8)
-	btn.add_theme_stylebox_override("normal", sn)
-	var sh := sn.duplicate() as StyleBoxFlat
-	sh.bg_color = C_GOLD.lightened(0.30)
-	btn.add_theme_stylebox_override("hover", sh)
-	btn.add_theme_color_override("font_color", Color(0.15, 0.11, 0.05))
-
-
-func _btn_neutral(btn: Button) -> void:
-	var s := StyleBoxFlat.new()
-	s.bg_color = Color(0.22, 0.18, 0.11); s.set_corner_radius_all(8)
-	btn.add_theme_stylebox_override("normal", s)
-	var sh := s.duplicate() as StyleBoxFlat
-	sh.bg_color = Color(0.30, 0.25, 0.15)
-	btn.add_theme_stylebox_override("hover", sh)
-	btn.add_theme_color_override("font_color", C_TEXT)
+		_status_lbl.add_theme_color_override("font_color", UiKit.GREEN if ok else UiKit.RED_SOFT)
