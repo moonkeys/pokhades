@@ -150,11 +150,16 @@ func _player_name() -> String:
 # ── Lobby : roster + choix Pokémon + prêt ──────────────────────────────
 
 func _build_lobby() -> void:
-	# Code de partie (hôte)
+	# Code de partie (hôte) — deux codes distincts pour éviter la confusion
+	# LAN/Internet (cf. Net.join_code / Net.join_code_public) : un joueur du
+	# MÊME réseau doit utiliser le code "réseau local", pas le code Internet
+	# (certaines box ne routent pas leur propre IP publique en interne).
 	if Net.is_host():
-		_panel.add_child(_lbl("Code de partie :", 40, 80, 200, 28, 15, C_DIM))
-		var code := _lbl(Net.join_code, 40, 106, 300, 40, 30, C_GOLD)
-		_panel.add_child(code)
+		_panel.add_child(_lbl("Code (même Wi-Fi/réseau) :", 40, 78, 320, 24, 14, C_DIM))
+		_panel.add_child(_lbl(Net.join_code, 40, 100, 300, 36, 26, C_GOLD))
+		if Net.join_code_public != "" and Net.join_code_public != Net.join_code:
+			_panel.add_child(_lbl("Code (Internet, autre réseau) :", 40, 142, 320, 24, 14, C_DIM))
+			_panel.add_child(_lbl(Net.join_code_public, 40, 164, 300, 32, 22, C_GOLD))
 	else:
 		_panel.add_child(_lbl("Connecté — en attente du lancement par l'hôte.",
 			40, 92, 500, 28, 14, C_DIM))
@@ -176,15 +181,16 @@ func _build_lobby() -> void:
 		row.add_child(_lbl("✓ prêt" if p["ready"] else "…", 250, 10, 80, 24, 14,
 			C_OK if p["ready"] else C_DIM))
 
-	# Choix du Pokémon (gauche) — verrouillé une fois prêt
-	_panel.add_child(_lbl("Ton Pokémon :", 40, 170, 300, 28, 16, C_TEXT))
+	# Choix du Pokémon (gauche) — verrouillé une fois prêt. Décalé assez bas
+	# pour laisser la place aux DEUX codes (LAN + Internet) affichés au-dessus.
+	_panel.add_child(_lbl("Ton Pokémon :", 40, 210, 300, 28, 16, C_TEXT))
 	var pids := _selectable_pids()
 	var cols := 4
 	for i in pids.size():
 		var pid: int = pids[i]
 		var b := Button.new()
 		b.text = _name_cache.get(pid, "#%d" % pid)
-		b.position = Vector2(40 + (i % cols) * 135, 204 + (i / cols) * 44)
+		b.position = Vector2(40 + (i % cols) * 135, 244 + (i / cols) * 44)
 		b.size     = Vector2(126, 36)
 		b.add_theme_font_size_override("font_size", 12)
 		b.disabled = _my_ready

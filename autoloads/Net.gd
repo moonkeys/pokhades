@@ -15,7 +15,15 @@ const CODE_CHARS  := "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"   # base32 sans ambigus 
 var active:    bool = false    # une partie multijoueur est en cours (lobby ou run)
 var in_run:    bool = false    # la run a démarré
 var base_seed: int  = 0        # graine partagée — dérive toutes les maps de la run
-var join_code: String = ""     # code affiché à l'hôte
+## Deux codes distincts (l'UPnP peut mettre plusieurs secondes à répondre) :
+## - `join_code` = IP locale, à utiliser quand tous les joueurs sont sur le
+##   MÊME réseau (Wi-Fi/LAN) — ne dépend d'aucune box/port-forwarding.
+## - `join_code_public` = IP publique (rempli seulement si l'UPnP réussit),
+##   à utiliser pour rejoindre depuis un autre réseau. Certaines box ne
+##   supportent pas le "NAT loopback" : un joueur du MÊME réseau qui utilise
+##   le code public peut alors échouer à se connecter — d'où la séparation.
+var join_code:        String = ""
+var join_code_public:  String = ""
 var players:   Dictionary = {} # peer_id → {"name": String, "pid": int, "ready": bool}
 
 var _upnp_thread: Thread = null
@@ -75,6 +83,7 @@ func host_game(player_name: String) -> Error:
 	in_run  = false
 	players = {1: {"name": player_name, "pid": GameManager.selected_starter_id, "ready": false}}
 	join_code = _encode_ip(_local_ipv4())
+	join_code_public = ""
 	players_changed.emit()
 	_try_upnp_async()
 	return OK
@@ -101,7 +110,7 @@ func _try_upnp_async() -> void:
 
 
 func _set_public_code(ip: String) -> void:
-	join_code = _encode_ip(ip)
+	join_code_public = _encode_ip(ip)
 	players_changed.emit()
 
 
@@ -221,6 +230,7 @@ func reset() -> void:
 	in_run  = false
 	players = {}
 	join_code = ""
+	join_code_public = ""
 	if multiplayer.multiplayer_peer != null:
 		multiplayer.multiplayer_peer.close()
 		multiplayer.multiplayer_peer = null
