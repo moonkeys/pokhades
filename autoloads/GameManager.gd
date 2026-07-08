@@ -221,6 +221,22 @@ var berry_magnet: bool = false
 const BERRY_MAGNET_COST := 300
 
 
+## En multijoueur, un INVITÉ pioche Pokémon/objets dans les déblocages de
+## L'HÔTE (cf. Net.host_unlocked/host_items), pas les siens — un invité peut
+## être tout nouveau, l'hôte avancé dans sa propre progression. L'hôte, lui,
+## reste toujours sa propre référence.
+func effective_unlocked_pokemon() -> Array:
+	if Net.active and not Net.is_host():
+		return Net.host_unlocked
+	return unlocked_pokemon
+
+
+func effective_item_inventory() -> Dictionary:
+	if Net.active and not Net.is_host():
+		return Net.host_items
+	return item_inventory
+
+
 func get_item_count(api: String) -> int:
 	return int(item_inventory.get(api, 0))
 

@@ -603,6 +603,9 @@ func _spawn_team_mp() -> void:
 
 		var instance := PokemonInstance.new(data, PLAYER_LEVEL)
 		instance.init_moves()
+		var chosen_item: String = str(Net.players[peer].get("item", ""))
+		if chosen_item != "":
+			instance.equip_catalog_item(chosen_item)
 		var member = TEAM_SCENE.instantiate()
 		member.name = "P%d" % peer
 		add_child(member)
@@ -822,6 +825,7 @@ func _is_final_boss_room(room: int) -> bool:
 var _wave_queue: Array = []   # vagues restantes : Array[Array[spawn_spec]]
 var _wave_num:   int   = 0
 var _waves_total: int  = 0
+var _current_trainer: TrainerNPC = null   # dresseur visible pendant un combat de boss
 
 
 func _spawn_room_enemies() -> void:
@@ -868,6 +872,15 @@ func _spawn_room_enemies() -> void:
 			for s: Dictionary in specs:
 				_room_total += int(s["count"])
 		hud.set_kills(0, _room_total)
+
+		# Le champion s'adresse au joueur avant l'arrivée de ses Pokémon (même
+		# kit visuel que les menus) — puis on le voit planté dans l'arène.
+		var dlg := ChampionDialogueScreen.new()
+		get_tree().root.add_child(dlg)
+		dlg.setup(str(comp["name"]), str(comp["type"]))
+		await dlg.dismissed
+		_spawn_champion_trainer(comp)
+
 		var title := "DRESSEUR FINAL" if _is_final_boss_room(room) else "CHAMPION"
 		hud.set_wave("☠☠ %s %s (%s) — son équipe de %d t'attend !"
 			% [title, str(comp["name"]).to_upper(), comp["type"], _waves_total])
@@ -921,6 +934,23 @@ func _spawn_next_wave() -> void:
 		hud.set_wave("%s · %d ennemis · Niv. %d" % [_zone_label(), _room_total, lv0])
 
 
+## Instancie le dresseur champion dans l'arène (planté près de la sortie
+## nord), visible pendant tout le combat — cf. TrainerNPC.flee_to() pour
+## sa fuite une fois sa compo vaincue.
+func _spawn_champion_trainer(comp: Dictionary) -> void:
+	if is_instance_valid(_current_trainer):
+		_current_trainer.queue_free()
+		_current_trainer = null
+	var sprite_path := PokePools.champion_sprite_path(str(comp["name"]))
+	if sprite_path == "" or not is_instance_valid(_map):
+		return
+	var trainer := TrainerNPC.new()
+	add_child(trainer)
+	trainer.position = _map.cell_to_world3(_map.exit_B)
+	trainer.setup(sprite_path)
+	_current_trainer = trainer
+
+
 ## "Forêt — Salle 3" : le nom du biome courant + le numéro de salle — la
 ## progression se lit d'un coup d'œil au HUD.
 func _zone_label() -> String:
@@ -969,6 +999,11 @@ func _on_room_cleared() -> void:
 	var gold := 30 + room * 20
 	if _is_boss_room(room):
 		gold *= 3   # butin de boss intermédiaire
+		# Toute son équipe vaincue : le dresseur s'enfuit vers la sortie
+		# (« il prend les portes ») — habillage visuel, le combat est déjà gagné.
+		if is_instance_valid(_current_trainer) and is_instance_valid(_map):
+			_current_trainer.flee_to(_map.cell_to_world3(_map.exit_B))
+			_current_trainer = null
 	if _mp:
 		_net_room_cleared.rpc(gold)   # chaque client touche le même butin
 	GameManager.add_run_money(gold)
@@ -1184,6 +1219,12 @@ func _apply_bonus(bonus_id: String) -> void:
 		if not is_instance_valid(m):
 			continue
 		var inst: PokemonInstance = m.pokemon_instance
+		# Un membre K.O. ne profite d'AUCUN don sauf "revive" — sinon ses PV
+		# remontent au-dessus de 0 sans passer par revive() (qui seul le
+		# réactive vraiment : groupe "players", physics, anim), et il compte
+		# comme vivant pour _is_team_wiped() alors qu'il ne l'est pas.
+		if bonus_id != "revive" and inst.is_fainted():
+			continue
 		match bonus_id:
 			"heal_full":
 				inst.current_hp = inst.max_hp
@@ -1375,6 +1416,7 @@ func _open_boutique_shop() -> void:
 	add_child(_boutique_screen)
 	_boutique_screen.learn_move.connect(_learn_boutique_move)
 	_boutique_screen.buy_berries.connect(_buy_boutique_berries)
+	_boutique_screen.buy_potion.connect(_buy_boutique_potion)
 	_boutique_screen.closed.connect(func() -> void:
 		if is_instance_valid(_boutique_screen):
 			_boutique_screen.queue_free()
@@ -1431,6 +1473,51 @@ func _buy_boutique_berries(price: int, amount: int) -> void:
 	if not GameManager.spend_run_money(price):
 		return
 	GameManager.add_gold(amount)
+	Sfx.play("coin", -4.0)
+	hud.update_money(GameManager.run_money)
+	if is_instance_valid(_boutique_screen):
+		_boutique_screen.refresh()
+
+
+## Achat d'une Potion (soin) ou d'un Rappel (résurrection) sur le membre
+## `member_index` — cf. BoutiqueScreen.HEAL_ITEMS. Un Rappel est le SEUL
+## moyen de ranimer un membre K.O. (passe par TeamMember.revive() pour le
+## réactiver vraiment : groupe "players", physics, anim — pas juste ses PV).
+func _buy_boutique_potion(member_index: int, item_id: String) -> void:
+	if member_index < 0 or member_index >= _boutique_live.size():
+		return
+	var item := {}
+	for it: Dictionary in BoutiqueScreen.HEAL_ITEMS:
+		if it["id"] == item_id:
+			item = it
+			break
+	if item.is_empty():
+		return
+	var member = _boutique_live[member_index]
+	if not is_instance_valid(member):
+		return
+	var inst: PokemonInstance = member.pokemon_instance
+	var is_revive: bool = item.get("revive", false)
+	if is_revive != inst.is_fainted():
+		return   # Rappel seulement sur K.O. ; Potion seulement sur un membre vivant
+	if not is_revive and inst.hp_ratio() >= 1.0:
+		return
+	if not GameManager.spend_run_money(int(item["price"])):
+		return
+
+	if is_revive:
+		member.revive(float(item["heal"]))
+	else:
+		var heal: float = float(item["heal"])
+		if heal < 0.0:
+			inst.current_hp = inst.max_hp
+		else:
+			inst.current_hp = mini(inst.max_hp, inst.current_hp + int(heal))
+
+	var ratio := inst.hp_ratio()
+	hud.update_team_hp(member_index, ratio)
+	if member_index == _active_index:
+		hud.update_hp(ratio)
 	Sfx.play("coin", -4.0)
 	hud.update_money(GameManager.run_money)
 	if is_instance_valid(_boutique_screen):
@@ -1905,8 +1992,14 @@ func _game_over() -> void:
 		GameManager.add_gold(consolation_gold)
 		hud.set_wave("DÉFAITE...  +%d Baies de consolation" % consolation_gold)
 	await get_tree().create_timer(2.5).timeout
+
 	if _mp:
-		Net.reset()
+		# En multi, l'HÔTE choisit la suite (réessayer / retour au hub) pour
+		# tout le groupe — cf. Net.request_retry / request_return_hub.
+		var screen := MpDefeatScreen.new()
+		add_child(screen)
+		return
+
 	get_tree().change_scene_to_file("res://scenes/hub/Hub.tscn")
 
 

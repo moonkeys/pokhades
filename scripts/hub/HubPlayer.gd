@@ -25,6 +25,26 @@ var _dash_dir:      Vector3 = Vector3.ZERO
 ## collines douces. Null = sol plat (comportement d'origine).
 var terrain: Node3D = null
 
+# ── Multijoueur (hub partagé) ────────────────────────────────────────────
+# remote_peer != 0 → cette instance est la copie locale d'un AUTRE joueur
+# (cf. TeamMember, même schéma en combat) : pas d'input/collision active,
+# on suit juste l'état diffusé par son propriétaire.
+const NET_SEND_HZ := 12.0
+var remote_peer: int = 0
+var _spawn_pid:  int = -1   # pid forcé (avatars distants) ; -1 = déduire
+var _net_target: Vector3 = Vector3.ZERO
+var _net_anim:   String  = "idle"
+var _net_flip:   bool    = false
+var _net_accum:  float   = 0.0
+
+
+## Appelé par HubWorld AVANT add_child() pour transformer cette instance en
+## copie d'un joueur distant (cf. HubWorld._build_multiplayer_avatars).
+func setup_remote(peer: int, pid: int) -> void:
+	remote_peer = peer
+	_spawn_pid  = pid
+	_net_target = position
+
 
 func _ready() -> void:
 	# Action "dash" (Maj) — enregistrée paresseusement comme en combat, pour
@@ -35,19 +55,27 @@ func _ready() -> void:
 		ev_dash.keycode = KEY_SHIFT
 		InputMap.action_add_event("dash", ev_dash)
 
-	var cs := CollisionShape3D.new()
-	var shape := CapsuleShape3D.new()
-	shape.radius = 0.28
-	shape.height = 1.1
-	cs.shape    = shape
-	cs.position = Vector3(0, 0.55, 0)
-	add_child(cs)
+	# Les copies distantes n'ont pas de collision propre (suivent juste la
+	# position diffusée par leur propriétaire, cf. _remote_process) — sinon
+	# elles bloqueraient physiquement le joueur local.
+	if remote_peer == 0:
+		var cs := CollisionShape3D.new()
+		var shape := CapsuleShape3D.new()
+		shape.radius = 0.28
+		shape.height = 1.1
+		cs.shape    = shape
+		cs.position = Vector3(0, 0.55, 0)
+		add_child(cs)
 
 	_sprite = AnimatedSprite3D.new()
 	Billboard3D.setup_sprite(_sprite)
 	add_child(_sprite)
 
-	var pid := GameManager.selected_starter_id
+	var pid := _spawn_pid
+	if pid <= 0:
+		pid = GameManager.selected_starter_id
+		if Net.active and Net.players.has(Net.local_id()):
+			pid = int(Net.players[Net.local_id()]["pid"])
 	if pid > 0:
 		PMDSprites.get_walk_sprites(pid, self, _on_sprites)
 
@@ -62,7 +90,33 @@ func _on_sprites(result: Dictionary) -> void:
 	_sprite.play("idle")
 
 
+## Copie distante : suit juste la dernière position/anim diffusée par son
+## propriétaire (même schéma que TeamMember._remote_process en combat).
+func _remote_process(delta: float) -> void:
+	var to := _net_target - global_position
+	global_position = global_position.lerp(_net_target, minf(1.0, delta * 12.0))
+	if is_instance_valid(_sprite) and _sprite.sprite_frames:
+		var anim := _net_anim if to.length() > 0.06 else "idle"
+		if anim != _anim and _sprite.sprite_frames.has_animation(anim):
+			_anim = anim
+			_sprite.play(_anim)
+		if not _has_dirs:
+			_sprite.flip_h = _net_flip
+
+
+## État de mouvement diffusé par le propriétaire — appliqué sur ses copies.
+@rpc("any_peer", "call_remote", "unreliable")
+func _net_state(pos: Vector3, anim: String, flip: bool) -> void:
+	_net_target = pos
+	_net_anim   = anim
+	_net_flip   = flip
+
+
 func move_tick(delta: float, blocked: bool) -> void:
+	if remote_peer != 0:
+		_remote_process(delta)
+		return
+
 	# Recharge du dash même à l'arrêt / en dialogue (comme en combat)
 	if _dash_charges < GameManager.dash_charges_bought:
 		_dash_recharge += delta
@@ -108,6 +162,13 @@ func move_tick(delta: float, blocked: bool) -> void:
 	move_and_slide()
 	position.y = terrain.get_height_at_world(global_position) if is_instance_valid(terrain) else 0.0
 	_update_anim(Vector2(dir.x, dir.z))
+
+	# Diffusion de notre position aux autres joueurs (hub multijoueur partagé)
+	if Net.active:
+		_net_accum += delta
+		if _net_accum >= 1.0 / NET_SEND_HZ:
+			_net_accum = 0.0
+			_net_state.rpc(global_position, _anim, _sprite.flip_h if is_instance_valid(_sprite) else false)
 
 
 func _update_anim(dir: Vector2) -> void:

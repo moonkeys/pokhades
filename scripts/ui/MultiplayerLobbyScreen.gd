@@ -21,6 +21,7 @@ const C_ERR     := Color(0.80, 0.20, 0.20)
 var _panel:       Panel = null
 var _mode:        String = "menu"   # menu | lobby
 var _my_pid:      int  = 0
+var _my_item:     String = ""       # api du catalogue, "" = aucun
 var _my_ready:    bool = false
 var _name_cache:  Dictionary = {}   # pid → nom FR
 var _status_lbl:  Label = null
@@ -47,12 +48,23 @@ func _ready() -> void:
 	_rebuild()
 
 
+## Un invité pioche dans les débloqués de L'HÔTE (cf.
+## GameManager.effective_unlocked_pokemon) — pas les siens.
 func _selectable_pids() -> Array:
 	var out: Array = []
 	for pid in GameManager.STARTER_IDS:
 		if pid not in out: out.append(pid)
-	for pid in GameManager.unlocked_pokemon:
+	for pid in GameManager.effective_unlocked_pokemon():
 		if pid not in out: out.append(pid)
+	return out
+
+
+## Objets tenus disponibles (copies libres > 0) — mêmes règles hôte/invité.
+func _selectable_items() -> Array:
+	var out: Array = []
+	for api in GameManager.effective_item_inventory():
+		if int(GameManager.effective_item_inventory()[api]) > 0:
+			out.append(api)
 	return out
 
 
@@ -183,6 +195,7 @@ func _build_lobby() -> void:
 
 	# Choix du Pokémon (gauche) — verrouillé une fois prêt. Décalé assez bas
 	# pour laisser la place aux DEUX codes (LAN + Internet) affichés au-dessus.
+	# Pioche dans les débloqués de L'HÔTE (cf. _selectable_pids).
 	_panel.add_child(_lbl("Ton Pokémon :", 40, 210, 300, 28, 16, C_TEXT))
 	var pids := _selectable_pids()
 	var cols := 4
@@ -199,27 +212,54 @@ func _build_lobby() -> void:
 		var captured := pid
 		b.pressed.connect(func() -> void:
 			_my_pid = captured
-			Net.set_my_choice(_my_pid, _my_ready)
+			Net.set_my_choice(_my_pid, _my_item, _my_ready)
 		)
 		_panel.add_child(b)
+	var grid_rows := ceili(float(pids.size()) / float(cols))
+	var grid_bottom := 244.0 + grid_rows * 44.0
+
+	# Objet tenu (optionnel) — piochés dans l'inventaire de L'HÔTE (cf.
+	# _selectable_items), même logique que le choix du Pokémon.
+	_panel.add_child(_lbl("Objet tenu (optionnel) :", 40, grid_bottom + 10, 320, 24, 14, C_TEXT))
+	var item_choices: Array = [""]
+	item_choices.append_array(_selectable_items())
+	for i in item_choices.size():
+		var api: String = item_choices[i]
+		var b := Button.new()
+		b.text = "Aucun" if api == "" else str(ItemCatalog.get_item(api).get("name_fr", api)).capitalize()
+		b.position = Vector2(40 + (i % cols) * 135, grid_bottom + 40 + (i / cols) * 38)
+		b.size     = Vector2(126, 32)
+		b.add_theme_font_size_override("font_size", 12)
+		b.disabled = _my_ready
+		if api == _my_item: _btn_gold(b)
+		else:                _btn_neutral(b)
+		var captured_api := api
+		b.pressed.connect(func() -> void:
+			_my_item = captured_api
+			Net.set_my_choice(_my_pid, _my_item, _my_ready)
+		)
+		_panel.add_child(b)
+	var item_rows := ceili(float(item_choices.size()) / float(cols))
+	var content_bottom := grid_bottom + 40 + item_rows * 38 + 20
 
 	# Prêt / lancer
+	var action_y := maxf(520.0, content_bottom)
 	var ready_btn := Button.new()
 	ready_btn.text = "✓  Prêt !" if not _my_ready else "✎  Modifier"
-	ready_btn.position = Vector2(40, 520)
+	ready_btn.position = Vector2(40, action_y)
 	ready_btn.size     = Vector2(220, 52)
 	ready_btn.add_theme_font_size_override("font_size", 17)
 	_btn_gold(ready_btn)
 	ready_btn.pressed.connect(func() -> void:
 		_my_ready = not _my_ready
-		Net.set_my_choice(_my_pid, _my_ready)
+		Net.set_my_choice(_my_pid, _my_item, _my_ready)
 	)
 	_panel.add_child(ready_btn)
 
 	if Net.is_host():
 		var start := Button.new()
 		start.text = "⚔  LANCER LA RUN"
-		start.position = Vector2(620, 520)
+		start.position = Vector2(620, action_y)
 		start.size     = Vector2(340, 52)
 		start.add_theme_font_size_override("font_size", 18)
 		start.disabled = not Net.all_ready()
@@ -228,7 +268,7 @@ func _build_lobby() -> void:
 		_panel.add_child(start)
 		if not Net.all_ready():
 			_panel.add_child(_lbl("Il faut au moins 2 joueurs, tous prêts.",
-				620, 576, 340, 24, 12, C_DIM))
+				620, action_y + 56, 340, 24, 12, C_DIM))
 
 
 # ── Helpers ────────────────────────────────────────────────────────────

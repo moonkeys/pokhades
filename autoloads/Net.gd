@@ -26,6 +26,13 @@ var join_code:        String = ""
 var join_code_public:  String = ""
 var players:   Dictionary = {} # peer_id → {"name": String, "pid": int, "ready": bool}
 
+## Catalogue de l'HÔTE (Pokémon débloqués + inventaire d'objets), diffusé aux
+## invités à leur connexion — cf. GameManager.effective_unlocked_pokemon() :
+## un invité choisit son équipe/ses objets dans les déblocages de l'hôte, pas
+## les siens (qui n'ont pas de sens dans une partie qu'il n'héberge pas).
+var host_unlocked: Array      = []
+var host_items:    Dictionary = {}
+
 var _upnp_thread: Thread = null
 
 signal players_changed
@@ -81,7 +88,9 @@ func host_game(player_name: String) -> Error:
 	multiplayer.multiplayer_peer = peer
 	active  = true
 	in_run  = false
-	players = {1: {"name": player_name, "pid": GameManager.selected_starter_id, "ready": false}}
+	players = {1: {"name": player_name, "pid": GameManager.selected_starter_id, "item": "", "ready": false}}
+	host_unlocked = GameManager.unlocked_pokemon.duplicate()
+	host_items    = GameManager.item_inventory.duplicate()
 	join_code = _encode_ip(_local_ipv4())
 	join_code_public = ""
 	players_changed.emit()
@@ -160,8 +169,9 @@ func _register(player_name: String, pid: int) -> void:
 	var sender := multiplayer.get_remote_sender_id()
 	if players.size() >= MAX_PLAYERS:
 		return
-	players[sender] = {"name": player_name, "pid": pid, "ready": false}
+	players[sender] = {"name": player_name, "pid": pid, "item": "", "ready": false}
 	_sync_players.rpc(players)
+	_sync_catalog.rpc_id(sender, host_unlocked, host_items)
 	players_changed.emit()
 
 
@@ -171,25 +181,36 @@ func _sync_players(data: Dictionary) -> void:
 	players_changed.emit()
 
 
-## Un joueur change son Pokémon ou son état "prêt" — transite par l'hôte.
-func set_my_choice(pid: int, ready: bool) -> void:
+## Envoyé UNE FOIS par l'hôte à chaque invité qui rejoint — cf. host_unlocked
+## ci-dessus. Sur l'hôte lui-même, host_unlocked/host_items sont déjà les
+## bonnes valeurs (remplies dans host_game()), pas besoin de ce RPC.
+@rpc("authority", "call_remote", "reliable")
+func _sync_catalog(unlocked: Array, items: Dictionary) -> void:
+	host_unlocked = unlocked
+	host_items    = items
+
+
+## Un joueur change son Pokémon, son objet tenu (api du catalogue, "" =
+## aucun) ou son état "prêt" — transite par l'hôte.
+func set_my_choice(pid: int, item: String, ready: bool) -> void:
 	if multiplayer.is_server():
-		_apply_choice(1, pid, ready)
+		_apply_choice(1, pid, item, ready)
 	else:
-		_request_choice.rpc_id(1, pid, ready)
+		_request_choice.rpc_id(1, pid, item, ready)
 
 
 @rpc("any_peer", "call_remote", "reliable")
-func _request_choice(pid: int, ready: bool) -> void:
+func _request_choice(pid: int, item: String, ready: bool) -> void:
 	if not multiplayer.is_server():
 		return
-	_apply_choice(multiplayer.get_remote_sender_id(), pid, ready)
+	_apply_choice(multiplayer.get_remote_sender_id(), pid, item, ready)
 
 
-func _apply_choice(id: int, pid: int, ready: bool) -> void:
+func _apply_choice(id: int, pid: int, item: String, ready: bool) -> void:
 	if not players.has(id):
 		return
 	players[id]["pid"]   = pid
+	players[id]["item"]  = item
 	players[id]["ready"] = ready
 	_sync_players.rpc(players)
 	players_changed.emit()
@@ -223,6 +244,41 @@ func _begin(s: int, roster: Dictionary) -> void:
 	get_tree().change_scene_to_file("res://scenes/combat/CombatArena.tscn")
 
 
+# ── Fin de run (défaite en multi) ──────────────────────────────────────
+# SEUL L'HÔTE décide de la suite (cf. écran de défaite multi) : réessayer
+# (nouvelle run, même équipe/objets déjà choisis — pas de repassage par le
+# lobby) ou retour au Hub PARTAGÉ (tout le monde y reste connecté et s'y
+# balade ensemble, cf. HubWorld._build_multiplayer_avatars). Diffusé à tous
+# les pairs pour rester synchronisés.
+
+func request_retry() -> void:
+	if not multiplayer.is_server():
+		return
+	var s := randi()
+	_retry.rpc(s)
+	_retry(s)
+
+
+@rpc("authority", "call_remote", "reliable")
+func _retry(s: int) -> void:
+	base_seed = s if s != 0 else 1
+	in_run    = true
+	get_tree().change_scene_to_file("res://scenes/combat/CombatArena.tscn")
+
+
+func request_return_hub() -> void:
+	if not multiplayer.is_server():
+		return
+	_return_hub.rpc()
+	_return_hub()
+
+
+@rpc("authority", "call_remote", "reliable")
+func _return_hub() -> void:
+	in_run = false
+	get_tree().change_scene_to_file("res://scenes/hub/Hub.tscn")
+
+
 # ── Fin / nettoyage ────────────────────────────────────────────────────
 
 func reset() -> void:
@@ -231,6 +287,8 @@ func reset() -> void:
 	players = {}
 	join_code = ""
 	join_code_public = ""
+	host_unlocked = []
+	host_items    = {}
 	if multiplayer.multiplayer_peer != null:
 		multiplayer.multiplayer_peer.close()
 		multiplayer.multiplayer_peer = null

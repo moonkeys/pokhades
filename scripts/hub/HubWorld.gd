@@ -46,6 +46,7 @@ const C_TEXT_LT  := Color(0.94, 0.88, 0.72)
 const C_TEXT_DIM := Color(0.58, 0.50, 0.36)
 
 var _player:      HubPlayer = null
+var _remote_avatars: Dictionary = {}   # peer_id → HubPlayer (hub partagé)
 var _npcs:        Array     = []
 var _near_npc:    HubNPC    = null
 var _blocked:     bool      = false
@@ -78,6 +79,7 @@ func _ready() -> void:
 	_build_player()
 	_build_camera()
 	_build_ui()
+	_build_multiplayer_avatars()
 	if GameManager.is_first_run and GameManager.unlocked_pokemon.is_empty():
 		_open_starter_selection()
 
@@ -313,6 +315,45 @@ func _build_player() -> void:
 	add_child(_player)
 
 
+## Hub PARTAGÉ en multijoueur : une copie (HubPlayer.setup_remote) par autre
+## joueur connecté (cf. HubPlayer._remote_process, même schéma que les
+## copies de TeamMember en combat) — tout le monde se balade ensemble entre
+## deux runs. Se resynchronise si des joueurs rejoignent/partent pendant
+## qu'on est dans le hub (cf. Net.players_changed).
+func _build_multiplayer_avatars() -> void:
+	if not Net.active:
+		return
+	Net.players_changed.connect(_sync_remote_avatars)
+	_sync_remote_avatars()
+
+
+func _sync_remote_avatars() -> void:
+	if not Net.active:
+		for peer: int in _remote_avatars:
+			if is_instance_valid(_remote_avatars[peer]):
+				_remote_avatars[peer].queue_free()
+		_remote_avatars.clear()
+		return
+
+	var local_id := Net.local_id()
+	for peer: int in _remote_avatars.keys():
+		if not Net.players.has(peer):
+			if is_instance_valid(_remote_avatars[peer]):
+				_remote_avatars[peer].queue_free()
+			_remote_avatars.erase(peer)
+
+	for peer: int in Net.players:
+		if peer == local_id or _remote_avatars.has(peer):
+			continue
+		var p: Dictionary = Net.players[peer]
+		var avatar := HubPlayer.new()
+		avatar.setup_remote(peer, int(p["pid"]))
+		avatar.position = PLAYER_START + Vector3(randf_range(-1.5, 1.5), 0, randf_range(-1.5, 1.5))
+		avatar.terrain  = _terrain
+		add_child(avatar)
+		_remote_avatars[peer] = avatar
+
+
 func _build_camera() -> void:
 	_cam = Camera3D.new()
 	_cam.fov = CAM_FOV
@@ -431,6 +472,10 @@ func _process(delta: float) -> void:
 		return
 
 	_player.move_tick(delta, _blocked)
+	for peer: int in _remote_avatars:
+		var avatar: HubPlayer = _remote_avatars[peer]
+		if is_instance_valid(avatar):
+			avatar.move_tick(delta, false)
 	_update_camera(false, delta)
 
 	if _blocked:
