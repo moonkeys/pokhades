@@ -201,12 +201,14 @@ func _build_lobby() -> void:
 			UiKit.GREEN_DARK if p["ready"] else UiKit.TEXT_DARK.lightened(0.3), 60)
 		roster_list.add_child(row)
 
-	# Colonne 1 — choix du Pokémon : grille à DEUX COLONNES (icône + nom +
-	# type), pioche dans les débloqués de L'HÔTE (cf. _selectable_pids).
+	# Colonne 1 — choix du Pokémon : grille à DEUX COLONNES prenant TOUTE la
+	# largeur disponible (icône + nom + type), pioche dans les débloqués de
+	# L'HÔTE (cf. _selectable_pids). Plus d'aperçu séparé à côté — le sprite
+	# est déjà visible sur chaque case ET dans le bandeau du haut.
 	UiKit.label(_panel, "Ton Pokémon :", Vector2(40, 170), 15, UiKit.CREAM, 260)
 	var pid_scroll := ScrollContainer.new()
 	pid_scroll.position = Vector2(40, 196)
-	pid_scroll.size     = Vector2(260, 300)
+	pid_scroll.size     = Vector2(596, 300)
 	pid_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	_panel.add_child(pid_scroll)
 	var pid_grid := GridContainer.new()
@@ -217,29 +219,9 @@ func _build_lobby() -> void:
 	for pid in _selectable_pids():
 		pid_grid.add_child(_build_pid_row(pid))
 
-	# Colonne 2 — aperçu du sélectionné : GRAND sprite mis en avant.
-	var col2_x := 316.0
-	var col2_w := 330.0
-	var sel_data: Dictionary = _data_cache.get(_my_pid, {})
-	var sel_pd: PokemonData  = sel_data.get("pd", null)
-	UiKit.label(_panel, "%s (sélectionné)" % (sel_pd.name_fr.capitalize() if sel_pd else "…"),
-		Vector2(col2_x, 170), 15, UiKit.GOLD, col2_w, HORIZONTAL_ALIGNMENT_CENTER)
-	var portrait: Texture2D = sel_data.get("portrait", null)
-	if is_instance_valid(portrait):
-		var ptex := TextureRect.new()
-		ptex.texture      = portrait
-		ptex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		ptex.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-		ptex.position     = Vector2(col2_x + (col2_w - 120.0) * 0.5, 200)
-		ptex.size         = Vector2(120, 120)
-		_panel.add_child(ptex)
-	if sel_pd and not sel_pd.types.is_empty():
-		UiKit.type_badge(_panel, Vector2(col2_x + (col2_w - 64.8) * 0.5, 328), str(sel_pd.types[0]), 18.0)
-
-	# Colonne 3 — statistiques de base, puis les attaques apprenables
-	# (lui ET ses évolutions) juste en dessous, cf. demande utilisateur.
-	_build_stats_panel(Vector2(662, 170), Vector2(298, 180))
-	_build_attacks_panel(Vector2(662, 358), Vector2(298, 150))
+	# Colonne 2 — statistiques ET attaques (lui + ses évolutions), dans le
+	# MÊME conteneur (cf. demande utilisateur).
+	_build_stats_and_moves_panel(Vector2(662, 170), Vector2(298, 420))
 
 	# Objet tenu (optionnel) — grille d'icônes défilante horizontalement,
 	# piochée dans l'inventaire de L'HÔTE (cf. _selectable_items).
@@ -294,7 +276,7 @@ func _build_lobby() -> void:
 func _build_pid_row(pid: int) -> Button:
 	var sel := pid == _my_pid
 	var row := Button.new()
-	row.custom_minimum_size = Vector2(124, 66)
+	row.custom_minimum_size = Vector2(292, 68)
 	row.disabled = _my_ready
 	row.add_theme_stylebox_override("normal",
 		UiKit.style(UiKit.TAN if sel else UiKit.BROWN_CARD, UiKit.CYAN_SEL if sel else UiKit.WOOD_EDGE, 8, 3 if sel else 2))
@@ -312,15 +294,15 @@ func _build_pid_row(pid: int) -> Button:
 		tex.texture      = portrait
 		tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		tex.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-		tex.position     = Vector2(4, 4)
-		tex.size         = Vector2(32, 32)
+		tex.position     = Vector2(6, 6)
+		tex.size         = Vector2(52, 52)
 		tex.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		row.add_child(tex)
 
 	var name_col := UiKit.TEXT_DARK if sel else UiKit.CREAM
-	UiKit.label(row, pd.name_fr.capitalize() if pd else "#%d" % pid, Vector2(40, 6), 12, name_col, 80)
+	UiKit.label(row, pd.name_fr.capitalize() if pd else "#%d" % pid, Vector2(66, 10), 14, name_col, 200)
 	if pd and not pd.types.is_empty():
-		UiKit.type_badge(row, Vector2(4, 40), str(pd.types[0]), 15.0)
+		UiKit.type_badge(row, Vector2(66, 34), str(pd.types[0]), 18.0)
 
 	row.pressed.connect(func() -> void:
 		_my_pid = pid
@@ -338,33 +320,54 @@ func _build_hint_row(text: String, w: float) -> Control:
 	return row
 
 
-## Encart des attaques apprenables (lui ET ses évolutions, cf. _resolve_moves)
-## — grille à 2 colonnes : nom, type, puissance, ATT (physique) / ASP
+## Encart UNIQUE stats + attaques (même conteneur, cf. demande utilisateur) :
+## barres de statistiques de base en haut, puis la liste des attaques
+## apprenables (lui ET ses évolutions, cf. _resolve_moves) en grille à 2
+## colonnes juste en dessous — nom, type, puissance, ATT (physique) / ASP
 ## (spéciale), triées de la moins à la plus puissante.
-func _build_attacks_panel(pos: Vector2, size: Vector2) -> void:
-	UiKit.label(_panel, "Attaques (avec évolutions) :", pos + Vector2(0, -22), 13, UiKit.CREAM, size.x)
+func _build_stats_and_moves_panel(pos: Vector2, size: Vector2) -> void:
+	var card := UiKit.dark_card(_panel, pos, size)
+	UiKit.label(card, "Statistiques de base", Vector2(10, 8), 14, UiKit.CREAM, size.x - 20)
+
+	var data: Dictionary = _data_cache.get(_my_pid, {})
+	var pd: PokemonData  = data.get("pd", null)
+	var stats_bottom := 34.0
+	if pd == null:
+		UiKit.label(card, "Chargement…", Vector2(10, 34), 12, UiKit.CREAM.darkened(0.15), size.x - 20)
+		stats_bottom = 60.0
+	else:
+		var vals: Array = [pd.hp, pd.attack, pd.defense, pd.sp_attack, pd.sp_defense, pd.speed]
+		var y := 34.0
+		for i in 6:
+			UiKit.label(card, STAT_NAMES[i], Vector2(10, y), 11, UiKit.CREAM, 74)
+			_draw_stat_bar(card, Vector2(88, y + 2), size.x - 126, 12, float(vals[i]) / STAT_SCALE, STAT_COLORS[i])
+			UiKit.label(card, str(vals[i]), Vector2(size.x - 34, y), 11, UiKit.CREAM, 32)
+			y += 23.0
+		stats_bottom = y + 4.0
+
+	UiKit.label(card, "Attaques (avec évolutions)", Vector2(10, stats_bottom), 13, UiKit.GOLD, size.x - 20)
+	var moves_top := stats_bottom + 22.0
 	var scroll := ScrollContainer.new()
-	scroll.position = pos
-	scroll.size     = size
+	scroll.position = Vector2(8, moves_top)
+	scroll.size     = Vector2(size.x - 16, size.y - moves_top - 8)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	_panel.add_child(scroll)
+	card.add_child(scroll)
 	var grid := GridContainer.new()
 	grid.columns = 2
 	grid.add_theme_constant_override("h_separation", 4)
 	grid.add_theme_constant_override("v_separation", 4)
 	scroll.add_child(grid)
 
-	var cell_w := (size.x - 4.0) * 0.5
-	var sel_data: Dictionary = _data_cache.get(_my_pid, {})
-	if sel_data.has("moves"):
-		var moves: Array = sel_data["moves"]
+	var cell_w := (size.x - 16.0 - 4.0) * 0.5
+	if data.has("moves"):
+		var moves: Array = data["moves"]
 		if moves.is_empty():
-			grid.add_child(_build_hint_row("Aucune attaque offensive connue.", size.x))
+			grid.add_child(_build_hint_row("Aucune attaque offensive connue.", size.x - 16))
 		else:
 			for mv: Dictionary in moves:
 				grid.add_child(_build_move_cell(mv, cell_w))
 	else:
-		grid.add_child(_build_hint_row("Chargement…", size.x))
+		grid.add_child(_build_hint_row("Chargement…", size.x - 16))
 		_resolve_moves(_my_pid)
 
 
@@ -380,26 +383,6 @@ func _build_move_cell(mv: Dictionary, w: float) -> Control:
 	UiKit.label(row, "ATT" if physical else "ASP", Vector2(w - 40, 40), 11,
 		Color(0.85, 0.5, 0.3) if physical else Color(0.4, 0.65, 0.95), 34)
 	return row
-
-
-## Encart de statistiques de base (barres colorées, cf. mockup utilisateur).
-func _build_stats_panel(pos: Vector2, size: Vector2) -> void:
-	var card := UiKit.dark_card(_panel, pos, size)
-	UiKit.label(card, "Statistiques de base", Vector2(10, 8), 14, UiKit.CREAM, size.x - 20)
-
-	var data: Dictionary = _data_cache.get(_my_pid, {})
-	var pd: PokemonData  = data.get("pd", null)
-	if pd == null:
-		UiKit.label(card, "Chargement…", Vector2(10, 40), 12, UiKit.CREAM.darkened(0.15), size.x - 20)
-		return
-
-	var vals: Array = [pd.hp, pd.attack, pd.defense, pd.sp_attack, pd.sp_defense, pd.speed]
-	var y := 34.0
-	for i in 6:
-		UiKit.label(card, STAT_NAMES[i], Vector2(10, y), 11, UiKit.CREAM, 74)
-		_draw_stat_bar(card, Vector2(88, y + 2), size.x - 126, 12, float(vals[i]) / STAT_SCALE, STAT_COLORS[i])
-		UiKit.label(card, str(vals[i]), Vector2(size.x - 34, y), 11, UiKit.CREAM, 32)
-		y += 23.0
 
 
 func _draw_stat_bar(parent: Control, pos: Vector2, w: float, h: float, ratio: float, col: Color) -> void:
