@@ -850,8 +850,8 @@ func _spawn_room_enemies() -> void:
 		# dernier (anneau doré). Chaque vague envoie la forme ÉVOLUÉE de son
 		# Pokémon comme "boss", escortée de sbires à la forme DE BASE de la
 		# même lignée (ex : Steelix + des Onix) — un vrai combat de dresseur
-		# expérimenté, pas un simple face-à-face 1v1.
-		var act := RunManager.inst().act_of(room)
+		# expérimenté, pas un simple face-à-face 1v1. (`act` déjà calculé en
+		# haut de fonction, cf. mise à l'échelle de la difficulté.)
 		var comp: Dictionary = RunManager.inst().champion_for_act(act)
 		var comp_ids: Array = comp["ids"]
 		_waves_total = comp_ids.size()

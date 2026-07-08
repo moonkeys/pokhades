@@ -294,8 +294,6 @@ func _return_hub() -> void:
 	get_tree().change_scene_to_file("res://scenes/hub/Hub.tscn")
 
 
-# ── Fin / nettoyage ────────────────────────────────────────────────────
-
 func reset() -> void:
 	active  = false
 	in_run  = false
