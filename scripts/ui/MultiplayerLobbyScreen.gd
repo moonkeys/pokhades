@@ -145,18 +145,26 @@ func _player_name() -> String:
 # ── Lobby : roster + choix Pokémon + stats/attaques + objet + prêt ─────
 
 func _build_lobby() -> void:
-	# Code de partie (hôte) — deux codes distincts pour éviter la confusion
-	# LAN/Internet (cf. Net.join_code / Net.join_code_public) : un joueur du
-	# MÊME réseau doit utiliser le code "réseau local", pas le code Internet
-	# (certaines box ne routent pas leur propre IP publique en interne).
+	# Bandeau du haut : code de partie ET sprite du Pokémon choisi, aux deux
+	# bouts de la même carte (mise en page "space-between", cf. demande).
+	var top_card := UiKit.dark_card(_panel, Vector2(40, 68), Vector2(596, 84))
 	if Net.is_host():
-		UiKit.label(_panel, "Code (Wi-Fi/réseau) :", Vector2(40, 70), 13, UiKit.CREAM, 280)
-		UiKit.label(_panel, Net.join_code, Vector2(40, 88), 20, UiKit.GOLD, 280)
+		UiKit.label(top_card, "Code (Wi-Fi/réseau) :", Vector2(12, 6), 12, UiKit.CREAM, 260)
+		UiKit.label(top_card, Net.join_code, Vector2(12, 24), 20, UiKit.GOLD, 260)
 		if Net.join_code_public != "" and Net.join_code_public != Net.join_code:
-			UiKit.label(_panel, "Code (Internet) : %s" % Net.join_code_public, Vector2(40, 116), 12, UiKit.CREAM, 280)
+			UiKit.label(top_card, "Code (Internet) : %s" % Net.join_code_public, Vector2(12, 54), 11, UiKit.CREAM, 260)
 	else:
-		UiKit.label(_panel, "Connecté — en attente du lancement par l'hôte.",
-			Vector2(40, 80), 13, UiKit.CREAM, 560)
+		UiKit.label(top_card, "Connecté — en attente du lancement par l'hôte.",
+			Vector2(12, 30), 13, UiKit.CREAM, 380)
+	var top_portrait: Texture2D = _data_cache.get(_my_pid, {}).get("portrait", null)
+	if is_instance_valid(top_portrait):
+		var top_tex := TextureRect.new()
+		top_tex.texture      = top_portrait
+		top_tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		top_tex.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		top_tex.position     = Vector2(596 - 76, 10)
+		top_tex.size         = Vector2(64, 64)
+		top_card.add_child(top_tex)
 
 	# Roster — liste défilante (peut monter à 6) pour ne pas prendre trop de
 	# place au-dessus du reste de l'écran.
@@ -193,68 +201,51 @@ func _build_lobby() -> void:
 			UiKit.GREEN_DARK if p["ready"] else UiKit.TEXT_DARK.lightened(0.3), 60)
 		roster_list.add_child(row)
 
-	# Colonne 1 — choix du Pokémon : liste défilante (icône + nom + type),
-	# pioche dans les débloqués de L'HÔTE (cf. _selectable_pids).
-	UiKit.label(_panel, "Ton Pokémon :", Vector2(40, 214), 15, UiKit.CREAM, 260)
+	# Colonne 1 — choix du Pokémon : grille à DEUX COLONNES (icône + nom +
+	# type), pioche dans les débloqués de L'HÔTE (cf. _selectable_pids).
+	UiKit.label(_panel, "Ton Pokémon :", Vector2(40, 170), 15, UiKit.CREAM, 260)
 	var pid_scroll := ScrollContainer.new()
-	pid_scroll.position = Vector2(40, 240)
-	pid_scroll.size     = Vector2(260, 254)
+	pid_scroll.position = Vector2(40, 196)
+	pid_scroll.size     = Vector2(260, 300)
 	pid_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	_panel.add_child(pid_scroll)
-	var pid_list := VBoxContainer.new()
-	pid_list.add_theme_constant_override("separation", 6)
-	pid_scroll.add_child(pid_list)
+	var pid_grid := GridContainer.new()
+	pid_grid.columns = 2
+	pid_grid.add_theme_constant_override("h_separation", 6)
+	pid_grid.add_theme_constant_override("v_separation", 6)
+	pid_scroll.add_child(pid_grid)
 	for pid in _selectable_pids():
-		pid_list.add_child(_build_pid_row(pid))
+		pid_grid.add_child(_build_pid_row(pid))
 
-	# Colonne 2 — aperçu du sélectionné : GRAND sprite mis en avant + les
-	# attaques qu'il peut apprendre (lui ET ses évolutions), triées de la
-	# moins à la plus puissante (cf. _resolve_moves).
+	# Colonne 2 — aperçu du sélectionné : GRAND sprite mis en avant.
 	var col2_x := 316.0
 	var col2_w := 330.0
 	var sel_data: Dictionary = _data_cache.get(_my_pid, {})
 	var sel_pd: PokemonData  = sel_data.get("pd", null)
 	UiKit.label(_panel, "%s (sélectionné)" % (sel_pd.name_fr.capitalize() if sel_pd else "…"),
-		Vector2(col2_x, 214), 15, UiKit.GOLD, col2_w, HORIZONTAL_ALIGNMENT_CENTER)
+		Vector2(col2_x, 170), 15, UiKit.GOLD, col2_w, HORIZONTAL_ALIGNMENT_CENTER)
 	var portrait: Texture2D = sel_data.get("portrait", null)
 	if is_instance_valid(portrait):
 		var ptex := TextureRect.new()
 		ptex.texture      = portrait
 		ptex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		ptex.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-		ptex.position     = Vector2(col2_x + (col2_w - 100.0) * 0.5, 238)
-		ptex.size         = Vector2(100, 100)
+		ptex.position     = Vector2(col2_x + (col2_w - 120.0) * 0.5, 200)
+		ptex.size         = Vector2(120, 120)
 		_panel.add_child(ptex)
 	if sel_pd and not sel_pd.types.is_empty():
-		UiKit.type_badge(_panel, Vector2(col2_x + (col2_w - 64.8) * 0.5, 344), str(sel_pd.types[0]), 18.0)
+		UiKit.type_badge(_panel, Vector2(col2_x + (col2_w - 64.8) * 0.5, 328), str(sel_pd.types[0]), 18.0)
 
-	var moves_scroll := ScrollContainer.new()
-	moves_scroll.position = Vector2(col2_x, 370)
-	moves_scroll.size     = Vector2(col2_w, 128)
-	moves_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	_panel.add_child(moves_scroll)
-	var moves_list := VBoxContainer.new()
-	moves_list.add_theme_constant_override("separation", 5)
-	moves_scroll.add_child(moves_list)
-	if sel_data.has("moves"):
-		var moves: Array = sel_data["moves"]
-		if moves.is_empty():
-			moves_list.add_child(_build_hint_row("Aucune attaque offensive connue à ce niveau.", col2_w))
-		else:
-			for mv: Dictionary in moves:
-				moves_list.add_child(_build_move_row(mv))
-	else:
-		moves_list.add_child(_build_hint_row("Chargement des attaques…", col2_w))
-		_resolve_moves(_my_pid)
-
-	# Colonne 3 — statistiques de base.
-	_build_stats_panel(Vector2(662, 214), Vector2(298, 280))
+	# Colonne 3 — statistiques de base, puis les attaques apprenables
+	# (lui ET ses évolutions) juste en dessous, cf. demande utilisateur.
+	_build_stats_panel(Vector2(662, 170), Vector2(298, 180))
+	_build_attacks_panel(Vector2(662, 358), Vector2(298, 150))
 
 	# Objet tenu (optionnel) — grille d'icônes défilante horizontalement,
 	# piochée dans l'inventaire de L'HÔTE (cf. _selectable_items).
-	UiKit.label(_panel, "Objet tenu (optionnel) :", Vector2(40, 504), 14, UiKit.CREAM, 320)
+	UiKit.label(_panel, "Objet tenu (optionnel) :", Vector2(40, 522), 14, UiKit.CREAM, 320)
 	var item_scroll := ScrollContainer.new()
-	item_scroll.position = Vector2(40, 528)
+	item_scroll.position = Vector2(40, 546)
 	item_scroll.size     = Vector2(920, 56)
 	item_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	_panel.add_child(item_scroll)
@@ -268,18 +259,18 @@ func _build_lobby() -> void:
 
 	# Quitter (gauche) / Prêt + Lancer (droite, cf. demande de mise en page)
 	var quit_btn := UiKit.button("✕  Quitter", Vector2(170, 48), false)
-	quit_btn.position = Vector2(40, 636)
+	quit_btn.position = Vector2(40, 630)
 	quit_btn.pressed.connect(func() -> void:
 		Net.reset()
 		closed.emit()
 	)
 	_panel.add_child(quit_btn)
 
-	_status_lbl = UiKit.label(_panel, "", Vector2(230, 648), 13, UiKit.GREEN, 380)
+	_status_lbl = UiKit.label(_panel, "", Vector2(230, 642), 13, UiKit.GREEN, 380)
 	_status_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	var ready_btn := UiKit.button("✓  Prêt !" if not _my_ready else "✎  Modifier", Vector2(298, 46))
-	ready_btn.position = Vector2(662, 594)
+	ready_btn.position = Vector2(662, 600)
 	ready_btn.disabled = _selectable_pids().is_empty()
 	ready_btn.pressed.connect(func() -> void:
 		_my_ready = not _my_ready
@@ -289,7 +280,7 @@ func _build_lobby() -> void:
 
 	if Net.is_host():
 		var start := UiKit.button("⚔  LANCER LA RUN", Vector2(298, 46))
-		start.position = Vector2(662, 646)
+		start.position = Vector2(662, 652)
 		start.disabled = not Net.all_ready()
 		if not Net.all_ready():
 			start.tooltip_text = "Il faut au moins 2 joueurs, tous prêts."
@@ -297,13 +288,13 @@ func _build_lobby() -> void:
 		_panel.add_child(start)
 
 
-## Ligne cliquable de la liste défilante des Pokémon (icône PMD + nom +
+## Case cliquable de la grille à 2 colonnes des Pokémon (icône PMD + nom +
 ## pastille de type) — sélection immédiate au clic, même quand verrouillé
 ## par "Prêt" (désactivée dans ce cas, cf. `disabled`).
 func _build_pid_row(pid: int) -> Button:
 	var sel := pid == _my_pid
 	var row := Button.new()
-	row.custom_minimum_size = Vector2(240, 48)
+	row.custom_minimum_size = Vector2(124, 66)
 	row.disabled = _my_ready
 	row.add_theme_stylebox_override("normal",
 		UiKit.style(UiKit.TAN if sel else UiKit.BROWN_CARD, UiKit.CYAN_SEL if sel else UiKit.WOOD_EDGE, 8, 3 if sel else 2))
@@ -322,14 +313,14 @@ func _build_pid_row(pid: int) -> Button:
 		tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		tex.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 		tex.position     = Vector2(4, 4)
-		tex.size         = Vector2(40, 40)
+		tex.size         = Vector2(32, 32)
 		tex.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		row.add_child(tex)
 
 	var name_col := UiKit.TEXT_DARK if sel else UiKit.CREAM
-	UiKit.label(row, pd.name_fr.capitalize() if pd else "#%d" % pid, Vector2(52, 4), 14, name_col, 130)
+	UiKit.label(row, pd.name_fr.capitalize() if pd else "#%d" % pid, Vector2(40, 6), 12, name_col, 80)
 	if pd and not pd.types.is_empty():
-		UiKit.type_badge(row, Vector2(50, 24), str(pd.types[0]), 18.0)
+		UiKit.type_badge(row, Vector2(4, 40), str(pd.types[0]), 15.0)
 
 	row.pressed.connect(func() -> void:
 		_my_pid = pid
@@ -339,22 +330,55 @@ func _build_pid_row(pid: int) -> Button:
 	return row
 
 
-## Ligne de la liste des attaques disponibles (nom + pastille de type —
-## pas d'icône à gauche, cf. demande utilisateur).
-func _build_move_row(mv: Dictionary) -> Control:
-	var row := Panel.new()
-	row.custom_minimum_size = Vector2(310, 40)
-	row.add_theme_stylebox_override("panel", UiKit.style(UiKit.BROWN_CARD, UiKit.WOOD_EDGE, 8, 2))
-	UiKit.label(row, str(mv.get("name", "?")), Vector2(8, 3), 14, UiKit.CREAM, 170)
-	UiKit.type_badge(row, Vector2(8, 20), str(mv.get("type", "")), 15.0)
-	return row
-
-
 func _build_hint_row(text: String, w: float) -> Control:
 	var row := Panel.new()
 	row.custom_minimum_size = Vector2(w, 40)
 	row.add_theme_stylebox_override("panel", UiKit.style(UiKit.BROWN_CARD.darkened(0.1), UiKit.WOOD_EDGE, 8, 2))
 	UiKit.label(row, text, Vector2(8, 10), 12, UiKit.CREAM.darkened(0.15), w - 16)
+	return row
+
+
+## Encart des attaques apprenables (lui ET ses évolutions, cf. _resolve_moves)
+## — grille à 2 colonnes : nom, type, puissance, ATT (physique) / ASP
+## (spéciale), triées de la moins à la plus puissante.
+func _build_attacks_panel(pos: Vector2, size: Vector2) -> void:
+	UiKit.label(_panel, "Attaques (avec évolutions) :", pos + Vector2(0, -22), 13, UiKit.CREAM, size.x)
+	var scroll := ScrollContainer.new()
+	scroll.position = pos
+	scroll.size     = size
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_panel.add_child(scroll)
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 4)
+	grid.add_theme_constant_override("v_separation", 4)
+	scroll.add_child(grid)
+
+	var cell_w := (size.x - 4.0) * 0.5
+	var sel_data: Dictionary = _data_cache.get(_my_pid, {})
+	if sel_data.has("moves"):
+		var moves: Array = sel_data["moves"]
+		if moves.is_empty():
+			grid.add_child(_build_hint_row("Aucune attaque offensive connue.", size.x))
+		else:
+			for mv: Dictionary in moves:
+				grid.add_child(_build_move_cell(mv, cell_w))
+	else:
+		grid.add_child(_build_hint_row("Chargement…", size.x))
+		_resolve_moves(_my_pid)
+
+
+## Case de la grille d'attaques : nom, type, puissance, ATT/ASP.
+func _build_move_cell(mv: Dictionary, w: float) -> Control:
+	var row := Panel.new()
+	row.custom_minimum_size = Vector2(w, 56)
+	row.add_theme_stylebox_override("panel", UiKit.style(UiKit.BROWN_CARD, UiKit.WOOD_EDGE, 8, 2))
+	UiKit.label(row, str(mv.get("name", "?")), Vector2(6, 3), 12, UiKit.CREAM, w - 12)
+	UiKit.type_badge(row, Vector2(6, 22), str(mv.get("type", "")), 14.0)
+	var physical: bool = str(mv.get("class", "physical")) == "physical"
+	UiKit.label(row, "Pui. %d" % int(mv.get("power", 0)), Vector2(6, 40), 11, UiKit.CREAM.darkened(0.1), 60)
+	UiKit.label(row, "ATT" if physical else "ASP", Vector2(w - 40, 40), 11,
+		Color(0.85, 0.5, 0.3) if physical else Color(0.4, 0.65, 0.95), 34)
 	return row
 
 
@@ -370,12 +394,12 @@ func _build_stats_panel(pos: Vector2, size: Vector2) -> void:
 		return
 
 	var vals: Array = [pd.hp, pd.attack, pd.defense, pd.sp_attack, pd.sp_defense, pd.speed]
-	var y := 40.0
+	var y := 34.0
 	for i in 6:
-		UiKit.label(card, STAT_NAMES[i], Vector2(10, y), 12, UiKit.CREAM, 74)
-		_draw_stat_bar(card, Vector2(90, y + 3), size.x - 128, 13, float(vals[i]) / STAT_SCALE, STAT_COLORS[i])
-		UiKit.label(card, str(vals[i]), Vector2(size.x - 36, y), 12, UiKit.CREAM, 32)
-		y += 26.0
+		UiKit.label(card, STAT_NAMES[i], Vector2(10, y), 11, UiKit.CREAM, 74)
+		_draw_stat_bar(card, Vector2(88, y + 2), size.x - 126, 12, float(vals[i]) / STAT_SCALE, STAT_COLORS[i])
+		UiKit.label(card, str(vals[i]), Vector2(size.x - 34, y), 11, UiKit.CREAM, 32)
+		y += 23.0
 
 
 func _draw_stat_bar(parent: Control, pos: Vector2, w: float, h: float, ratio: float, col: Color) -> void:
@@ -534,6 +558,7 @@ func _collect_chain_moves(pid: int, chain: Array) -> void:
 					"name":  fr if fr != "" else str(nm).replace("-", " ").capitalize(),
 					"type":  move_data.get("type", "normal"),
 					"power": power,
+					"class": move_data.get("damage_class", "physical"),
 				})
 			if remaining[0] <= 0:
 				collected.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
