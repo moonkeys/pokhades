@@ -146,7 +146,7 @@ func join_game(code: String, player_name: String) -> Error:
 var _pending_name: String = ""
 
 func _on_connected() -> void:
-	_register.rpc_id(1, _pending_name, GameManager.selected_starter_id)
+	_register.rpc_id(1, _pending_name, GameManager.selected_starter_id, GameManager.VERSION)
 
 
 # ── Registre (autorité : hôte) ─────────────────────────────────────────
@@ -162,11 +162,17 @@ func _on_peer_disconnected(id: int) -> void:
 		players_changed.emit()
 
 
+## Rejoint deux builds différents = bugs de sync garantis (structures de
+## données réseau qui peuvent avoir changé) — l'hôte VÉRIFIE la version de
+## chaque arrivant et le refuse proprement sinon (cf. GameManager.VERSION).
 @rpc("any_peer", "call_remote", "reliable")
-func _register(player_name: String, pid: int) -> void:
+func _register(player_name: String, pid: int, client_version: String) -> void:
 	if not multiplayer.is_server():
 		return
 	var sender := multiplayer.get_remote_sender_id()
+	if client_version != GameManager.VERSION:
+		_reject_version.rpc_id(sender, GameManager.VERSION, client_version)
+		return
 	if players.size() >= MAX_PLAYERS:
 		return
 	players[sender] = {"name": player_name, "pid": pid, "item": "", "ready": false}
@@ -179,6 +185,15 @@ func _register(player_name: String, pid: int) -> void:
 func _sync_players(data: Dictionary) -> void:
 	players = data
 	players_changed.emit()
+
+
+## Reçu par le CLIENT quand l'hôte a refusé sa connexion pour cause de
+## version différente (cf. _register) — message explicite plutôt qu'un
+## simple timeout/déconnexion incompréhensible.
+@rpc("authority", "call_remote", "reliable")
+func _reject_version(host_version: String, my_version: String) -> void:
+	reset()
+	join_failed.emit("Versions différentes (hôte : %s, toi : %s) — mets à jour le jeu." % [host_version, my_version])
 
 
 ## Envoyé UNE FOIS par l'hôte à chaque invité qui rejoint — cf. host_unlocked

@@ -83,6 +83,10 @@ func _rebuild() -> void:
 	_panel = UiKit.main_panel(Vector2(140, 10), Vector2(1000, 700))
 	add_child(_panel)
 	UiKit.banner(_panel, "MULTIJOUEUR")
+	# Version affichée dans le coin — compare-la à celle de tes potes avant
+	# de jouer ensemble (cf. GameManager.VERSION, vérifiée à la connexion).
+	UiKit.label(_panel, "v%s" % GameManager.VERSION, Vector2(900, 18), 11,
+		UiKit.CREAM.darkened(0.2), 90)
 
 	if _mode == "menu":
 		_build_menu()
@@ -114,7 +118,7 @@ func _build_menu() -> void:
 	_code_input.position  = Vector2(300, 280)
 	_code_input.size      = Vector2(250, 54)
 	_code_input.max_length = 7
-	_code_input.add_theme_font_size_override("font_size", 20)
+	_code_input.add_theme_font_size_override("font_size", UiKit.scaled_font(20))
 	_panel.add_child(_code_input)
 
 	var join_btn := UiKit.button("➜  Rejoindre", Vector2(134, 54))
@@ -419,7 +423,7 @@ func _build_item_icon(api: String) -> Button:
 		l.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		l.vertical_alignment   = VERTICAL_ALIGNMENT_CENTER
-		l.add_theme_font_size_override("font_size", 20)
+		l.add_theme_font_size_override("font_size", UiKit.scaled_font(20))
 		l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		btn.add_child(l)
 	else:

@@ -82,6 +82,11 @@ func _build_ui() -> void:
 	panel.add_child(quit)
 	quit.pressed.connect(func() -> void: get_tree().quit())
 
+	# Version affichée en coin — pratique pour vérifier que tout le monde a
+	# bien la même avant de jouer en multi (cf. GameManager.VERSION).
+	UiKit.label(panel, "v%s" % GameManager.VERSION, Vector2(0, 428), 12,
+		UiKit.TEXT_DARK.lightened(0.35), 600, HORIZONTAL_ALIGNMENT_CENTER)
+
 
 func _open_multiplayer_lobby() -> void:
 	if is_instance_valid(_lobby):
