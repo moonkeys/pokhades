@@ -14,6 +14,7 @@ extends CanvasLayer
 signal learn_move(member_index: int, option_index: int, replace_index: int)  # -1 = slot libre
 signal buy_berries(price: int, amount: int)
 signal buy_cs(cs_id: String)
+signal buy_potion(member_index: int, item_id: String)
 signal boon_stat(stat_id: String)
 signal closed
 
@@ -30,6 +31,27 @@ const STAT_BOONS: Array[Dictionary] = [
 	{"id": "boost_spd", "label": "Vitesse +20%", "sym": "⚡"},
 ]
 
+## Objets de soin achetables en boutique — s'appliquent au Pokémon de
+## l'onglet sélectionné (_sel_member). "heal" < 0 = soin complet ; les
+## rappels ("revive": true) ne s'utilisent QUE sur un membre K.O., et ce
+## sont le SEUL moyen de le ranimer (cf. CombatArena._buy_boutique_potion).
+const ICON_DIR := "res://Pokemon Essentials v21.1 2023-07-30/Graphics/Items/"
+const HEAL_ITEMS: Array[Dictionary] = [
+	{"id": "potion",       "name": "Potion",       "heal": 20,   "price": 40,  "revive": false, "icon": ICON_DIR + "POTION.png"},
+	{"id": "super_potion", "name": "Super Potion", "heal": 50,   "price": 90,  "revive": false, "icon": ICON_DIR + "SUPERPOTION.png"},
+	{"id": "hyper_potion", "name": "Hyper Potion", "heal": 120,  "price": 160, "revive": false, "icon": ICON_DIR + "HYPERPOTION.png"},
+	{"id": "max_potion",   "name": "Potion Max",   "heal": -1.0, "price": 220, "revive": false, "icon": ICON_DIR + "MAXPOTION.png"},
+	{"id": "revive",       "name": "Rappel",       "heal": 0.5,  "price": 150, "revive": true,  "icon": ICON_DIR + "REVIVE.png"},
+	{"id": "max_revive",   "name": "Rappel Max",   "heal": 1.0,  "price": 280, "revive": true,  "icon": ICON_DIR + "MAXREVIVE.png"},
+]
+
+static var _item_icon_cache: Dictionary = {}
+
+static func _item_icon(path: String) -> Texture2D:
+	if not _item_icon_cache.has(path):
+		_item_icon_cache[path] = load(path) if ResourceLoader.exists(path) else null
+	return _item_icon_cache[path]
+
 var _kind: String = "vendor"
 var _team:   Array = []
 var _offers: Array = []
@@ -39,6 +61,7 @@ var _panel: Panel = null
 var _tabs: Array = []           # onglets Pokémon (restauration du focus)
 var _focus_tab: int = -1        # onglet à refocaliser après _rebuild (navigation flèches)
 var _first_build: bool = true   # pop d'apparition uniquement à l'ouverture
+var _shop_tab: String = "baies" # "baies" (Baies & CS) | "soins" (Potions & Rappels)
 
 
 func setup(team: Array, offers: Array, kind: String = "vendor") -> void:
@@ -249,39 +272,114 @@ func _build_attack_scroll() -> void:
 				_rebuild())
 		ocard.add_child(learn)
 
-	# ── Boutique du bas (vendeur uniquement) : Baies + CS ─────────────
+	# ── Boutique du bas (vendeur uniquement) : Baies & CS / Potions ───
 	if _kind == "vendor":
-		UiKit.label(_panel, "⭐  Boutique de Baies & CS  ⭐", Vector2(0, 462), 17,
-			UiKit.GOLD, 880, HORIZONTAL_ALIGNMENT_CENTER)
-		for i in BERRY_PACKS.size():
-			var pack: Dictionary = BERRY_PACKS[i]
-			var bx := 36.0 + i * 140.0
-			var bcard := UiKit.card(_panel, Vector2(bx, 492), Vector2(130, 78))
-			UiKit.label(bcard, "◆ %d Baies" % int(pack["amount"]), Vector2(8, 6), 14, UiKit.TEXT_DARK, 120)
-			var bb := UiKit.button("%d ₽" % int(pack["price"]), Vector2(96, 30))
-			bb.position = Vector2(17, 38)
-			bb.disabled = GameManager.run_money < int(pack["price"])
-			var pr := int(pack["price"]); var am := int(pack["amount"])
-			bb.pressed.connect(func() -> void: buy_berries.emit(pr, am))
-			bcard.add_child(bb)
-		var cs_list: Array = GameManager.CS_CATALOG
-		for i in cs_list.size():
-			var cs: Dictionary = cs_list[i]
-			var cx := 460.0 + i * 132.0
-			var ccard := UiKit.card(_panel, Vector2(cx, 492), Vector2(122, 78))
-			UiKit.label(ccard, "%s %s" % [cs.get("sym", ""), cs.get("name", "")],
-				Vector2(6, 6), 13, UiKit.TEXT_DARK, 116)
-			if GameManager.owns_cs(cs["id"]):
-				UiKit.label(ccard, "✓ Obtenue", Vector2(6, 42), 13, UiKit.GREEN_DARK, 110)
-			else:
-				var cb := UiKit.button("%d ₽" % int(cs["price"]), Vector2(92, 30))
-				cb.position = Vector2(15, 38)
-				cb.disabled = GameManager.run_money < int(cs["price"])
-				var cid: String = cs["id"]
-				cb.pressed.connect(func() -> void: buy_cs.emit(cid))
-				ccard.add_child(cb)
+		var tab_baies := Button.new()
+		tab_baies.text     = "⭐ Baies & CS"
+		tab_baies.position = Vector2(272, 458)
+		tab_baies.size     = Vector2(160, 30)
+		tab_baies.add_theme_stylebox_override("normal",
+			UiKit.style(UiKit.TAN if _shop_tab == "baies" else UiKit.BROWN_CARD, UiKit.WOOD_EDGE, 8, 3))
+		tab_baies.add_theme_stylebox_override("hover", tab_baies.get_theme_stylebox("normal"))
+		tab_baies.add_theme_stylebox_override("pressed", tab_baies.get_theme_stylebox("normal"))
+		tab_baies.pressed.connect(func() -> void: _shop_tab = "baies"; _rebuild())
+		_panel.add_child(tab_baies)
+
+		var tab_soins := Button.new()
+		tab_soins.text     = "🧪 Potions & Rappels"
+		tab_soins.position = Vector2(444, 458)
+		tab_soins.size     = Vector2(180, 30)
+		tab_soins.add_theme_stylebox_override("normal",
+			UiKit.style(UiKit.TAN if _shop_tab == "soins" else UiKit.BROWN_CARD, UiKit.WOOD_EDGE, 8, 3))
+		tab_soins.add_theme_stylebox_override("hover", tab_soins.get_theme_stylebox("normal"))
+		tab_soins.add_theme_stylebox_override("pressed", tab_soins.get_theme_stylebox("normal"))
+		tab_soins.pressed.connect(func() -> void: _shop_tab = "soins"; _rebuild())
+		_panel.add_child(tab_soins)
+
+		if _shop_tab == "baies":
+			_build_shop_baies()
+		else:
+			_build_shop_soins()
 
 	_add_continue(578)
+
+
+func _build_shop_baies() -> void:
+	for i in BERRY_PACKS.size():
+		var pack: Dictionary = BERRY_PACKS[i]
+		var bx := 36.0 + i * 140.0
+		var bcard := UiKit.card(_panel, Vector2(bx, 494), Vector2(130, 76))
+		UiKit.label(bcard, "◆ %d Baies" % int(pack["amount"]), Vector2(8, 6), 14, UiKit.TEXT_DARK, 120)
+		var bb := UiKit.button("%d ₽" % int(pack["price"]), Vector2(96, 30))
+		bb.position = Vector2(17, 36)
+		bb.disabled = GameManager.run_money < int(pack["price"])
+		var pr := int(pack["price"]); var am := int(pack["amount"])
+		bb.pressed.connect(func() -> void: buy_berries.emit(pr, am))
+		bcard.add_child(bb)
+	var cs_list: Array = GameManager.CS_CATALOG
+	for i in cs_list.size():
+		var cs: Dictionary = cs_list[i]
+		var cx := 460.0 + i * 132.0
+		var ccard := UiKit.card(_panel, Vector2(cx, 494), Vector2(122, 76))
+		UiKit.label(ccard, "%s %s" % [cs.get("sym", ""), cs.get("name", "")],
+			Vector2(6, 6), 13, UiKit.TEXT_DARK, 116)
+		if GameManager.owns_cs(cs["id"]):
+			UiKit.label(ccard, "✓ Obtenue", Vector2(6, 42), 13, UiKit.GREEN_DARK, 110)
+		else:
+			var cb := UiKit.button("%d ₽" % int(cs["price"]), Vector2(92, 30))
+			cb.position = Vector2(15, 36)
+			cb.disabled = GameManager.run_money < int(cs["price"])
+			var cid: String = cs["id"]
+			cb.pressed.connect(func() -> void: buy_cs.emit(cid))
+			ccard.add_child(cb)
+
+
+## Potions/rappels — s'appliquent au Pokémon dont l'onglet est sélectionné
+## en haut de l'écran (_sel_member). Un Rappel n'est utilisable QUE sur un
+## membre K.O. ; une Potion seulement sur un membre vivant (pas à 100% PV).
+func _build_shop_soins() -> void:
+	if _team.is_empty():
+		return
+	var target: PokemonInstance = _team[_sel_member].pokemon_instance
+	UiKit.label(_panel, "Sur %s (onglet ci-dessus)" % target.data.name_fr.capitalize(),
+		Vector2(0, 494), 13, UiKit.CREAM.darkened(0.1), 880, HORIZONTAL_ALIGNMENT_CENTER)
+	var cw := 134.0
+	for i in HEAL_ITEMS.size():
+		var item: Dictionary = HEAL_ITEMS[i]
+		var ix := 36.0 + i * (cw + 6.0)
+		var icard := UiKit.card(_panel, Vector2(ix, 514), Vector2(cw, 76))
+		var icon := _item_icon(str(item["icon"]))
+		if icon != null:
+			var tex := TextureRect.new()
+			tex.texture         = icon
+			tex.stretch_mode    = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			tex.expand_mode     = TextureRect.EXPAND_IGNORE_SIZE
+			tex.texture_filter  = CanvasItem.TEXTURE_FILTER_NEAREST
+			tex.mouse_filter    = Control.MOUSE_FILTER_IGNORE
+			tex.position        = Vector2(4, 2)
+			tex.size             = Vector2(28, 28)
+			icard.add_child(tex)
+		UiKit.label(icard, str(item["name"]), Vector2(34, 4), 12, UiKit.TEXT_DARK, cw - 38)
+
+		var is_revive: bool = item.get("revive", false)
+		var eligible := is_revive == target.is_fainted() and not (not is_revive and target.hp_ratio() >= 1.0)
+		var price := int(item["price"])
+		var can_afford := GameManager.run_money >= price
+		var btn := UiKit.button("%d ₽" % price, Vector2(cw - 16, 30))
+		btn.position = Vector2(8, 40)
+		btn.disabled = not eligible or not can_afford
+		# Un bouton désactivé ne déclenche jamais "pressed" — sans ce message,
+		# le clic ne fait rien et ça se lit comme un bug ("l'effet ne s'est
+		# pas déclenché"). On explique toujours pourquoi.
+		if not eligible:
+			btn.tooltip_text = ("%s est K.O. — un Rappel est nécessaire." % target.data.name_fr.capitalize()) \
+				if is_revive and not target.is_fainted() else \
+				("Utilisable seulement sur un Pokémon K.O." if is_revive else "Déjà à 100% PV.")
+		elif not can_afford:
+			btn.tooltip_text = "Pas assez de Pokédollars ₽."
+		var mi := _sel_member; var iid: String = item["id"]
+		btn.pressed.connect(func() -> void: buy_potion.emit(mi, iid))
+		icard.add_child(btn)
 
 
 func _fill_move_row(card: Panel, md: MoveData) -> void:
