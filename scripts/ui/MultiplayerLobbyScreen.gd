@@ -172,15 +172,24 @@ func _build_lobby() -> void:
 	for id: int in Net.player_order():
 		var p: Dictionary = Net.players[id]
 		var row := Panel.new()
-		row.custom_minimum_size = Vector2(280, 44)
+		row.custom_minimum_size = Vector2(280, 48)
 		row.add_theme_stylebox_override("panel", UiKit.style(UiKit.TAN, UiKit.WOOD_EDGE, 8, 3))
-		var who: String = str(p["name"]) + ("  (hôte)" if id == 1 else "")
-		UiKit.label(row, who, Vector2(12, 2), 13, UiKit.TEXT_DARK, 180)
 		var pinfo: Dictionary = _data_cache.get(int(p["pid"]), {})
 		var pd_r: PokemonData = pinfo.get("pd", null)
+		var portrait_r: Texture2D = pinfo.get("portrait", null)
+		if is_instance_valid(portrait_r):
+			var ptex_r := TextureRect.new()
+			ptex_r.texture      = portrait_r
+			ptex_r.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			ptex_r.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+			ptex_r.position     = Vector2(4, 4)
+			ptex_r.size         = Vector2(40, 40)
+			row.add_child(ptex_r)
+		var who: String = str(p["name"]) + ("  (hôte)" if id == 1 else "")
+		UiKit.label(row, who, Vector2(50, 4), 14, UiKit.TEXT_DARK, 150)
 		UiKit.label(row, pd_r.name_fr.capitalize() if pd_r else "#%d" % int(p["pid"]),
-			Vector2(12, 20), 11, UiKit.TEXT_DARK.lightened(0.2), 180)
-		UiKit.label(row, "✓ prêt" if p["ready"] else "…", Vector2(220, 12), 13,
+			Vector2(50, 24), 12, UiKit.TEXT_DARK.lightened(0.2), 150)
+		UiKit.label(row, "✓ prêt" if p["ready"] else "…", Vector2(224, 14), 14,
 			UiKit.GREEN_DARK if p["ready"] else UiKit.TEXT_DARK.lightened(0.3), 60)
 		roster_list.add_child(row)
 
@@ -198,26 +207,30 @@ func _build_lobby() -> void:
 	for pid in _selectable_pids():
 		pid_list.add_child(_build_pid_row(pid))
 
-	# Colonne 2 — aperçu du sélectionné : sprite + attaques disponibles.
+	# Colonne 2 — aperçu du sélectionné : GRAND sprite mis en avant + les
+	# attaques qu'il peut apprendre (lui ET ses évolutions), triées de la
+	# moins à la plus puissante (cf. _resolve_moves).
+	var col2_x := 316.0
+	var col2_w := 330.0
 	var sel_data: Dictionary = _data_cache.get(_my_pid, {})
 	var sel_pd: PokemonData  = sel_data.get("pd", null)
 	UiKit.label(_panel, "%s (sélectionné)" % (sel_pd.name_fr.capitalize() if sel_pd else "…"),
-		Vector2(316, 214), 15, UiKit.GOLD, 330)
+		Vector2(col2_x, 214), 15, UiKit.GOLD, col2_w, HORIZONTAL_ALIGNMENT_CENTER)
 	var portrait: Texture2D = sel_data.get("portrait", null)
 	if is_instance_valid(portrait):
 		var ptex := TextureRect.new()
 		ptex.texture      = portrait
 		ptex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		ptex.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-		ptex.position     = Vector2(316, 240)
-		ptex.size         = Vector2(56, 56)
+		ptex.position     = Vector2(col2_x + (col2_w - 100.0) * 0.5, 238)
+		ptex.size         = Vector2(100, 100)
 		_panel.add_child(ptex)
 	if sel_pd and not sel_pd.types.is_empty():
-		UiKit.type_badge(_panel, Vector2(380, 262), str(sel_pd.types[0]), 18.0)
+		UiKit.type_badge(_panel, Vector2(col2_x + (col2_w - 64.8) * 0.5, 344), str(sel_pd.types[0]), 18.0)
 
 	var moves_scroll := ScrollContainer.new()
-	moves_scroll.position = Vector2(316, 302)
-	moves_scroll.size     = Vector2(330, 192)
+	moves_scroll.position = Vector2(col2_x, 370)
+	moves_scroll.size     = Vector2(col2_w, 128)
 	moves_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	_panel.add_child(moves_scroll)
 	var moves_list := VBoxContainer.new()
@@ -226,12 +239,12 @@ func _build_lobby() -> void:
 	if sel_data.has("moves"):
 		var moves: Array = sel_data["moves"]
 		if moves.is_empty():
-			moves_list.add_child(_build_hint_row("Aucune attaque offensive connue à ce niveau.", 330))
+			moves_list.add_child(_build_hint_row("Aucune attaque offensive connue à ce niveau.", col2_w))
 		else:
 			for mv: Dictionary in moves:
 				moves_list.add_child(_build_move_row(mv))
 	else:
-		moves_list.add_child(_build_hint_row("Chargement des attaques…", 330))
+		moves_list.add_child(_build_hint_row("Chargement des attaques…", col2_w))
 		_resolve_moves(_my_pid)
 
 	# Colonne 3 — statistiques de base.
@@ -326,14 +339,14 @@ func _build_pid_row(pid: int) -> Button:
 	return row
 
 
-## Ligne de la liste des attaques disponibles (icône type + nom + pastille).
+## Ligne de la liste des attaques disponibles (nom + pastille de type —
+## pas d'icône à gauche, cf. demande utilisateur).
 func _build_move_row(mv: Dictionary) -> Control:
 	var row := Panel.new()
 	row.custom_minimum_size = Vector2(310, 40)
 	row.add_theme_stylebox_override("panel", UiKit.style(UiKit.BROWN_CARD, UiKit.WOOD_EDGE, 8, 2))
-	UiKit.icon_square(row, Vector2(4, 4), UiKit.type_sym(str(mv.get("type", ""))), 32.0)
-	UiKit.label(row, str(mv.get("name", "?")), Vector2(44, 3), 13, UiKit.CREAM, 170)
-	UiKit.type_badge(row, Vector2(44, 20), str(mv.get("type", "")), 15.0)
+	UiKit.label(row, str(mv.get("name", "?")), Vector2(8, 3), 14, UiKit.CREAM, 170)
+	UiKit.type_badge(row, Vector2(8, 20), str(mv.get("type", "")), 15.0)
 	return row
 
 
@@ -452,22 +465,59 @@ func _resolve_data(pid: int) -> void:
 
 ## Charge un aperçu des attaques offensives (power > 0) du Pokémon
 ## SÉLECTIONNÉ uniquement (pas tous les débloqués — trop d'appels API pour
-## un simple aperçu). Se base sur son movepool niveau-par-niveau, plafonné
-## aux 12 premières pour rester léger.
+## un simple aperçu) — mais couvre TOUTE SA CHAÎNE D'ÉVOLUTION (les attaques
+## qu'il pourra apprendre en évoluant, cf. demande utilisateur), triées de
+## la moins à la plus puissante.
 func _resolve_moves(pid: int) -> void:
-	var cache: Dictionary = _data_cache.get(pid, {})
-	if cache.has("moves") or not cache.has("pd"):
+	if _data_cache.get(pid, {}).has("moves"):
 		return
-	var pd: PokemonData = cache["pd"]
+	var base := GameManager.base_species_of(pid)
+	var chain: Array = [base]
+	var cur := base
+	while GameManager.EVOLUTIONS.has(cur):
+		cur = int(GameManager.EVOLUTIONS[cur]["evolves_to"])
+		chain.append(cur)
+	_fetch_chain_species(pid, chain, 0)
+
+
+## Récupère (si besoin) les PokemonData de chaque maillon de la chaîne
+## d'évolution, un par un (chaînes courtes, pas besoin de paralléliser),
+## puis rassemble leurs movepools respectifs.
+func _fetch_chain_species(pid: int, chain: Array, idx: int) -> void:
+	if idx >= chain.size():
+		_collect_chain_moves(pid, chain)
+		return
+	var stage: int = chain[idx]
+	if _data_cache.has(stage) and _data_cache[stage].has("pd"):
+		_fetch_chain_species(pid, chain, idx + 1)
+		return
+	PokemonAPI.get_pokemon(stage, func(data: Dictionary) -> void:
+		if not is_instance_valid(self):
+			return
+		if not _data_cache.has(stage):
+			_data_cache[stage] = {}
+		if not data.is_empty():
+			_data_cache[stage]["pd"] = PokemonData.from_api(data)
+		_fetch_chain_species(pid, chain, idx + 1)
+	)
+
+
+func _collect_chain_moves(pid: int, chain: Array) -> void:
 	var names: Array = []
-	for entry: Dictionary in pd.level_up_moves:
-		var nm: String = str(entry.get("name", ""))
-		if nm != "" and nm not in names:
-			names.append(nm)
-	names = names.slice(0, mini(names.size(), 12))
+	for stage: int in chain:
+		var spd: PokemonData = _data_cache.get(stage, {}).get("pd", null)
+		if spd == null:
+			continue
+		for entry: Dictionary in spd.level_up_moves:
+			var nm: String = str(entry.get("name", ""))
+			if nm != "" and nm not in names:
+				names.append(nm)
 	if names.is_empty():
 		_data_cache[pid]["moves"] = []
+		if pid == _my_pid:
+			_rebuild()
 		return
+	names = names.slice(0, mini(names.size(), 24))
 
 	var collected: Array = []
 	var remaining := [names.size()]
@@ -481,10 +531,13 @@ func _resolve_moves(pid: int) -> void:
 			if power > 0 and not move_data.is_empty():
 				var fr: String = move_data.get("name_fr", "")
 				collected.append({
-					"name": fr if fr != "" else str(nm).replace("-", " ").capitalize(),
-					"type": move_data.get("type", "normal"),
+					"name":  fr if fr != "" else str(nm).replace("-", " ").capitalize(),
+					"type":  move_data.get("type", "normal"),
+					"power": power,
 				})
 			if remaining[0] <= 0:
+				collected.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+					return int(a["power"]) < int(b["power"]))
 				_data_cache[pid]["moves"] = collected
 				if pid == _my_pid:
 					_rebuild()
