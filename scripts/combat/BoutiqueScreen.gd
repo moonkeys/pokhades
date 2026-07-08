@@ -157,6 +157,23 @@ func _build_stat_boon() -> void:
 
 
 # ── Parchemin d'attaque (mockup 2) — un seul écran ────────────────────
+## En multijoueur, on ne doit acheter/changer des attaques QUE pour SON
+## PROPRE Pokémon — avant ça, tous les membres de tous les joueurs
+## apparaissaient en onglets et n'importe qui pouvait dépenser SES ₽ sur
+## le Pokémon d'un AUTRE joueur (retour joueurs). remote_peer == 0 = copie
+## locale qui nous appartient (cf. TeamMember, même schéma que le HUD).
+func _own_indices() -> Array[int]:
+	var out: Array[int] = []
+	for i in _team.size():
+		var m = _team[i]
+		if not is_instance_valid(m):
+			continue
+		if Net.in_run and "remote_peer" in m and m.remote_peer != 0:
+			continue
+		out.append(i)
+	return out
+
+
 func _build_attack_scroll() -> void:
 	UiKit.banner(_panel, "Améliorations et Boutique" if _kind == "vendor" else "Nouvelle Attaque")
 	if _kind == "vendor":
@@ -165,15 +182,19 @@ func _build_attack_scroll() -> void:
 
 	# Onglets Pokémon RICHES (portrait + nom + niveau + type) — le contenu
 	# change dès que le FOCUS arrive sur l'onglet (flèches) : plus besoin
-	# d'appuyer sur Entrée pour comparer les Pokémon.
-	_sel_member = clampi(_sel_member, 0, maxi(0, _team.size() - 1))
+	# d'appuyer sur Entrée pour comparer les Pokémon. Restreints à NOS
+	# PROPRES Pokémon en multijoueur (cf. _own_indices).
+	var own := _own_indices()
+	if _sel_member not in own:
+		_sel_member = own[0] if not own.is_empty() else 0
 	var tab_w := 168.0
-	var tabs_x := (880.0 - _team.size() * (tab_w + 12.0)) * 0.5
-	for i in _team.size():
+	var tabs_x := (880.0 - own.size() * (tab_w + 12.0)) * 0.5
+	for oi in own.size():
+		var i: int = own[oi]
 		var inst: PokemonInstance = _team[i].pokemon_instance
 		var sel := i == _sel_member
 		var tab := Button.new()
-		tab.position = Vector2(tabs_x + i * (tab_w + 12.0), 74)
+		tab.position = Vector2(tabs_x + oi * (tab_w + 12.0), 74)
 		tab.size     = Vector2(tab_w, 60)
 		tab.add_theme_stylebox_override("normal",
 			UiKit.style(UiKit.TAN if sel else UiKit.BROWN_CARD, UiKit.CYAN_SEL if sel else UiKit.WOOD_EDGE, 10, 4 if sel else 3))

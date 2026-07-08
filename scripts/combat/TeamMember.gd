@@ -149,6 +149,52 @@ func net_broadcast_hp() -> void:
 		_net_hp.rpc(pokemon_instance.current_hp, pokemon_instance.max_hp)
 
 
+## Niveau/XP/espèce diffusés par le propriétaire à chaque gain d'XP — sans
+## ça, les copies des AUTRES joueurs restaient bloquées à leur niveau et
+## sprite de départ pour tout le monde sauf leur propriétaire (retour
+## joueurs : "le sprite et le niveau de l'allié ne se mettent pas à jour").
+@rpc("any_peer", "call_remote", "reliable")
+func _net_progress(level: int, xp_r: float, species_id: int) -> void:
+	if remote_peer == 0:
+		return
+	if species_id != pokemon_instance.data.id:
+		_remote_evolve_to(species_id)
+	pokemon_instance.level = level
+	xp_changed.emit(xp_r, level)
+	leveled_up.emit(level)
+
+
+## Applique une évolution reçue de l'hôte/propriétaire sur une copie
+## distante — recharge les VRAIES données + le sprite (comme
+## _start_evolution, mais sans l'animation de flash : ce n'est pas NOTRE
+## Pokémon qui évolue sous nos yeux, juste une mise à jour d'état).
+func _remote_evolve_to(new_id: int) -> void:
+	PokemonAPI.get_pokemon(new_id, func(api_data: Dictionary) -> void:
+		if not is_instance_valid(self) or api_data.is_empty():
+			return
+		var new_data := PokemonData.from_api(api_data)
+		pokemon_instance.evolve_to(new_data)
+		hp_changed.emit(pokemon_instance.hp_ratio())
+		PMDSprites.get_walk_sprites(new_id, self, func(result: Dictionary) -> void:
+			if not is_instance_valid(self) or result.is_empty():
+				return
+			_has_directional = true
+			sprite.sprite_frames = result.frames
+			_apply_sprite_scale(result)
+			if result.frames.has_animation("walk_down") and result.frames.get_frame_count("walk_down") > 0:
+				portrait_ready.emit(team_index, result.frames.get_frame_texture("walk_down", 0))
+			evolved.emit(new_data.name_fr)
+		)
+	)
+
+
+## Diffuse notre progression (niveau/XP/espèce) après tout gain d'XP —
+## suit le même garde-fou que net_broadcast_hp (seul le propriétaire émet).
+func net_broadcast_progress() -> void:
+	if Net.in_run and remote_peer == 0:
+		_net_progress.rpc(pokemon_instance.level, pokemon_instance.xp_ratio(), pokemon_instance.data.id)
+
+
 func _add_shadow() -> void:
 	add_child(Billboard3D.make_blob_shadow(Vector2(1.25, 0.7)))
 
@@ -384,6 +430,18 @@ func _player_process() -> void:
 			if is_instance_valid(self) and not _evolving:
 				sprite.modulate = Color.WHITE
 		)
+		# Game feel : traînée de vitesse + rémanences (façon Hades), petite
+		# secousse de caméra — et on traverse les obstacles pendant le burst
+		# (mais jamais l'eau, cf. _dash_phase_through).
+		var parent := get_parent()
+		CombatVFX.spawn_dash_streaks(parent, global_position, _dash_dir)
+		CombatVFX.spawn_dash_afterimage(parent, sprite)
+		get_tree().create_timer(DASH_TIME * 0.5).timeout.connect(func():
+			if is_instance_valid(self):
+				CombatVFX.spawn_dash_afterimage(parent, sprite)
+		)
+		get_tree().call_group("combat_arena", "add_camera_shake", 0.05)
+		_dash_phase_through()
 
 	if _dash_timer > 0.0:
 		velocity = _dash_dir * DASH_SPEED
@@ -396,6 +454,19 @@ func _player_process() -> void:
 	# Plus d'attaque automatique : le membre contrôlé n'attaque que sur
 	# pression de touche (Q/Z/S/D ou 1-4) — le cooldown limite le spam.
 	# Les compagnons IA, eux, attaquent toujours seuls (cf. _companion_process).
+
+
+## Pendant le burst du dash, on ignore les obstacles (arbres, rochers,
+## coffres — layer 1, cf. MapBase/MapGenerator) façon Hades : on traverse
+## le décor sans s'y accrocher. L'eau (WATER_LAYER, cf. CombatArena) reste
+## TOUJOURS bloquante — seul ce bit est retiré du masque, jamais les autres.
+func _dash_phase_through() -> void:
+	var saved_mask := collision_mask
+	collision_mask = saved_mask & ~1
+	get_tree().create_timer(DASH_TIME).timeout.connect(func() -> void:
+		if is_instance_valid(self):
+			collision_mask = saved_mask
+	)
 
 
 # ── IA compagnon ──────────────────────────────────────────────────────
@@ -571,7 +642,7 @@ func _attack() -> void:
 			continue
 		if global_position.distance_to(enemy.global_position) <= ATTACK_RANGE:
 			var dmg := DamageCalculator.calculate(pokemon_instance, enemy.pokemon_instance, move_power, move_type)
-			enemy.take_damage(dmg, global_position, CombatVFX.type_color(move_type))
+			enemy.take_damage(dmg, global_position, CombatVFX.type_color(move_type), Net.local_id())
 			# Animation d'attaque Essentials (planche du type) jouée sur la cible
 			AttackAnim.play(get_parent(), enemy.global_position, move_type)
 			# Chance d'infliger un statut selon le type de l'attaque
@@ -647,7 +718,7 @@ func _ranged_attack(move_type: String, move_power: int) -> void:
 	Projectile.launch(parent, global_position, target, tint, func() -> void:
 		if not is_instance_valid(tgt) or not is_instance_valid(parent):
 			return
-		tgt.take_damage(dmg, from, tint)
+		tgt.take_damage(dmg, from, tint, Net.local_id())
 		var st := StatusFx.roll(move_type)
 		if st != "":
 			tgt.pokemon_instance.apply_status(st, StatusFx.duration(st))
@@ -765,6 +836,7 @@ func revive(hp_pct: float) -> void:
 func gain_xp(amount: int) -> void:
 	var leveled := pokemon_instance.add_xp(maxi(1, int(amount * xp_mult)))
 	xp_changed.emit(pokemon_instance.xp_ratio(), pokemon_instance.level)
+	net_broadcast_progress()
 	if leveled:
 		Sfx.play("levelup", -3.0)
 		leveled_up.emit(pokemon_instance.level)
@@ -816,5 +888,6 @@ func _start_evolution(new_id: int) -> void:
 			sprite.play("idle")
 			_evolving = false
 			evolved.emit(new_data.name_fr)
+			net_broadcast_progress()   # diffuse la NOUVELLE espèce aux autres joueurs
 		)
 	)

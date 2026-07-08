@@ -93,6 +93,20 @@ var _grid: Array = []
 var _rng:  RandomNumberGenerator = RandomNumberGenerator.new()
 var _flower_mat: ShaderMaterial = null
 
+
+## Fisher-Yates seedé sur `_rng` — Array.shuffle() natif utilise TOUJOURS
+## le RNG global du moteur (pas notre graine), donc en multijoueur chaque
+## pair mélangeait ses listes de cases candidates différemment : coffres,
+## herbes hautes, grottes et obstacles CS n'apparaissaient pas au même
+## endroit selon le joueur (retour joueurs). Remplace TOUS les .shuffle()
+## de ce fichier — même résultat sur tous les pairs pour une même graine.
+func _seeded_shuffle(arr: Array) -> void:
+	for i in range(arr.size() - 1, 0, -1):
+		var j := _rng.randi_range(0, i)
+		var tmp = arr[i]
+		arr[i] = arr[j]
+		arr[j] = tmp
+
 ## Cases accessibles à pied depuis l'entrée sans franchir d'eau (cf.
 ## _compute_reachable). Empêche de faire spawn un ennemi sur une île
 ## accessible uniquement à la nage (CS Surf) — il serait impossible à
@@ -316,7 +330,7 @@ func _generate_arena() -> void:
 			if _cell_dist(cell, entry_tile) < 5: continue
 			if _cell_dist(cell, center) < 4:     continue
 			cover.append(cell)
-	cover.shuffle()
+	_seeded_shuffle(cover)
 	var placed := 0
 	for cell: Vector2i in cover:
 		if placed >= 6: break
@@ -550,7 +564,7 @@ func _ensure_water_pools() -> void:
 		for c in range(8, W - 8):
 			if _grid[r][c] == Terrain.GRASS and not _is_near_portal(c, r, 8):
 				candidates.append(Vector2i(c, r))
-	candidates.shuffle()
+	_seeded_shuffle(candidates)
 	var placed := 0
 	for center: Vector2i in candidates:
 		if placed >= needed:
@@ -866,7 +880,7 @@ func _gen_tall_grass() -> void:
 		while placed.size() < target and not frontier.is_empty():
 			var base: Vector2i = frontier[_rng.randi() % frontier.size()]
 			var dirs := [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
-			dirs.shuffle()
+			_seeded_shuffle(dirs)
 			var grown := false
 			for d: Vector2i in dirs:
 				var nb: Vector2i = base + d
@@ -960,7 +974,7 @@ func _place_cliff_outcrops(cells: Array, max_count: int, with_cave: bool,
 
 func _decor_forest() -> void:
 	var cells := _get_walkable_cells(5)
-	cells.shuffle()
+	_seeded_shuffle(cells)
 	_place_cliff_outcrops(cells, 2, false, 3, 5, 3, 4)
 	var stumps := [tile_souche_sombre, tile_souche_claire]
 	var champi := 0
@@ -985,7 +999,7 @@ func _decor_forest() -> void:
 
 func _decor_swamp() -> void:
 	var cells := _get_walkable_cells(6)
-	cells.shuffle()
+	_seeded_shuffle(cells)
 	# Bancs rocheux/berges élevées, discrets — le marécage reste surtout plat.
 	_place_cliff_outcrops(cells, 1, false, 3, 5, 3, 4)
 
@@ -1000,14 +1014,14 @@ func _decor_swamp() -> void:
 
 func _decor_meadow() -> void:
 	var cells := _get_walkable_cells(6)
-	cells.shuffle()
+	_seeded_shuffle(cells)
 	_place_cliff_outcrops(cells, 2, false, 3, 6, 2, 4)
 	# Fleurs déjà denses via flower_density — pas d'autre décor thématique.
 
 
 func _decor_rocky() -> void:
 	var cells := _get_walkable_cells(7)
-	cells.shuffle()
+	_seeded_shuffle(cells)
 
 	# 1) Falaises — formations rocheuses allongées (taille variable, 9-slice
 	#    centre+bords). La première reçoit une entrée de grotte dans sa base.
@@ -1096,7 +1110,7 @@ func _can_place_block(cell: Vector2i, w: int, h: int) -> bool:
 # Override de MapBase._gen_logs — positions aléatoires.
 func _gen_logs() -> void:
 	var candidates := _get_walkable_cells(6)
-	candidates.shuffle()
+	_seeded_shuffle(candidates)
 	var placed := 0
 	for pos: Vector2i in candidates:
 		if placed >= 4: break
@@ -1130,7 +1144,7 @@ func _place_chest_gated() -> void:
 
 func _place_chest_free() -> void:
 	var candidates := _get_walkable_cells(10)
-	candidates.shuffle()
+	_seeded_shuffle(candidates)
 	for cell: Vector2i in candidates:
 		if _is_near_portal(cell.x, cell.y, 8): continue
 		_objects.set_cell(cell, source_id, tile_chest_closed)
@@ -1153,7 +1167,7 @@ func _place_chest_surf() -> void:
 
 func _create_water_island_chest() -> void:
 	var candidates := _get_walkable_cells(14)
-	candidates.shuffle()
+	_seeded_shuffle(candidates)
 	for center: Vector2i in candidates:
 		if _is_near_portal(center.x, center.y, 10): continue
 		if not _can_place_island(center): continue
@@ -1198,7 +1212,7 @@ func _carve_water_island(center: Vector2i) -> void:
 ## Variante NORD (col 8) : coffre au sud,  arbre au nord, approche depuis le haut.
 func _place_chest_coupe() -> void:
 	var candidates := _get_walkable_cells(14)
-	candidates.shuffle()
+	_seeded_shuffle(candidates)
 	for chest: Vector2i in candidates:
 		if _is_near_portal(chest.x, chest.y, 10): continue
 		var tree_s: Array[Vector2i] = [chest + Vector2i(0, 1), chest + Vector2i(0, 2), chest + Vector2i(0, 3)]
@@ -1263,7 +1277,7 @@ func _can_place_coupe_pocket(approach: Vector2i, tree_cells: Array[Vector2i],
 
 func _place_chest_force() -> void:
 	var candidates := _get_walkable_cells(10)
-	candidates.shuffle()
+	_seeded_shuffle(candidates)
 	for center: Vector2i in candidates:
 		if _is_near_portal(center.x, center.y, 8): continue
 		if not _can_place_ring(center, 1): continue
@@ -1328,7 +1342,7 @@ func _clear_cell(c: Vector2i) -> void:
 func get_enemy_spawn_positions(count: int, player_pos: Vector2) -> Array[Vector2]:
 	var result: Array[Vector2] = []
 	var candidates := _get_walkable_cells(min_enemy_distance)
-	candidates.shuffle()
+	_seeded_shuffle(candidates)
 	var player_cell := world_to_cell(player_pos)
 	for cell: Vector2i in candidates:
 		if result.size() >= count: break

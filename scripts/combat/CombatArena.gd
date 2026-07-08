@@ -830,10 +830,13 @@ var _current_trainer: TrainerNPC = null   # dresseur visible pendant un combat d
 
 func _spawn_room_enemies() -> void:
 	var room  := RunManager.inst().rooms_cleared
-	# Courbe lissée : effectif +1/salle (plafonné), niveau +1.5/salle, et un
-	# champion d'élite qui incarne visiblement la montée en danger.
-	var count := mini(3 + room, 12)
-	var lv    := PLAYER_LEVEL + int(room * 1.5)
+	var act   := RunManager.inst().act_of(room)
+	# Courbe lissée : effectif +1/salle (plafond qui MONTE avec l'acte, pas
+	# figé — sinon la difficulté stagne dès l'acte 2, cf. retour joueurs),
+	# niveau +1.5/salle +3/acte, et un champion d'élite qui incarne
+	# visiblement la montée en danger.
+	var count := mini(3 + room + act * 2, 12 + act * 3)
+	var lv    := PLAYER_LEVEL + int(room * 1.5) + act * 3
 	var pool  := _pool_for_room(room)
 
 	_wave_queue.clear()
@@ -863,8 +866,10 @@ func _spawn_room_enemies() -> void:
 			]
 			# Sbires = la forme de base de la même lignée, en escorte (aucun
 			# sbire si le boss est déjà une forme sans évolution possible).
+			# Effectif croissant avec l'acte (retour joueurs : les combats de
+			# boss manquaient de monde).
 			if minion_id != boss_id:
-				specs.append({"pool": [minion_id], "count": 3,
+				specs.append({"pool": [minion_id], "count": 3 + act,
 					"lv": maxi(1, boss_lv - 6), "champion": false, "boss": false})
 			_wave_queue.append(specs)
 		_room_total = 0
@@ -874,11 +879,11 @@ func _spawn_room_enemies() -> void:
 		hud.set_kills(0, _room_total)
 
 		# Le champion s'adresse au joueur avant l'arrivée de ses Pokémon (même
-		# kit visuel que les menus) — puis on le voit planté dans l'arène.
+		# kit visuel que les menus) — texte en machine à écrire, non bloquant :
+		# il se ferme tout seul PENDANT que le combat démarre déjà.
 		var dlg := ChampionDialogueScreen.new()
 		get_tree().root.add_child(dlg)
 		dlg.setup(str(comp["name"]), str(comp["type"]))
-		await dlg.dismissed
 		_spawn_champion_trainer(comp)
 
 		var title := "DRESSEUR FINAL" if _is_final_boss_room(room) else "CHAMPION"
@@ -891,11 +896,14 @@ func _spawn_room_enemies() -> void:
 		_spawn_next_wave()
 		return
 
-	# Champions : 1 dès la salle 3, 2 dès la salle 6 — tirés de la faune du
-	# biome (l'"alpha" local), +4 niveaux, dans la DERNIÈRE vague.
+	# Champions : 1 dès la salle 3, 2 dès la salle 6, +1 par acte au-delà du
+	# premier — tirés de la faune du biome (l'"alpha" local), +4 niveaux,
+	# dans la DERNIÈRE vague.
 	var champions := 0
 	if room >= 5:   champions = 2
 	elif room >= 2: champions = 1
+	if champions > 0:
+		champions += act
 	var champ_pool: Array = []
 	if champions > 0:
 		var biome: Array = POOL_BIOME.get(_current_theme(), [])
@@ -978,6 +986,22 @@ func _pool_for_room(room: int) -> Array[int]:
 	for i in 2:
 		for eid: int in biome:
 			pool.append(eid)
+
+	# Les seuils ci-dessus étaient tous franchis dès la salle 4 (bien avant
+	# la fin de l'acte 1, cf. RunManager.ROOMS_PER_ACT) : la composition ne
+	# variait plus jamais après ça, la run "s'aplatissait" dès l'acte 2
+	# (retour joueurs). On fait évoluer une partie croissante du vivier
+	# vers sa forme FINALE selon l'acte — déterministe (pas de RNG ici, pour
+	# rester identique sur tous les pairs en multijoueur) : acte 1 = tel
+	# quel, acte 2 = un ennemi sur deux évolué, acte 3+ = tous évolués.
+	var act := RunManager.inst().act_of(room)
+	if act == 1:
+		for i in pool.size():
+			if i % 2 == 0:
+				pool[i] = GameManager.final_evolution_of(pool[i])
+	elif act >= 2:
+		for i in pool.size():
+			pool[i] = GameManager.final_evolution_of(pool[i])
 	return pool
 
 
@@ -1089,8 +1113,8 @@ func _materialize_enemy(id: int, lv: int, pos: Vector3, champion: bool, boss: bo
 	CombatVFX.spawn_death_poof(self, pos, Color(0.85, 0.88, 0.95))   # nuage d'arrivée
 	if _mp:
 		var ename := String(enemy.name)
-		enemy.died.connect(func(xp: int) -> void:
-			_net_enemy_died.rpc(ename, xp)
+		enemy.died.connect(func(xp: int, attacker_peer: int) -> void:
+			_net_enemy_died.rpc(ename, xp, attacker_peer)
 		)
 		_net_spawn_enemy.rpc(ename, id, lv, pos, champion, boss)
 
@@ -1135,18 +1159,22 @@ func _random_valid_spawn() -> Vector3:
 
 # ── Signaux ───────────────────────────────────────────────────────────
 
-func _on_enemy_died(xp_reward: int, pid: int, is_base_form: bool) -> void:
+func _on_enemy_died(xp_reward: int, attacker_peer: int, pid: int, is_base_form: bool) -> void:
 	_alive  -= 1
 	_killed += 1
 	hud.set_kills(_killed, _room_total)
 
 	if _mp:
-		# Multijoueur : chacun donne l'XP à SON Pokémon (l'hôte ici, les
-		# clients dans _net_enemy_died) — les copies distantes n'évoluent pas.
+		# Multijoueur : l'XP ne va qu'à l'auteur RÉEL du coup fatal (cf.
+		# EnemyAI.take_damage/_last_attacker_peer) — avant, CHAQUE mort
+		# créditait le Pokémon actif de TOUS les pairs, peu importe qui
+		# avait fait le kill (retour joueurs : l'XP était donnée à tout
+		# le monde au lieu d'être répartie selon les kills de chacun).
 		_net_kills.rpc(_killed, _room_total)
-		var mine = _team[_active_index] if _active_index < _team.size() else null
-		if is_instance_valid(mine) and not mine.pokemon_instance.is_fainted():
-			mine.gain_xp(xp_reward)
+		if attacker_peer == Net.local_id():
+			var mine = _team[_active_index] if _active_index < _team.size() else null
+			if is_instance_valid(mine) and not mine.pokemon_instance.is_fainted():
+				mine.gain_xp(xp_reward)
 	else:
 		for member in _team:
 			if is_instance_valid(member) and not member.pokemon_instance.is_fainted():
@@ -2508,12 +2536,15 @@ func _net_enemy_positions(names: PackedStringArray, poss: PackedVector3Array) ->
 
 
 ## Hôte → clients : mort d'un ennemi — anim de chute locale + XP pour NOTRE
-## Pokémon (l'hôte donne l'XP au sien dans _on_enemy_died).
+## Pokémon SEULEMENT SI C'EST NOUS qui avons fait le kill (cf.
+## attacker_peer, EnemyAI.take_damage) — pas systématiquement à chaque mort.
 @rpc("authority", "call_remote", "reliable")
-func _net_enemy_died(ename: String, xp: int) -> void:
+func _net_enemy_died(ename: String, xp: int, attacker_peer: int) -> void:
 	var e := get_node_or_null(NodePath(ename))
 	if e != null and e.has_method("_play_death_anim"):
 		e._play_death_anim()
+	if attacker_peer != Net.local_id():
+		return
 	var mine = _team[_active_index] if _active_index < _team.size() else null
 	if is_instance_valid(mine) and not mine.pokemon_instance.is_fainted():
 		mine.gain_xp(xp)

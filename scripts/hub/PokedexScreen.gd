@@ -357,7 +357,7 @@ func _build_item_row(pid: int, x: int, y: int) -> void:
 	cyc.text     = "Changer"
 	cyc.position = Vector2(x + 250, y)
 	cyc.size     = Vector2(90, 30)
-	cyc.add_theme_font_size_override("font_size", 12)
+	cyc.add_theme_font_size_override("font_size", UiKit.scaled_font(12))
 	_style_button(cyc, Color(0.34, 0.28, 0.16), C_GOLD_LT)
 	cyc.pressed.connect(func() -> void:
 		_cycle_item(cap_pid)
@@ -376,7 +376,7 @@ func _build_item_row(pid: int, x: int, y: int) -> void:
 	candy.position = Vector2(x + 344, y)
 	candy.size     = Vector2(184, 30)
 	candy.disabled = candies <= 0 or bonus >= ItemCatalog.CANDY_MAX_BONUS
-	candy.add_theme_font_size_override("font_size", 11)
+	candy.add_theme_font_size_override("font_size", UiKit.scaled_font(11))
 	_style_button(candy, Color(0.60, 0.28, 0.42) if not candy.disabled else Color(0.55, 0.48, 0.38), Color.WHITE)
 	candy.pressed.connect(func() -> void:
 		if GameManager.use_candy(cap_pid):
@@ -562,9 +562,12 @@ func _refresh_detail() -> void:
 		if not learnable:
 			card.add_child(_lbl_node("✗ Hors movepool", 4, 40, col_w - 14, 14, 10, Color(0.80, 0.40, 0.36)))
 		elif equipped:
-			card.add_child(_lbl_node("✓ Équipée", 4, 40, col_w - 14, 14, 10, C_GOOD))
+			# Cliquable pour LA RETIRER (même handler ci-dessous) — c'est
+			# comme ça qu'on "remplace" une capacité quand les slots sont
+			# pleins : on retire d'abord, puis on clique la nouvelle.
+			card.add_child(_lbl_node("✓ Équipée (clic pour retirer)", 4, 40, col_w - 14, 14, 10, C_GOOD))
 		elif loadout.size() >= GameManager.move_slot_count:
-			card.add_child(_lbl_node("Slots pleins", 4, 40, col_w - 14, 14, 10, C_DIM))
+			card.add_child(_lbl_node("Slots pleins — retire-en une d'abord", 4, 40, col_w - 14, 14, 10, C_DIM))
 		else:
 			card.add_child(_lbl_node("Clic pour équiper", 4, 40, col_w - 14, 14, 10, C_DIM))
 
@@ -648,7 +651,7 @@ func _style_button(btn: Button, bg: Color, fg: Color) -> void:
 	btn.add_theme_stylebox_override("disabled", sd)
 	btn.add_theme_color_override("font_color", fg)
 	btn.add_theme_color_override("font_disabled_color", Color(fg.r, fg.g, fg.b, 0.6))
-	btn.add_theme_font_size_override("font_size", 13)
+	btn.add_theme_font_size_override("font_size", UiKit.scaled_font(13))
 
 func _lbl(parent: Node, text: String, x: float, y: float, w: float, h: float,
 		fs: int, color: Color, centered: bool = false) -> Label:
@@ -663,7 +666,7 @@ func _lbl_node(text: String, x: float, y: float, w: float, h: float,
 	l.text = text
 	l.position = Vector2(x, y)
 	l.size     = Vector2(w, h)
-	l.add_theme_font_size_override("font_size", fs)
+	l.add_theme_font_size_override("font_size", UiKit.scaled_font(fs))
 	l.add_theme_color_override("font_color", color)
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	if centered:

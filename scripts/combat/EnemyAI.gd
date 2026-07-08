@@ -37,7 +37,10 @@ var _path_repath_timer: float   = 0.0
 var _path_waypoint:     Vector3 = Vector3.ZERO
 const REPATH_INTERVAL := 0.4
 
-signal died(xp_reward: int)
+## `attacker_peer` = peer_id de qui a réellement donné le coup fatal — sert
+## à ne créditer l'XP qu'à SON auteur en multijoueur (cf. CombatArena.
+## _on_enemy_died), pas à toute l'équipe pour chaque kill.
+signal died(xp_reward: int, attacker_peer: int)
 
 @onready var sprite: AnimatedSprite3D = $AnimatedSprite3D
 
@@ -235,6 +238,7 @@ func _remove_placeholder() -> void:
 ## position diffusée par l'hôte ; les dégâts locaux lui sont relayés.
 var net_shell: bool = false
 var net_target: Vector3 = Vector3.ZERO
+var _last_attacker_peer: int = 1   # qui a frappé en dernier (cf. take_damage)
 
 
 func set_net_shell() -> void:
@@ -249,7 +253,7 @@ func set_net_shell() -> void:
 @rpc("any_peer", "call_remote", "reliable")
 func _net_request_damage(amount: int, source_pos: Vector3) -> void:
 	if multiplayer.is_server():
-		take_damage(amount, source_pos)
+		take_damage(amount, source_pos, Color(1.0, 0.95, 0.78), multiplayer.get_remote_sender_id())
 
 
 ## PV diffusés par l'hôte après chaque dégât — flash + barre sur les clients.
@@ -622,13 +626,19 @@ func _update_grass_hiding() -> void:
 		visible = not hidden
 
 
+## `attacker_peer` = peer_id du joueur qui inflige ce coup — retenu pour
+## créditer l'XP au bon joueur si ce coup s'avère fatal (cf. signal died).
+## Par défaut 1 (hôte) : couvre le solo et les attaques locales de l'hôte,
+## qui n'ont pas besoin de préciser leur propre peer_id.
 func take_damage(amount: int, source_pos: Vector3 = Vector3(INF, INF, INF),
-		tint: Color = Color(1.0, 0.95, 0.78)) -> void:
+		tint: Color = Color(1.0, 0.95, 0.78), attacker_peer: int = 1) -> void:
 	# Client multijoueur : la coquille ne s'endommage pas elle-même — elle
-	# relaie à l'hôte, qui appliquera et rediffusera les PV (_net_hp).
+	# relaie à l'hôte (qui connaît l'expéditeur via get_remote_sender_id,
+	# cf. _net_request_damage), qui appliquera et rediffusera les PV (_net_hp).
 	if net_shell:
 		_net_request_damage.rpc_id(1, amount, source_pos)
 		return
+	_last_attacker_peer = attacker_peer
 	pokemon_instance.take_damage(amount)
 	if Net.in_run:
 		_net_hp.rpc(pokemon_instance.current_hp)
@@ -692,6 +702,6 @@ func _play_death_anim() -> void:
 	tw.tween_property(sprite, "modulate", Color(1.0, 0.2, 0.2, 0.0), 0.5).set_ease(Tween.EASE_IN)
 	tw.tween_property(sprite, "position", _sprite_base_pos + Vector3(0, -0.45, 0), 0.4).set_ease(Tween.EASE_IN)
 	tw.chain().tween_callback(func() -> void:
-		died.emit(xp_reward)
+		died.emit(xp_reward, _last_attacker_peer)
 		queue_free()
 	)
