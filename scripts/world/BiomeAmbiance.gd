@@ -467,16 +467,16 @@ func _build_ground_apron(cfg: Dictionary, center: Vector3) -> void:
 	# les creux de collines en grandes taches sombres z-fightantes qui
 	# "respiraient" avec la caméra (bug "nuage qui grossit/rétrécit", forêt).
 	apron.position = Vector3(center.x, -1.2, center.z)
-	var mat := StandardMaterial3D.new()
-	# Teinte plus SATURÉE (accordée au sol saturé du terrain, cf.
-	# GrassPatch.ground_material) : la plaine se prolonge visiblement jusqu'aux
-	# montagnes au lieu de virer au gris terne.
+	# Même texture d'herbe/shader que le sol jouable (cf. GrassPatch.
+	# ground_material) au lieu d'un aplat de couleur : le tablier lointain
+	# se lisait comme du vide/de la terre nue à côté du sol texturé de la
+	# map. Teinte accordée à la couleur de collines du biome, tuilée
+	# densément pour rester nette même de très loin.
 	var plain := (cfg["hill_a"] as Color).lerp(cfg["hill_b"], 0.4)
 	var g := plain.get_luminance()
 	plain = Color(g, g, g).lerp(plain, 1.4) * 0.92
-	mat.albedo_color = plain
-	mat.roughness = 1.0
-	apron.material_override = mat
+	apron.material_override = GrassPatch.ground_material(
+		load("res://assets/nature/grass.png"), 1.45, 0.88, span, plain)
 	apron.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_backdrop.add_child(apron)
 

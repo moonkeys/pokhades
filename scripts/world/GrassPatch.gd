@@ -77,25 +77,33 @@ static var _ground_shader: Shader = null
 
 const _GROUND_SHADER := """
 shader_type spatial;
-uniform sampler2D tex : source_color, filter_nearest;
+uniform sampler2D tex : source_color, filter_nearest, repeat_enable;
 uniform float sat = 1.45;
 uniform float val = 0.88;
+uniform float uv_scale = 1.0;
+uniform vec4 tint : source_color = vec4(1.0, 1.0, 1.0, 1.0);
 
 void fragment() {
-	vec3 c = texture(tex, UV).rgb;
+	vec3 c = texture(tex, UV * uv_scale).rgb * tint.rgb;
 	float g = dot(c, vec3(0.299, 0.587, 0.114));
 	ALBEDO = clamp(mix(vec3(g), c, sat) * val, 0.0, 1.0);
 	ROUGHNESS = 1.0;
 }
 """
 
-static func ground_material(tex: Texture2D, sat: float = 1.45, val: float = 0.88) -> ShaderMaterial:
+## `uv_scale` : nb de tuiles de texture par unité d'UV (1.0 = comportement
+## d'origine). `tint` : multiplie la couleur échantillonnée — permet de
+## teinter l'herbe partagée selon la couleur du biome (ex : tablier lointain).
+static func ground_material(tex: Texture2D, sat: float = 1.45, val: float = 0.88,
+		uv_scale: float = 1.0, tint: Color = Color.WHITE) -> ShaderMaterial:
 	if _ground_shader == null:
 		_ground_shader = Shader.new()
 		_ground_shader.code = _GROUND_SHADER
 	var mat := ShaderMaterial.new()
 	mat.shader = _ground_shader
 	mat.set_shader_parameter("tex", tex)
+	mat.set_shader_parameter("uv_scale", uv_scale)
+	mat.set_shader_parameter("tint", tint)
 	mat.set_shader_parameter("sat", sat)
 	mat.set_shader_parameter("val", val)
 	return mat
