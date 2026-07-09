@@ -7,6 +7,77 @@ var _cache:      Dictionary = {}
 var _move_cache: Dictionary = {}
 var _item_cache: Dictionary = {}
 
+## Téléchargement complet pour jouer HORS-LIGNE ensuite — une fois fait
+## avec du réseau, tout est en cache disque (user://cache/pokeapi/) et le
+## jeu n'a plus jamais besoin d'internet (cf. get_pokemon/get_move : cache
+## disque vérifié AVANT toute requête HTTP). Ré-exécutable sans risque :
+## les espèces déjà en cache ne redéclenchent aucune requête.
+signal prefetch_progress(done: int, total: int)
+signal prefetch_finished
+
+func prefetch_all() -> void:
+	var ids := _all_species_ids()
+	var total := ids.size()
+	if total == 0:
+		prefetch_finished.emit()
+		return
+	var counter := [0]
+	for id in ids:
+		get_pokemon(id, func(_data: Dictionary) -> void:
+			counter[0] += 1
+			prefetch_progress.emit(counter[0], total)
+			if counter[0] >= total:
+				_prefetch_moves()
+		)
+
+
+## Toutes les espèces effectivement utilisables dans une run ou en combat
+## (mêmes viviers que CombatArena._preload_all) + toute la table d'évolution.
+func _all_species_ids() -> Array[int]:
+	var ids: Dictionary = {}
+	for pid in GameManager.STARTER_IDS:
+		ids[int(pid)] = true
+	for k in GameManager.EVOLUTIONS:
+		ids[int(k)] = true
+		ids[int(GameManager.EVOLUTIONS[k]["evolves_to"])] = true
+	for arr: Array in [PokePools.RODENTS, PokePools.BUGS, PokePools.FLYERS, PokePools.ELEM,
+			PokePools.SEMI_BOSS, PokePools.CAVE_ELITE, PokePools.CAVE_DEMIBOSS]:
+		for pid in arr:
+			ids[int(pid)] = true
+	for theme in PokePools.BIOME:
+		for pid in (PokePools.BIOME[theme] as Array):
+			ids[int(pid)] = true
+	for pid in PokePools.all_champion_ids():
+		ids[int(pid)] = true
+	var out: Array[int] = []
+	for k in ids:
+		out.append(int(k))
+	return out
+
+
+## Phase 2 : toutes les attaques du movepool complet de chaque espèce déjà
+## en cache — sans ça, une attaque jamais rencontrée exigerait quand même
+## une requête réseau la première fois qu'un Pokémon tente de l'apprendre.
+func _prefetch_moves() -> void:
+	var names: Dictionary = {}
+	for key in _cache:
+		var d: Dictionary = _cache[key]
+		for nm in (d.get("learnable_moves", []) as Array):
+			names[str(nm)] = true
+	var list := names.keys()
+	var total := list.size()
+	if total == 0:
+		prefetch_finished.emit()
+		return
+	var counter := [0]
+	for nm in list:
+		get_move(str(nm), func(_d: Dictionary) -> void:
+			counter[0] += 1
+			prefetch_progress.emit(counter[0], total)
+			if counter[0] >= total:
+				prefetch_finished.emit()
+		)
+
 
 func get_pokemon(id_or_name: Variant, callback: Callable) -> void:
 	var key := str(id_or_name).to_lower()

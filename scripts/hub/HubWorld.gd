@@ -82,6 +82,9 @@ func _ready() -> void:
 	_build_multiplayer_avatars()
 	if GameManager.is_first_run and GameManager.unlocked_pokemon.is_empty():
 		_open_starter_selection()
+	else:
+		# Retour au hub (post-run, achat, etc.) = point de sauvegarde naturel.
+		GameManager.save_game()
 
 
 # ── Environnement (ciel, lumière, ambiance) ─────────────────────────────
@@ -432,7 +435,7 @@ func _mk_lbl(text: String, x: float, y: float, w: float, h: float,
 		fs: int, col: Color) -> Label:
 	var l := Label.new()
 	l.text = text; l.position = Vector2(x, y); l.size = Vector2(w, h)
-	l.add_theme_font_size_override("font_size", fs)
+	l.add_theme_font_size_override("font_size", UiKit.scaled_font(fs))
 	l.add_theme_color_override("font_color", col)
 	l.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.55))
 	l.add_theme_constant_override("shadow_offset_x", 1)
@@ -571,6 +574,9 @@ func _interact(npc: HubNPC) -> void:
 			_subscreen = null
 			_blocked   = false
 			_refresh_labels()
+			# Fermeture d'un menu du hub (Boutique/Pokédex/Améliorations/
+			# Gromago) = point de sauvegarde naturel après tout achat.
+			GameManager.save_game()
 		, CONNECT_ONE_SHOT)
 
 
@@ -604,7 +610,7 @@ func _open_run_menu() -> void:
 		b.text = d["txt"]
 		b.position = Vector2(440, d["y"])
 		b.size     = Vector2(400, 60)
-		b.add_theme_font_size_override("font_size", 19)
+		b.add_theme_font_size_override("font_size", UiKit.scaled_font(19))
 		b.add_theme_color_override("font_color", Color(0.96, 0.92, 0.80))
 		b.add_theme_color_override("font_hover_color", Color(0.98, 0.93, 0.75))
 		var sn := StyleBoxFlat.new()
@@ -657,6 +663,7 @@ func _open_starter_selection() -> void:
 		GameManager.unlock_pokemon(pokemon_id)
 		GameManager.hub_team       = [pokemon_id]
 		GameManager.is_first_run   = false
+		GameManager.save_game()
 		screen.queue_free()
 		_blocked = false
 		_refresh_labels()
@@ -689,7 +696,7 @@ func _show_coming_soon(msg: String) -> void:
 	lbl.text = msg
 	lbl.position = Vector2(340, 290)
 	lbl.size     = Vector2(600, 100)
-	lbl.add_theme_font_size_override("font_size", 22)
+	lbl.add_theme_font_size_override("font_size", UiKit.scaled_font(22))
 	lbl.add_theme_color_override("font_color", Color(0.91, 0.85, 0.70))
 	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART

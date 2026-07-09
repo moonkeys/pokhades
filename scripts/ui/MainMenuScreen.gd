@@ -12,6 +12,8 @@ extends Node3D
 
 var _ui: CanvasLayer = null
 var _lobby: MultiplayerLobbyScreen = null
+var _dl_status: Label = null
+var _dl_btn: Button = null
 
 
 func _ready() -> void:
@@ -82,10 +84,33 @@ func _build_ui() -> void:
 	panel.add_child(quit)
 	quit.pressed.connect(func() -> void: get_tree().quit())
 
-	# Version affichée en coin — pratique pour vérifier que tout le monde a
-	# bien la même avant de jouer en multi (cf. GameManager.VERSION).
-	UiKit.label(panel, "v%s" % GameManager.VERSION, Vector2(0, 428), 12,
+	# Télécharge toutes les données du jeu (espèces + attaques) en cache
+	# disque une bonne fois pour toutes — ensuite plus besoin d'internet
+	# pour jouer (cf. PokemonAPI.prefetch_all, réexécutable sans risque).
+	_dl_btn = UiKit.button("⬇  Télécharger pour jouer hors-ligne", Vector2(440, 40), false)
+	_dl_btn.position = Vector2(80, 384)
+	_dl_btn.add_theme_font_size_override("font_size", UiKit.scaled_font(13))
+	panel.add_child(_dl_btn)
+	_dl_btn.pressed.connect(_start_offline_download)
+
+	_dl_status = UiKit.label(panel, "", Vector2(0, 428), 12,
 		UiKit.TEXT_DARK.lightened(0.35), 600, HORIZONTAL_ALIGNMENT_CENTER)
+
+	PokemonAPI.prefetch_progress.connect(func(done: int, total: int) -> void:
+		_dl_status.text = "Téléchargement… %d / %d" % [done, total]
+	)
+	PokemonAPI.prefetch_finished.connect(func() -> void:
+		_dl_status.text = "v%s  —  ✓ Données téléchargées, jouable hors-ligne" % GameManager.VERSION
+		_dl_btn.disabled = false
+		_dl_btn.text = "⬇  Retélécharger"
+	)
+	_dl_status.text = "v%s" % GameManager.VERSION
+
+
+func _start_offline_download() -> void:
+	_dl_btn.disabled = true
+	_dl_status.text = "Téléchargement…"
+	PokemonAPI.prefetch_all()
 
 
 func _open_multiplayer_lobby() -> void:

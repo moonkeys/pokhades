@@ -4,7 +4,7 @@ extends Node
 ## VÉRIFIÉE à la connexion (cf. Net._register) pour éviter de faire jouer
 ## ensemble deux builds différents (bugs de sync garantis sinon). À
 ## incrémenter à chaque changement qui touche au gameplay/réseau.
-const VERSION := "0.2.0"
+const VERSION := "0.3.0"
 
 # ── Starters disponibles ─────────────────────────────────────────────
 const STARTER_IDS: Array = [25, 570, 359, 725, 656, 390, 674, 559, 447]
@@ -512,3 +512,102 @@ func get_effective_start(pid: int, base_level: int) -> Dictionary:
 	while EVOLUTIONS.has(id) and level >= int(EVOLUTIONS[id]["level"]):
 		id = int(EVOLUTIONS[id]["evolves_to"])
 	return {"base": pid, "id": id, "level": level}
+
+
+# ── Sauvegarde persistante (user://save.json) ─────────────────────────
+## Sans ça, toute la progression (Pokémon débloqués, équipe, objets,
+## améliorations…) repartait de zéro à chaque lancement du jeu — retour
+## joueur : on devait rechoisir son starter à CHAQUE relance, pas
+## seulement la toute première fois. `run_money`/`run_items` ne sont PAS
+## sauvés : propres à la run en cours, remis à zéro à chaque départ (déjà
+## le comportement voulu, cf. commentaires plus haut).
+const SAVE_PATH := "user://save.json"
+
+func _ready() -> void:
+	load_game()
+
+
+func save_game() -> void:
+	var data := {
+		"selected_starter_id": selected_starter_id,
+		"gold":                gold,
+		"run_count":           run_count,
+		"is_first_run":        is_first_run,
+		"unlocked_pokemon":    unlocked_pokemon,
+		"hub_team":            hub_team,
+		"owned_items":         owned_items,
+		"item_inventory":      item_inventory,
+		"pokemon_item":        _stringify_keys(pokemon_item),
+		"start_level_bonus":   _stringify_keys(start_level_bonus),
+		"berry_magnet":        berry_magnet,
+		"move_slot_count":     move_slot_count,
+		"team_slot_count":     team_slot_count,
+		"dash_charges_bought": dash_charges_bought,
+		"purchased_move_names": purchased_move_names,
+		"move_loadouts":       _stringify_keys(move_loadouts),
+		"cs_holders":          cs_holders,
+		"owned_cs":            owned_cs,
+		"defeat_counts":       _stringify_keys(defeat_counts),
+	}
+	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
+	if f == null:
+		push_error("GameManager: échec d'écriture de la sauvegarde (%s)" % SAVE_PATH)
+		return
+	f.store_string(JSON.stringify(data))
+	f.close()
+
+
+func load_game() -> void:
+	if not FileAccess.file_exists(SAVE_PATH):
+		return
+	var f := FileAccess.open(SAVE_PATH, FileAccess.READ)
+	if f == null:
+		return
+	var parsed: Variant = JSON.parse_string(f.get_as_text())
+	f.close()
+	if typeof(parsed) != TYPE_DICTIONARY:
+		return
+	var d: Dictionary = parsed
+
+	selected_starter_id  = int(d.get("selected_starter_id", selected_starter_id))
+	gold                 = int(d.get("gold", gold))
+	run_count            = int(d.get("run_count", run_count))
+	is_first_run         = bool(d.get("is_first_run", is_first_run))
+	unlocked_pokemon.assign(d.get("unlocked_pokemon", []))
+	hub_team.assign(d.get("hub_team", []))
+	owned_items.assign(d.get("owned_items", []))
+	item_inventory       = d.get("item_inventory", {})
+	pokemon_item         = _intify_keys(d.get("pokemon_item", {}))
+	start_level_bonus    = _intify_keys(d.get("start_level_bonus", {}))
+	berry_magnet         = bool(d.get("berry_magnet", berry_magnet))
+	move_slot_count      = int(d.get("move_slot_count", move_slot_count))
+	team_slot_count      = int(d.get("team_slot_count", team_slot_count))
+	dash_charges_bought  = int(d.get("dash_charges_bought", dash_charges_bought))
+	purchased_move_names.assign(d.get("purchased_move_names", []))
+	move_loadouts        = _intify_keys(d.get("move_loadouts", {}))
+	cs_holders           = d.get("cs_holders", {})
+	owned_cs.assign(d.get("owned_cs", []))
+	defeat_counts        = _intify_keys(d.get("defeat_counts", {}))
+
+
+## JSON n'autorise que des clés-chaînes — nos dictionnaires pid→… utilisent
+## des clés int côté jeu. Aller-retour transparent à la sauvegarde/chargement.
+func _stringify_keys(d: Dictionary) -> Dictionary:
+	var out := {}
+	for k in d:
+		out[str(k)] = d[k]
+	return out
+
+
+func _intify_keys(d: Dictionary) -> Dictionary:
+	var out := {}
+	for k in d:
+		out[int(k)] = d[k]
+	return out
+
+
+## Sauvegarde de sécurité si le joueur quitte sans repasser par le Hub
+## (fermeture de la fenêtre pendant une run, Alt+F4…).
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_APPLICATION_PAUSED:
+		save_game()
