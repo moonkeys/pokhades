@@ -27,7 +27,7 @@ var _streams: Dictionary = {}   # chemin → AudioStream (cache)
 func _ready() -> void:
 	for i in POOL_SIZE:
 		var p := AudioStreamPlayer.new()
-		p.bus = "Master"
+		p.bus = "SFX"
 		add_child(p)
 		_players.append(p)
 

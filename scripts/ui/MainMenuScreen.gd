@@ -12,6 +12,7 @@ extends Node3D
 
 var _ui: CanvasLayer = null
 var _lobby: MultiplayerLobbyScreen = null
+var _settings: SettingsScreen = null
 var _dl_status: Label = null
 var _dl_btn: Button = null
 
@@ -59,7 +60,7 @@ func _build_ui() -> void:
 	_ui.layer = 5
 	add_child(_ui)
 
-	var panel := UiKit.main_panel(Vector2(340, 140), Vector2(600, 460))
+	var panel := UiKit.main_panel(Vector2(340, 100), Vector2(600, 540))
 	_ui.add_child(panel)
 	UiKit.pop_in(panel)
 
@@ -75,12 +76,17 @@ func _build_ui() -> void:
 	)
 
 	var multi := UiKit.button("🌐  Mode multijoueur", Vector2(440, 64))
-	multi.position = Vector2(80, 232)
+	multi.position = Vector2(80, 222)
 	panel.add_child(multi)
 	multi.pressed.connect(_open_multiplayer_lobby)
 
-	var quit := UiKit.button("✕  Quitter", Vector2(440, 52))
-	quit.position = Vector2(80, 320)
+	var settings := UiKit.button("⚙  Paramètres", Vector2(440, 52), false)
+	settings.position = Vector2(80, 294)
+	panel.add_child(settings)
+	settings.pressed.connect(_open_settings)
+
+	var quit := UiKit.button("✕  Quitter", Vector2(440, 52), false)
+	quit.position = Vector2(80, 356)
 	panel.add_child(quit)
 	quit.pressed.connect(func() -> void: get_tree().quit())
 
@@ -88,12 +94,12 @@ func _build_ui() -> void:
 	# disque une bonne fois pour toutes — ensuite plus besoin d'internet
 	# pour jouer (cf. PokemonAPI.prefetch_all, réexécutable sans risque).
 	_dl_btn = UiKit.button("⬇  Télécharger pour jouer hors-ligne", Vector2(440, 40), false)
-	_dl_btn.position = Vector2(80, 384)
+	_dl_btn.position = Vector2(80, 424)
 	_dl_btn.add_theme_font_size_override("font_size", UiKit.scaled_font(13))
 	panel.add_child(_dl_btn)
 	_dl_btn.pressed.connect(_start_offline_download)
 
-	_dl_status = UiKit.label(panel, "", Vector2(0, 428), 12,
+	_dl_status = UiKit.label(panel, "", Vector2(0, 470), 12,
 		UiKit.TEXT_DARK.lightened(0.35), 600, HORIZONTAL_ALIGNMENT_CENTER)
 
 	PokemonAPI.prefetch_progress.connect(func(done: int, total: int) -> void:
@@ -111,6 +117,17 @@ func _start_offline_download() -> void:
 	_dl_btn.disabled = true
 	_dl_status.text = "Téléchargement…"
 	PokemonAPI.prefetch_all()
+
+
+func _open_settings() -> void:
+	if is_instance_valid(_settings):
+		return
+	_settings = SettingsScreen.new()
+	add_child(_settings)
+	_settings.closed.connect(func() -> void:
+		_settings.queue_free()
+		_settings = null
+	, CONNECT_ONE_SHOT)
 
 
 func _open_multiplayer_lobby() -> void:

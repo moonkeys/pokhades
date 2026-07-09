@@ -13,7 +13,7 @@ config_version=5
 config/name="Pokhades"
 run/main_scene="res://scenes/ui/MainMenu.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
-config/icon="res://icon.svg"
+config/icon="res://icon.png"
 
 [autoload]
 
@@ -27,6 +27,10 @@ Sfx="*res://autoloads/Sfx.gd"
 [gui]
 
 theme/custom="res://assets/ui/default_theme.tres"
+
+[audio]
+
+buses/default_bus_layout="res://default_bus_layout.tres"
 
 [display]
 

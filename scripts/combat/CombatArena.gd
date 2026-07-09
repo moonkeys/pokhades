@@ -98,6 +98,8 @@ var _boon_node:   Area3D = null             # item flottant au centre
 var _boon_type:   int    = -1               # RunManager.BONUS_SKILL / BONUS_STAT
 var _boon_screen: BoutiqueScreen = null     # écran de récompense (skill/stat)
 
+var _pause_screen: PauseMenuScreen = null
+
 @onready var hud          = $HUD
 
 const TEAM_SCENE  := preload("res://scenes/combat/TeamMember.tscn")
@@ -179,6 +181,27 @@ func _register_switch_key() -> void:
 		var ev4 := InputEventKey.new()
 		ev4.keycode = KEY_A
 		InputMap.action_add_event("cs_use", ev4)
+
+
+## Échap ouvre le menu pause — sauf si un autre écran (Boutique, don, etc.)
+## est déjà ouvert (ils gèrent Échap eux-mêmes via MenuNav) ou si la run
+## est terminée (game over / victoire déjà en cours).
+func _unhandled_input(event: InputEvent) -> void:
+	if not event.is_action_pressed("ui_cancel"):
+		return
+	if is_instance_valid(_pause_screen):
+		return
+	if _boutique_active or is_instance_valid(_boutique_screen) or is_instance_valid(_boon_screen):
+		return
+	if _game_over_triggered or _victory_triggered:
+		return
+	_pause_screen = PauseMenuScreen.new()
+	add_child(_pause_screen)
+	_pause_screen.closed.connect(func() -> void:
+		_pause_screen.queue_free()
+		_pause_screen = null
+	, CONNECT_ONE_SHOT)
+	get_viewport().set_input_as_handled()
 
 
 func _process(delta: float) -> void:

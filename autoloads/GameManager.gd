@@ -4,7 +4,7 @@ extends Node
 ## VÉRIFIÉE à la connexion (cf. Net._register) pour éviter de faire jouer
 ## ensemble deux builds différents (bugs de sync garantis sinon). À
 ## incrémenter à chaque changement qui touche au gameplay/réseau.
-const VERSION := "0.3.0"
+const VERSION := "0.4.0"
 
 # ── Starters disponibles ─────────────────────────────────────────────
 const STARTER_IDS: Array = [25, 570, 359, 725, 656, 390, 674, 559, 447]
@@ -201,6 +201,24 @@ static func final_evolution_of(pid: int) -> int:
 	while EVOLUTIONS.has(cur):
 		cur = int(EVOLUTIONS[cur]["evolves_to"])
 	return cur
+
+
+# ── Réglages audio (persistants, cf. save_game/apply_audio_settings) ────
+var master_volume: float = 1.0   # 0..1
+var sfx_volume:    float = 1.0   # 0..1
+var audio_muted:   bool  = false
+
+## Applique les réglages courants aux bus audio réels (cf. default_bus_
+## layout.tres : bus 0 = Master, bus 1 = SFX). À appeler après tout
+## changement (curseur bougé, mute togglé) — et une fois au démarrage.
+func apply_audio_settings() -> void:
+	var master_idx := AudioServer.get_bus_index("Master")
+	var sfx_idx     := AudioServer.get_bus_index("SFX")
+	if master_idx >= 0:
+		AudioServer.set_bus_volume_db(master_idx, linear_to_db(maxf(master_volume, 0.0001)))
+		AudioServer.set_bus_mute(master_idx, audio_muted)
+	if sfx_idx >= 0:
+		AudioServer.set_bus_volume_db(sfx_idx, linear_to_db(maxf(sfx_volume, 0.0001)))
 
 
 # ── État du Hub ──────────────────────────────────────────────────────
@@ -525,6 +543,7 @@ const SAVE_PATH := "user://save.json"
 
 func _ready() -> void:
 	load_game()
+	apply_audio_settings()
 
 
 func save_game() -> void:
@@ -548,6 +567,9 @@ func save_game() -> void:
 		"cs_holders":          cs_holders,
 		"owned_cs":            owned_cs,
 		"defeat_counts":       _stringify_keys(defeat_counts),
+		"master_volume":       master_volume,
+		"sfx_volume":          sfx_volume,
+		"audio_muted":         audio_muted,
 	}
 	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	if f == null:
@@ -588,6 +610,9 @@ func load_game() -> void:
 	cs_holders           = d.get("cs_holders", {})
 	owned_cs.assign(d.get("owned_cs", []))
 	defeat_counts        = _intify_keys(d.get("defeat_counts", {}))
+	master_volume        = float(d.get("master_volume", master_volume))
+	sfx_volume           = float(d.get("sfx_volume", sfx_volume))
+	audio_muted          = bool(d.get("audio_muted", audio_muted))
 
 
 ## JSON n'autorise que des clés-chaînes — nos dictionnaires pid→… utilisent
