@@ -900,9 +900,18 @@ func _spawn_room_enemies() -> void:
 	# figé — sinon la difficulté stagne dès l'acte 2, cf. retour joueurs),
 	# niveau +1.5/salle +3/acte, et un champion d'élite qui incarne
 	# visiblement la montée en danger.
-	var count := mini(3 + room + act * 2, 12 + act * 3)
 	var lv    := PLAYER_LEVEL + int(room * 1.5) + act * 3
 	var pool  := _pool_for_room(room)
+
+	# 5 à 9 VAGUES par salle de combat (retour joueurs) — tirage SEEDÉ (dérivé
+	# de la graine de zone en multi → même nb de vagues chez tous les pairs).
+	# L'effectif par vague grandit avec la salle/l'acte (1→3), plafonné, pour
+	# que le rythme « vague après vague » reste tenable.
+	var wrng := RandomNumberGenerator.new()
+	wrng.seed = (Net.zone_seed(room) if Net.in_run else randi()) ^ 0x5A5A
+	var wave_count := wrng.randi_range(5, 9)
+	var per_wave   := clampi(1 + int(room / 3) + act, 1, 3)
+	var count := mini(wave_count * per_wave, 24)
 
 	_wave_queue.clear()
 	_wave_num    = 0
@@ -977,8 +986,8 @@ func _spawn_room_enemies() -> void:
 		var biome: Array = POOL_BIOME.get(_current_theme(), [])
 		champ_pool = biome if not biome.is_empty() else Array(pool)
 
-	# Découpe l'effectif en 1-4 vagues (au moins ~2 ennemis par vague)
-	_waves_total = clampi(randi_range(1, 4), 1, maxi(1, count / 2))
+	# Répartit l'effectif sur les 5-9 vagues tirées ci-dessus.
+	_waves_total = clampi(wave_count, 1, maxi(1, count))
 	var base := count / _waves_total
 	var rem  := count % _waves_total
 	for w in _waves_total:
