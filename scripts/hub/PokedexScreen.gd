@@ -73,12 +73,15 @@ func _build() -> void:
 		_build_grid(panel)
 		_build_detail_panel(panel)
 
-	var prg_str := "%d Pokémon libérés  •  Équipe %d / 6 slots  •  Capacités %d / 4 slots" % [
+	var w   := GameManager.compute_team_weight()
+	var cap := GameManager.build_weight_cap
+	var prg_str := "%d Pokémon libérés  •  Équipe %d / 6 slots  •  Capacités %d / 4 slots  •  Poids de build %d / %d" % [
 		GameManager.unlocked_pokemon.size(),
 		GameManager.team_slot_count,
 		GameManager.move_slot_count,
+		w, cap,
 	]
-	_lbl(panel, prg_str, 0, 590, 1080, 20, 12, C_DIM, true)
+	_lbl(panel, prg_str, 0, 590, 1080, 20, 12, (Color(0.90, 0.35, 0.30) if w > cap else C_DIM), true)
 
 	var close := UiKit.button("✕  Fermer", Vector2(160, 38), false)
 	close.position = Vector2(24, 578)

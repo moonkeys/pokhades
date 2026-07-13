@@ -396,9 +396,11 @@ func _build_ui() -> void:
 	_gold_lbl = _mk_lbl("◆ 0", 16, 8, 180, 32, 24, C_GOLD)
 	gold_pill.add_child(_gold_lbl)
 
-	# ── Pill Équipe ──
-	var team_pill := _mk_pill(Vector2(236, 10), Vector2(190, 48), false)
-	_team_lbl = _mk_lbl("Équipe —", 16, 12, 160, 26, 16, C_TEXT_LT)
+	# ── Pill Équipe (élargie pour le poids de build, cf. compute_team_weight) ──
+	var team_pill := _mk_pill(Vector2(236, 10), Vector2(250, 48), false)
+	_team_lbl = _mk_lbl("Équipe —", 16, 14, 222, 22, 14, C_TEXT_LT)
+	_team_lbl.clip_text = true
+	_team_lbl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	team_pill.add_child(_team_lbl)
 
 	# ── Pill Run ──
@@ -458,7 +460,11 @@ func _refresh_labels() -> void:
 		tw.tween_property(_gold_lbl, "scale", Vector2.ONE, 0.22).set_ease(Tween.EASE_OUT)
 	var ts := GameManager.hub_team.size()
 	var mx := GameManager.get_max_team_size()
-	_team_lbl.text = "Équipe %d / %d" % [ts, mx]
+	var w   := GameManager.compute_team_weight()
+	var cap := GameManager.build_weight_cap
+	_team_lbl.text = "Équipe %d / %d  ·  Poids %d / %d" % [ts, mx, w, cap]
+	_team_lbl.add_theme_color_override("font_color",
+		Color(0.95, 0.35, 0.30) if w > cap else Color(0.92, 0.88, 0.72))
 	_run_lbl.text  = "Run #%d" % GameManager.run_count
 
 
@@ -655,6 +661,14 @@ func _open_multiplayer_lobby() -> void:
 func _start_run() -> void:
 	if GameManager.hub_team.is_empty():
 		_show_coming_soon("Parle d'abord à Ko\npour composer ton équipe !")
+		return
+	# Système de poids/build (simple) : Pokémon + objets tenus + CT
+	# équipées ne doivent pas dépasser le plafond — sinon la run ne
+	# démarre pas (cap augmentable à la Boutique d'Améliorations).
+	var w   := GameManager.compute_team_weight()
+	var cap := GameManager.build_weight_cap
+	if w > cap:
+		_show_coming_soon("Poids d'équipe trop élevé !\n%d / %d — allège ta compo\nou augmente le plafond\n(Boutique d'Améliorations)." % [w, cap])
 		return
 	GameManager.run_count += 1
 	get_tree().change_scene_to_file("res://scenes/combat/CombatArena.tscn")

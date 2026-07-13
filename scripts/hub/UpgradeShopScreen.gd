@@ -26,7 +26,7 @@ func _build() -> void:
 	veil.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(veil)
 
-	var panel := UiKit.main_panel(Vector2(140, 60), Vector2(1000, 600))
+	var panel := UiKit.main_panel(Vector2(140, 40), Vector2(1000, 660))
 	add_child(panel)
 	UiKit.banner(panel, "Améliorations permanentes")
 	UiKit.pop_in(panel)
@@ -190,9 +190,38 @@ func _build() -> void:
 			)
 			cs_card.add_child(cs_btn)
 
+	# ── Plafond de poids de build ────────────────────────────────────────
+	# cf. GameManager.compute_team_weight — Pokémon + objets tenus + CT
+	# équipées ne doivent pas dépasser ce plafond pour lancer une run.
+	_lbl(panel, "Plafond de poids de build", 40, 578, 460, 26, 17, UiKit.CREAM)
+	_lbl(panel, "Autorise une équipe plus lourde (Pokémon évolués, objets, CT)",
+		40, 602, 460, 20, 12, Color(0.85, 0.78, 0.62))
+
+	var cap_card := Panel.new()
+	cap_card.position = Vector2(560, 578)
+	cap_card.size     = Vector2(300, 56)
+	var at_max := GameManager.build_weight_cap >= GameManager.WEIGHT_CAP_MAX
+	_style(cap_card, UiKit.TAN if at_max else UiKit.TAN_DARK,
+		C_GOLD if at_max else C_BORDER, 8)
+	panel.add_child(cap_card)
+	_lbl(cap_card, "Plafond actuel : %d" % GameManager.build_weight_cap, 10, 6, 180, 22, 14, C_TEXT)
+	if at_max:
+		_lbl(cap_card, "✓ Maximum", 10, 30, 180, 20, 11, C_GOOD)
+	else:
+		var tier := (GameManager.build_weight_cap - 24) / GameManager.WEIGHT_CAP_STEP
+		var wcost: int = GameManager.WEIGHT_CAP_COSTS[tier]
+		var wbtn := _mk_buy_btn("%d Baies" % wcost, Vector2(178, 12), Vector2(112, 32),
+			GameManager.gold >= wcost)
+		wbtn.pressed.connect(func() -> void:
+			if GameManager.buy_weight_cap(wcost):
+				Sfx.play_file(Sfx.SE_BUY_ITEM)
+				_rebuild()
+		)
+		cap_card.add_child(wbtn)
+
 	# ── Fermer ────────────────────────────────────────────────────────
 	var close := UiKit.button("✕  Fermer", Vector2(160, 40), false)
-	close.position = Vector2(816, 548)
+	close.position = Vector2(816, 600)
 	close.pressed.connect(func() -> void: closed.emit())
 	panel.add_child(close)
 

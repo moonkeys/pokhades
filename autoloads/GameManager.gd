@@ -327,6 +327,48 @@ const MOVE_SLOT_COSTS: Array[int] = [100, 200, 400]  # coût pour passer à 2, 3
 const TEAM_SLOT_COSTS: Array[int] = [80, 120, 180, 250, 350]  # pour chaque slot ajouté
 const DASH_CHARGE_COSTS: Array[int] = [60, 120, 200]  # coût des charges de Dash 1, 2, 3
 
+# ── Système de poids de build (version simple, validée en plan) ────────
+# Chaque Pokémon/objet tenu/CT équipée a un poids FIXE ; la somme ne doit
+# pas dépasser `build_weight_cap` pour lancer une run (cf. HubWorld._start_
+# run). Le plafond s'augmente à la Boutique d'Améliorations. Retour joueurs :
+# encourager une compo équilibrée plutôt que 6 pseudo-légendaires + items.
+var build_weight_cap: int = 24
+const WEIGHT_CAP_STEP  := 4     # gain par palier
+const WEIGHT_CAP_MAX   := 40
+const WEIGHT_CAP_COSTS: Array[int] = [150, 250, 400, 600]  # 24→28→32→36→40
+
+func buy_weight_cap(cost: int) -> bool:
+	if build_weight_cap >= WEIGHT_CAP_MAX or not spend_gold(cost):
+		return false
+	build_weight_cap = mini(build_weight_cap + WEIGHT_CAP_STEP, WEIGHT_CAP_MAX)
+	return true
+
+## Poids d'un Pokémon selon son stade d'évolution (base=3, stade2=5, stade
+## final=8) — une lignée pleinement évoluée coûte plus cher à emmener.
+static func pokemon_weight(pid: int) -> int:
+	var stage := 0
+	var cur := pid
+	var prev := pre_evolution_of(cur)
+	while prev != -1:
+		stage += 1
+		cur = prev
+		prev = pre_evolution_of(cur)
+	return 3 + stage * 2
+
+const ITEM_WEIGHT := 2   # objet tenu (Gromago) — poids fixe
+const MOVE_WEIGHT := 1   # CT achetée et équipée — poids fixe
+
+## Poids total de l'équipe (hub_team) : Pokémon + objets tenus + CT
+## équipées. Utilisé pour bloquer le lancement d'une run au-delà du cap.
+func compute_team_weight() -> int:
+	var total := 0
+	for pid in hub_team:
+		total += pokemon_weight(pid)
+		if get_assigned_item(pid) != "":
+			total += ITEM_WEIGHT
+		total += get_move_loadout(pid).size() * MOVE_WEIGHT
+	return total
+
 
 ## Capacités explicitement choisies pour ce Pokémon (vide si jamais configuré).
 func get_move_loadout(pid: int) -> Array:
@@ -590,6 +632,7 @@ func save_game() -> void:
 		"defeat_counts":       _stringify_keys(defeat_counts),
 		"champion_badges":     champion_badges,
 		"champion_shards":     champion_shards,
+		"build_weight_cap":    build_weight_cap,
 		"master_volume":       master_volume,
 		"sfx_volume":          sfx_volume,
 		"audio_muted":         audio_muted,
@@ -635,6 +678,7 @@ func load_game() -> void:
 	defeat_counts        = _intify_keys(d.get("defeat_counts", {}))
 	champion_badges.assign(d.get("champion_badges", []))
 	champion_shards      = int(d.get("champion_shards", champion_shards))
+	build_weight_cap     = int(d.get("build_weight_cap", build_weight_cap))
 	master_volume        = float(d.get("master_volume", master_volume))
 	sfx_volume           = float(d.get("sfx_volume", sfx_volume))
 	audio_muted          = bool(d.get("audio_muted", audio_muted))
