@@ -971,6 +971,10 @@ func _build_water_collision() -> void:
 
 	var rows: Dictionary = {}
 	for cell: Vector2i in _map._water.get_used_cells():
+		# Flaques peu profondes (FOREST/SWAMP) : traversables à pied, aucune
+		# collision — seule l'eau "profonde" (LAKE) bloque le passage.
+		if _map.is_shallow_cell(cell):
+			continue
 		if not rows.has(cell.y):
 			rows[cell.y] = []
 		rows[cell.y].append(cell.x)

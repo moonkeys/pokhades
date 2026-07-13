@@ -91,6 +91,18 @@ const WATER_LAYER := 4
 ## ─────────────────────────────────────────────────────────────────
 var _grid: Array = []
 var _rng:  RandomNumberGenerator = RandomNumberGenerator.new()
+
+## Cellules d'eau MARCHABLES (Terrain.WATER quand même, pour le rendu/
+## reconnaissance existants, mais SANS collision — cf. MapRender3D.
+## _build_water_collision). Peuplé par _apply_theme selon "water_mode"
+## ("deep" = LAKE, seule vraie eau profonde ; "shallow" = FOREST/SWAMP,
+## flaques marchables ; "none" = MEADOW/ROCKY/AUTUMN, pas d'eau du tout —
+## retour joueurs : l'eau profonde partout cassait le rythme).
+var _shallow_cells: Dictionary = {}
+var _water_mode: String = "deep"
+
+func is_shallow_cell(cell: Vector2i) -> bool:
+	return _shallow_cells.has(cell)
 var _flower_mat: ShaderMaterial = null
 
 
@@ -250,8 +262,12 @@ func _generate() -> void:
 	_apply_theme()
 
 	_init_grid()
-	_gen_water_noise()
-	_ensure_water_pools()
+	_shallow_cells.clear()
+	if _water_mode != "none":
+		_gen_water_noise()
+		_ensure_water_pools()
+	if _water_mode == "shallow":
+		_mark_shallow_water()
 	_gen_tree_noise()
 	_carve_border()
 	_carve_paths()
@@ -374,6 +390,11 @@ func _apply_theme() -> void:
 	min_water_pools = cfg["min_water_pools"]
 	flower_density  = cfg["flower_density"]
 	path_width      = cfg["path_width"]
+	# "deep" (LAKE, seule eau qui bloque/gate) / "shallow" (FOREST, SWAMP —
+	# flaques marchables, sans collision) / "none" (MEADOW/ROCKY/AUTUMN — pas
+	# d'eau du tout) — retour joueurs : l'eau profonde partout cassait le
+	# rythme hors du biome Lac.
+	_water_mode = cfg.get("water_mode", "deep")
 	# VARIATION intra-biome : un acte enchaîne 5+ salles du MÊME biome —
 	# chaque salle jitterle ses densités (par graine) pour que deux forêts
 	# consécutives ne se ressemblent pas (clairsemée, touffue, marécageuse…).
@@ -401,6 +422,7 @@ func _theme_config(t: MapTheme) -> Dictionary:
 				"flower_density":  0.03,
 				"path_width":      3,
 				"gating":          GatingType.COUPE,
+				"water_mode":      "shallow",
 			}
 		MapTheme.SWAMP:
 			return {
@@ -416,7 +438,10 @@ func _theme_config(t: MapTheme) -> Dictionary:
 				"tg_threshold":    0.52,
 				"flower_density":  0.02,
 				"path_width":      4,   # corridors plus larges — marécage plus praticable
-				"gating":          GatingType.SURF,
+				# Plus d'eau profonde en marécage (flaques marchables) → CS Surf
+				# n'a plus lieu d'être ; Coupe-Brindille reste thématique.
+				"gating":          GatingType.COUPE,
+				"water_mode":      "shallow",
 			}
 		MapTheme.MEADOW:
 			return {
@@ -431,6 +456,7 @@ func _theme_config(t: MapTheme) -> Dictionary:
 				"flower_density":  0.16,
 				"path_width":      3,
 				"gating":          GatingType.FORCE,
+				"water_mode":      "none",
 			}
 		MapTheme.ROCKY:
 			return {
@@ -447,6 +473,7 @@ func _theme_config(t: MapTheme) -> Dictionary:
 				"flower_density":  0.02,
 				"path_width":      3,
 				"gating":          GatingType.FORCE,
+				"water_mode":      "none",
 			}
 		MapTheme.AUTUMN:
 			return {
@@ -464,6 +491,7 @@ func _theme_config(t: MapTheme) -> Dictionary:
 				"flower_density":  0.06,
 				"path_width":      3,
 				"gating":          GatingType.COUPE,
+				"water_mode":      "none",
 			}
 		MapTheme.LAKE:
 			return {
@@ -481,6 +509,7 @@ func _theme_config(t: MapTheme) -> Dictionary:
 				"flower_density":  0.05,
 				"path_width":      3,
 				"gating":          GatingType.SURF,
+				"water_mode":      "deep",
 			}
 	return {}
 
@@ -532,6 +561,18 @@ func _gen_water_noise() -> void:
 				continue
 			if noise.get_noise_2d(float(c), float(r)) > threshold:
 				_grid[r][c] = Terrain.WATER
+
+
+## Marque toutes les cellules WATER générées comme "peu profondes" —
+## conservent leur rendu/tuile eau, mais MapRender3D leur retire toute
+## collision (cf. _build_water_collision) et _compute_reachable les traverse
+## librement, comme une flaque marchable plutôt qu'un obstacle.
+func _mark_shallow_water() -> void:
+	for r in _grid.size():
+		var row: PackedByteArray = _grid[r]
+		for c in row.size():
+			if row[c] == Terrain.WATER:
+				_shallow_cells[Vector2i(c, r)] = true
 
 
 func _ensure_water_pools() -> void:
@@ -1387,7 +1428,7 @@ func _compute_reachable() -> void:
 			var n := cur + d
 			if n.x < 0 or n.x >= W or n.y < 0 or n.y >= H: continue
 			if n in _reachable: continue
-			if _grid[n.y][n.x] == Terrain.WATER: continue
+			if _grid[n.y][n.x] == Terrain.WATER and not _shallow_cells.has(n): continue
 			_reachable[n] = true
 			queue.append(n)
 
