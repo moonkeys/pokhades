@@ -84,8 +84,36 @@ uniform float uv_scale = 1.0;
 uniform vec4 tint : source_color = vec4(1.0, 1.0, 1.0, 1.0);
 uniform float tint_strength = 0.0;
 
+// ── Mode "peint" (retour joueurs : décor trop "dalle plate/rectangle
+// d'herbe") — bruit de valeur fait main (2 octaves), sans texture externe,
+// qui module légèrement la teinte ET les UV comme de grandes taches de
+// pinceau, pour casser la répétition mécanique de la texture bakée.
+// paint_strength=0 → comportement d'origine, inchangé pour les autres biomes.
+uniform float paint_strength = 0.0;
+
+float _hash(vec2 p) {
+	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+float _noise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	float a = _hash(i);
+	float b = _hash(i + vec2(1.0, 0.0));
+	float c = _hash(i + vec2(0.0, 1.0));
+	float d = _hash(i + vec2(1.0, 1.0));
+	vec2 u = f * f * (3.0 - 2.0 * f);
+	return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
 void fragment() {
-	vec3 raw = texture(tex, UV * uv_scale).rgb;
+	vec2 uv = UV * uv_scale;
+	if (paint_strength > 0.0) {
+		// Grandes taches (basse fréquence) + micro-grain (haute fréquence),
+		// façon aquarelle — distord légèrement l'UV en plus de la teinte.
+		float blotch = _noise(UV * 5.0) * 0.6 + _noise(UV * 17.0) * 0.4;
+		uv += (blotch - 0.5) * 0.02 * paint_strength;
+	}
+	vec3 raw = texture(tex, uv).rgb;
 	// tint_strength=0 : couleur de la texture inchangée (comportement d'origine).
 	// tint_strength=1 : ne garde que le RELIEF (luminance) de la texture, la
 	// TEINTE vient entièrement de `tint` — pour recolorer l'herbe partagée
@@ -93,6 +121,12 @@ void fragment() {
 	float lum = dot(raw, vec3(0.299, 0.587, 0.114));
 	vec3 recolored = lum * tint.rgb * 1.7;
 	vec3 c = mix(raw, recolored, tint_strength);
+	if (paint_strength > 0.0) {
+		float blotch2 = _noise(UV * 6.0 + vec2(11.3, 4.7));
+		// ±10% de luminosité par grandes taches — variation organique, pas
+		// de bord franc entre tuiles.
+		c *= 1.0 + (blotch2 - 0.5) * 0.20 * paint_strength;
+	}
 	float g = dot(c, vec3(0.299, 0.587, 0.114));
 	ALBEDO = clamp(mix(vec3(g), c, sat) * val, 0.0, 1.0);
 	ROUGHNESS = 1.0;
@@ -106,7 +140,8 @@ void fragment() {
 ## qu'ils matchent le vert (ou l'ocre, etc.) du sol jouable, quelle que soit
 ## la teinte propre de grass.png.
 static func ground_material(tex: Texture2D, sat: float = 1.45, val: float = 0.88,
-		uv_scale: float = 1.0, tint: Color = Color.WHITE, tint_strength: float = 0.0) -> ShaderMaterial:
+		uv_scale: float = 1.0, tint: Color = Color.WHITE, tint_strength: float = 0.0,
+		paint_strength: float = 0.0) -> ShaderMaterial:
 	if _ground_shader == null:
 		_ground_shader = Shader.new()
 		_ground_shader.code = _GROUND_SHADER
@@ -118,6 +153,7 @@ static func ground_material(tex: Texture2D, sat: float = 1.45, val: float = 0.88
 	mat.set_shader_parameter("tint", tint)
 	mat.set_shader_parameter("sat", sat)
 	mat.set_shader_parameter("val", val)
+	mat.set_shader_parameter("paint_strength", paint_strength)
 	return mat
 
 

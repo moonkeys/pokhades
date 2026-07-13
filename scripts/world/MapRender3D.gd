@@ -188,8 +188,11 @@ func _bake_ground_plane() -> void:
 
 	# Sol SATURÉ/assombri via shader (cf. GrassPatch.ground_material) — la
 	# texture bakée sortait trop claire et délavée par rapport aux sprites.
+	# Mode "peint" (retour joueurs : décor trop "dalle plate") — essai
+	# d'abord sur la Prairie seule avant de l'étendre aux autres biomes.
+	var paint := 1.0 if _map.theme == MapGenerator.MapTheme.MEADOW else 0.0
 	mesh_inst.material_override = GrassPatch.ground_material(
-		ImageTexture.create_from_image(img))
+		ImageTexture.create_from_image(img), 1.45, 0.88, 1.0, Color.WHITE, 0.0, paint)
 	mesh_inst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON   # les collines portent maintenant une ombre
 	add_child(mesh_inst)
 
