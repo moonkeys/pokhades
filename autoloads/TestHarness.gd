@@ -71,9 +71,15 @@ func _scenario_run(start_room: int) -> void:
 		RunManager.inst().start_run()
 		RunManager.inst().rooms_cleared = start_room
 	get_tree().change_scene_to_file("res://scenes/combat/CombatArena.tscn")
-	await get_tree().create_timer(RUN_SETTLE_TIME).timeout
-
+	# Polling plutôt qu'attente fixe : au premier lancement, le préchargement
+	# des espèces passe par le réseau et peut largement dépasser 8 s.
 	var scenario := "run" if start_room == 0 else "run_room%d" % start_room
+	var waited := 0.0
+	while get_tree().get_nodes_in_group("players").is_empty() and waited < 18.0:
+		await get_tree().create_timer(0.5).timeout
+		waited += 0.5
+	await get_tree().create_timer(3.0).timeout   # temps de télégraphie des spawns
+
 	var team := get_tree().get_nodes_in_group("players").size()
 	var enemies := get_tree().get_nodes_in_group("enemies").size()
 	if team == 0:

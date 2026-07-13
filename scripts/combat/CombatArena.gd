@@ -2271,8 +2271,6 @@ func _spawn_cave_portals() -> void:
 	for p in _cave_portals:
 		if is_instance_valid(p): p.queue_free()
 	_cave_portals.clear()
-	if _mp:
-		return   # v1 multijoueur : la grotte (détour solo avec save/restore) n'est pas synchronisée
 	if _cave_active or not is_instance_valid(_map):
 		return
 	for cell: Vector2i in _map.get_cave_cells():
@@ -2303,10 +2301,35 @@ func _spawn_cave_portals() -> void:
 		area.body_entered.connect(func(body: Node) -> void:
 			if _cave_active: return
 			if not (body.is_in_group("players") and body.get("is_active") == true): return
-			_enter_cave(entrance)
+			# Multijoueur : TOUT LE GROUPE entre ensemble (les maps/états
+			# doivent rester en lockstep) — le premier joueur au seuil
+			# demande à l'hôte, qui diffuse l'entrée à tous.
+			if _mp and not multiplayer.is_server():
+				_request_enter_cave.rpc_id(1, entrance)
+			else:
+				_host_enter_cave(entrance)
 		)
 		add_child(area)
 		_cave_portals.append(area)
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func _request_enter_cave(entrance: Vector2i) -> void:
+	if multiplayer.is_server():
+		_host_enter_cave(entrance)
+
+
+func _host_enter_cave(entrance: Vector2i) -> void:
+	if _cave_active:
+		return
+	if _mp:
+		_net_enter_cave.rpc(entrance)
+	_enter_cave(entrance)
+
+
+@rpc("authority", "call_remote", "reliable")
+func _net_enter_cave(entrance: Vector2i) -> void:
+	_enter_cave(entrance)
 
 
 func _enter_cave(_entrance: Vector2i) -> void:
@@ -2337,10 +2360,14 @@ func _save_overworld() -> void:
 	for m in _team:
 		_saved_team_pos.append(m.global_position if is_instance_valid(m) else Vector3.ZERO)
 
-	# Détache (gèle) tout l'overworld : ennemis, coffres, barrière, map
+	# Détache (gèle) tout l'overworld : ennemis, coffres, barrière, map.
+	# Les COQUILLES réseau sont exclues : sur un client lent, les premiers
+	# ennemis de grotte (envoyés par l'hôte) peuvent arriver AVANT ce gel —
+	# les stocker les ferait disparaître de la grotte et réapparaître en
+	# fantômes au retour dans l'overworld.
 	_saved_nodes.clear()
 	for e in get_tree().get_nodes_in_group("enemies"):
-		if e.get_parent() == self:
+		if e.get_parent() == self and not ("net_shell" in e and e.net_shell):
 			remove_child(e)
 			_saved_nodes.append(e)
 	var chests: Array = []
@@ -2353,6 +2380,15 @@ func _save_overworld() -> void:
 	if is_instance_valid(_entry_barrier):
 		remove_child(_entry_barrier)
 		_saved_nodes.append(_entry_barrier)
+	# Les PORTES DE SORTIE de l'overworld aussi : la grotte ne s'ouvre
+	# qu'une fois la salle nettoyée, donc elles existent toujours à ce
+	# moment-là — sans ça elles restaient plantées DANS la grotte (bug
+	# "plusieurs zones de sortie après la cave" + risque de changer de
+	# zone depuis l'intérieur). Restaurées avec le reste au retour.
+	for p in _exit_portals:
+		if is_instance_valid(p) and p.get_parent() == self:
+			remove_child(p)
+			_saved_nodes.append(p)
 
 	# Déclencheurs de grotte consommés
 	for p in _cave_portals:
@@ -2385,6 +2421,11 @@ func _load_cave() -> void:
 var _cave_demiboss_pid: int = 0   # espèce du demi-boss (débloquée à sa défaite)
 
 func _spawn_cave_bosses() -> void:
+	# Multijoueur : seuls les ennemis de l'HÔTE font autorité — les clients
+	# reçoivent leurs coquilles via _net_spawn_enemy comme pour toute salle.
+	if _mp and not multiplayer.is_server():
+		hud.set_wave("☠ Demi-boss — bats-le pour le recruter !")
+		return
 	var rooms := RunManager.inst().rooms_cleared
 	var lv := SEMI_BOSS_LEVEL + rooms * 3
 	# 1 demi-boss à aura rouge (espèce non évoluée à débloquer) + 3 sbires
@@ -2393,6 +2434,8 @@ func _spawn_cave_bosses() -> void:
 	_spawn_from_pool(POOL_CAVE_ELITE, 3, maxi(PLAYER_LEVEL, lv - 5))
 	_room_total = _alive
 	hud.set_kills(0, _room_total)
+	if _mp:
+		_net_kills.rpc(0, _room_total)
 	if _alive > 0:
 		var boss_name := "le demi-boss"
 		if _cave_demiboss_pid > 0 and _cache.has(str(_cave_demiboss_pid)):
@@ -2420,16 +2463,30 @@ func _spawn_cave_demiboss(lv: int) -> int:
 	instance.attack_mult *= 1.4
 
 	var enemy = ENEMY_SCENE.instantiate()
+	if _mp:
+		_net_enemy_counter += 1
+		enemy.name = "E%d" % _net_enemy_counter
 	add_child(enemy)
 	var sz := _map.get_map_cell_size()
 	enemy.global_position = _map.cell_to_world3(Vector2i(sz.x / 2, sz.y / 2))
 	enemy.setup(instance, false, false, true)   # demi_boss = true
 	enemy.died.connect(_on_enemy_died.bind(id, data.is_base_form))
 	_alive += 1
+	if _mp:
+		var ename := String(enemy.name)
+		enemy.died.connect(func(xp: int, attacker_peer: int) -> void:
+			_net_enemy_died.rpc(ename, xp, attacker_peer)
+		)
+		_net_spawn_enemy.rpc(ename, id, lv, enemy.global_position, false, false, true)
 	return id
 
 
 func _on_cave_cleared() -> void:
+	# Multijoueur : seul l'hôte détecte le nettoyage (_alive ne vit que chez
+	# lui) — il informe les clients, qui déroulent la même récompense
+	# localement (or/soins chacun chez soi, même coffre, même sortie).
+	if _mp and multiplayer.is_server():
+		_net_cave_cleared.rpc(_cave_demiboss_pid)
 	var gold := 150 + RunManager.inst().rooms_cleared * 30
 	GameManager.add_gold(gold)
 	for i in _team.size():
@@ -2474,22 +2531,60 @@ func _spawn_cave_reward() -> void:
 	hud.set_wave("✦ Coffre doré — approche-toi !")
 
 
+## Nettoyage de cave reçu de l'hôte (clients) — même récompense localement.
+@rpc("authority", "call_remote", "reliable")
+func _net_cave_cleared(demiboss_pid: int) -> void:
+	if not _cave_active:
+		return
+	_cave_demiboss_pid = demiboss_pid
+	_on_cave_cleared()
+
+
 func _spawn_cave_return_portal() -> void:
 	if not is_instance_valid(_map):
-		_exit_cave()
+		_request_exit_cave()
 		return
 	var sz   := _map.get_map_cell_size()
 	var tile := Vector2i(sz.x / 2, 3)
 	var portal := ExitPortal.new()
 	portal.position = _map.cell_to_world3(tile)
 	portal.setup({"zone_name": "Retour", "bonus_label": ""})
-	portal.chosen.connect(func(_d: Dictionary) -> void: _exit_cave(), CONNECT_ONE_SHOT)
+	portal.chosen.connect(func(_d: Dictionary) -> void: _request_exit_cave(), CONNECT_ONE_SHOT)
 	add_child(portal)
 	_cave_portals.append(portal)
 	hud.set_wave("↑ Sortie de la grotte")
 
 
+## Multijoueur : la sortie de grotte est GROUPÉE (comme l'entrée) — le
+## premier joueur sur le portail fait sortir tout le monde, via l'hôte.
+func _request_exit_cave() -> void:
+	if _mp and not multiplayer.is_server():
+		_rpc_request_exit_cave.rpc_id(1)
+	elif _mp:
+		_net_exit_cave.rpc()
+		_exit_cave()
+	else:
+		_exit_cave()
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func _rpc_request_exit_cave() -> void:
+	if multiplayer.is_server() and _cave_active and not _cave_exiting:
+		_net_exit_cave.rpc()
+		_exit_cave()
+
+
+@rpc("authority", "call_remote", "reliable")
+func _net_exit_cave() -> void:
+	_exit_cave()
+
+
+var _cave_exiting: bool = false   # anti double-sortie (2 joueurs sur 2 portails)
+
 func _exit_cave() -> void:
+	if not _cave_active or _cave_exiting:
+		return
+	_cave_exiting = true
 	_fade_transition(func() -> void:
 		_teardown_cave()
 		_restore_overworld()
@@ -2537,7 +2632,8 @@ func _restore_overworld() -> void:
 			if i == _active_index:
 				_cam_pos = _saved_team_pos[i]
 
-	_cave_active = false
+	_cave_active  = false
+	_cave_exiting = false
 	_apply_ambiance()   # retour à l'ambiance du biome de la zone
 	hud.set_wave(_zone_label())   # grotte consommée
 
@@ -2567,7 +2663,7 @@ func _fade_transition(mid: Callable) -> void:
 ## locale (même nom, mêmes données préchargées, pas d'IA ni de collision).
 @rpc("authority", "call_remote", "reliable")
 func _net_spawn_enemy(ename: String, pid: int, lv: int, pos: Vector3,
-		champion: bool, boss: bool) -> void:
+		champion: bool, boss: bool, demi: bool = false) -> void:
 	var data: PokemonData = _cache.get(str(pid))
 	if data == null:
 		push_warning("MP: données absentes pour l'ennemi pid=%d — coquille ignorée." % pid)
@@ -2578,7 +2674,7 @@ func _net_spawn_enemy(ename: String, pid: int, lv: int, pos: Vector3,
 	enemy.name = ename
 	add_child(enemy)
 	enemy.global_position = pos
-	enemy.setup(instance, champion, boss)
+	enemy.setup(instance, champion, boss, demi)
 	enemy.set_net_shell()
 
 
