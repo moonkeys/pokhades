@@ -192,9 +192,9 @@ func _bake_ground_plane() -> void:
 
 	# Sol SATURÉ/assombri via shader (cf. GrassPatch.ground_material) — la
 	# texture bakée sortait trop claire et délavée par rapport aux sprites.
-	# Mode "peint" (retour joueurs : décor trop "dalle plate") — essai
-	# d'abord sur la Prairie seule avant de l'étendre aux autres biomes.
-	var paint := 1.0 if _map.theme == MapGenerator.MapTheme.MEADOW else 0.0
+	# Mode "peint" (retour joueurs : décor trop "dalle plate") — validé sur
+	# la Prairie, étendu à la Forêt pour comparaison avant généralisation.
+	var paint := 1.0 if _map.theme in [MapGenerator.MapTheme.MEADOW, MapGenerator.MapTheme.FOREST] else 0.0
 	mesh_inst.material_override = GrassPatch.ground_material(
 		ImageTexture.create_from_image(img), 1.45, 0.88, 1.0, Color.WHITE, 0.0, paint)
 	mesh_inst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON   # les collines portent maintenant une ombre
@@ -404,23 +404,32 @@ func _soften_terrain_edges(img: Image, sz: Vector2i) -> void:
 	var w := sz.x * TILE_PX
 	var h := sz.y * TILE_PX
 	var blurred := img.duplicate()
-	var small := Vector2i(maxi(1, w / 4), maxi(1, h / 4))
+	# Flou plus marqué (retour joueurs : encore trop net) — rétrécir plus
+	# fort avant de ré-agrandir donne un flou plus large sans coût de calcul
+	# supplémentaire (toujours 2 resize bilinéaires, indépendant du rayon).
+	var small := Vector2i(maxi(1, w / 8), maxi(1, h / 8))
 	blurred.resize(small.x, small.y, Image.INTERPOLATE_BILINEAR)
 	blurred.resize(w, h, Image.INTERPOLATE_BILINEAR)
 
 	var grid: Array = _map._grid
-	for r in range(1, sz.y - 1):
+	for r in range(2, sz.y - 2):
 		var row: PackedByteArray = grid[r]
-		for c in range(1, sz.x - 1):
+		for c in range(2, sz.x - 2):
 			var t: int = row[c]
 			if t == MapGenerator.Terrain.TREE:
 				continue
+			# Bande de transition élargie à un rayon de 2 cases (8-voisinage
+			# + diagonales) — une seule case de bordure floutée passait
+			# quasi inaperçue une fois la texture réappliquée par-dessus.
 			var boundary := false
-			for d: Vector2i in [Vector2i(1,0), Vector2i(-1,0), Vector2i(0,1), Vector2i(0,-1)]:
-				var nt: int = grid[r + d.y][c + d.x]
-				if nt != MapGenerator.Terrain.TREE and nt != t:
-					boundary = true
-					break
+			for dy in range(-2, 3):
+				if boundary: break
+				for dx in range(-2, 3):
+					if dx == 0 and dy == 0: continue
+					var nt: int = grid[r + dy][c + dx]
+					if nt != MapGenerator.Terrain.TREE and nt != t:
+						boundary = true
+						break
 			if not boundary:
 				continue
 			var x0 := c * TILE_PX
@@ -429,7 +438,7 @@ func _soften_terrain_edges(img: Image, sz: Vector2i) -> void:
 				for px in TILE_PX:
 					var sharp: Color = img.get_pixel(x0 + px, y0 + py)
 					var soft:  Color = blurred.get_pixel(x0 + px, y0 + py)
-					img.set_pixel(x0 + px, y0 + py, sharp.lerp(soft, 0.55))
+					img.set_pixel(x0 + px, y0 + py, sharp.lerp(soft, 0.75))
 
 
 func _bake_layer(img: Image, src: Image, layer: TileMapLayer, blend: bool, sz: Vector2i) -> void:

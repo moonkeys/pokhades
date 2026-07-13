@@ -802,7 +802,9 @@ func _carve_single_path(from: Vector2i, to: Vector2i) -> void:
 func _smooth_path_mask() -> void:
 	var W := map_size.x
 	var H := map_size.y
-	for _pass_i in 2:
+	# 4 passes (au lieu de 2) — retour joueurs : encore trop anguleux avec
+	# seulement 2 passes, surtout aux intersections de plusieurs chemins.
+	for _pass_i in 4:
 		var adds:    Array[Vector2i] = []
 		var removes: Array[Vector2i] = []
 		for r in range(3, H - 3):
@@ -814,9 +816,9 @@ func _smooth_path_mask() -> void:
 						if dx == 0 and dy == 0: continue
 						if _grid[r + dy][c + dx] == Terrain.PATH:
 							n += 1
-				if not is_path and n >= 6:
+				if not is_path and n >= 5:
 					adds.append(Vector2i(c, r))
-				elif is_path and n <= 2:
+				elif is_path and n <= 3:
 					removes.append(Vector2i(c, r))
 		for cell: Vector2i in adds:
 			_grid[cell.y][cell.x] = Terrain.PATH
