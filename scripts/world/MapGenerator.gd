@@ -286,7 +286,10 @@ func _generate() -> void:
 	_gen_tree_noise()
 	_carve_border()
 	_carve_paths()
-	_smooth_path_mask()
+	# Les chemins courbes (FOREST) sont déjà lisses ; le lissage par automate
+	# éroderait leurs portions fines. Réservé aux chemins BFS des autres biomes.
+	if theme != MapTheme.FOREST:
+		_smooth_path_mask()
 	if theme == MapTheme.LAKE:
 		_carve_lake()   # après les chemins : le grand lac central prime
 	# Après les chemins : rogne la silhouette sans jamais couper une route
@@ -735,6 +738,13 @@ func _carve_shape_mask() -> void:
 
 func _carve_paths() -> void:
 	var W := map_size.x
+	# FOREST : chemins COURBES (splines Catmull-Rom) qui serpentent, à largeur
+	# variable et bords irréguliers — cf. _build_path_curve/_carve_curved_path.
+	# Les autres biomes gardent le squelette BFS pour l'instant (essai forêt).
+	if theme == MapTheme.FOREST:
+		for ex: Vector2i in [exit_A, exit_B, exit_C]:
+			_carve_curved_path(_build_path_curve(Vector2(entry_tile), Vector2(ex)))
+		return
 	for ex: Vector2i in [exit_A, exit_B, exit_C]:
 		# Waypoint décalé latéralement — donne des chemins en L ou S
 		var mid_x: int = clampi(
@@ -745,6 +755,59 @@ func _carve_paths() -> void:
 		var wp    := Vector2i(mid_x, mid_y)
 		_carve_single_path(entry_tile, wp)
 		_carve_single_path(wp, ex)
+
+
+## Spline lisse entre `from` et `to` (coordonnées de cases), via des waypoints
+## intermédiaires décalés PERPENDICULAIREMENT à l'axe — donne un tracé qui
+## serpente naturellement au lieu d'un couloir droit. Tangentes Catmull-Rom
+## (moyenne des voisins) pour une courbe continue sans cassure.
+func _build_path_curve(from: Vector2, to: Vector2) -> Curve2D:
+	var seg_len := from.distance_to(to)
+	var dir  := (to - from).normalized()
+	var perp := Vector2(-dir.y, dir.x)
+	var n := clampi(int(seg_len / 12.0), 2, 5)   # + de waypoints = + sinueux
+
+	var pts: Array[Vector2] = [from]
+	for i in range(1, n + 1):
+		var t := float(i) / float(n + 1)
+		var amp := _rng.randf_range(-1.0, 1.0) * seg_len * 0.16   # amplitude du serpentin
+		pts.append(from.lerp(to, t) + perp * amp)
+	pts.append(to)
+
+	var curve := Curve2D.new()
+	curve.bake_interval = 0.5   # échantillonnage dense → pas de trous au stamp
+	for i in pts.size():
+		var prev := pts[maxi(i - 1, 0)]
+		var next := pts[mini(i + 1, pts.size() - 1)]
+		var tang := (next - prev) * 0.25            # tangente Catmull-Rom
+		curve.add_point(pts[i], -tang, tang)
+	return curve
+
+
+## Rastérise une spline dans _grid en PATH, avec largeur qui "respire" le long
+## du tracé et bords déchiquetés (bruit) — plus de corridor à largeur constante
+## et bord net. Stampe le long des points bakés (denses), donc pas de SDF O(n²).
+func _carve_curved_path(curve: Curve2D) -> void:
+	var W := map_size.x
+	var H := map_size.y
+	var edge_noise := FastNoiseLite.new()
+	edge_noise.frequency = 0.12
+	edge_noise.seed = _rng.randi()
+
+	var base_w := maxf(1.6, float(path_width) * 0.7)
+	for p: Vector2 in curve.get_baked_points():
+		var width := base_w + edge_noise.get_noise_2d(p.x, p.y) * 1.4
+		var wi := int(ceil(width)) + 1
+		var pc := Vector2i(int(p.x), int(p.y))
+		for dy in range(-wi, wi + 1):
+			for dx in range(-wi, wi + 1):
+				var cell := pc + Vector2i(dx, dy)
+				if cell.x < 2 or cell.x >= W - 2 or cell.y < 2 or cell.y >= H - 2:
+					continue
+				# Bord irrégulier : rayon perturbé par un bruit local haute freq.
+				var edge := edge_noise.get_noise_2d(cell.x * 3.0, cell.y * 3.0) * 0.9
+				if p.distance_to(Vector2(cell) + Vector2(0.5, 0.5)) < width + edge:
+					_grid[cell.y][cell.x] = Terrain.PATH
 
 
 func _carve_single_path(from: Vector2i, to: Vector2i) -> void:
