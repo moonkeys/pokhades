@@ -536,18 +536,48 @@ func _build_midground(cfg: Dictionary, rng: RandomNumberGenerator, center: Vecto
 	# fait de falaises, les thèmes végétaux surtout d'arbres.
 	var cliff_ratio := 0.75 if cfg.get("midground_cliffs", false) else 0.12
 	var base_r := maxf(_map_size.x, _map_size.y) * 0.5
-	# CEINTURE DENSE d'arbres sur 2 anneaux entrelacés, juste au-delà des murs
-	# de bordure — plus de trou entre la zone jouable et l'horizon.
-	for ring in 2:
-		var n := 46 - ring * 8
+	# CEINTURE DENSE d'arbres sur 3 anneaux entrelacés, juste au-delà des murs
+	# de bordure — plus de trou entre la zone jouable et l'horizon. Un
+	# anneau SUPPLÉMENTAIRE, très proche (presque collé au mur), lit comme
+	# une VRAIE lisière infranchissable plutôt qu'un simple décor (retour
+	# joueurs : le mur invisible se sentait trop).
+	for ring in 3:
+		var n := 52 - ring * 8
 		for i in n:
-			var ang := (TAU / float(n)) * i + rng.randf_range(-0.09, 0.09)
-			var r := base_r + 2.5 + ring * 6.0 + rng.randf_range(-1.5, 3.5)
+			var ang := (TAU / float(n)) * i + rng.randf_range(-0.08, 0.08)
+			var r := base_r + 0.8 + ring * 5.0 + rng.randf_range(-1.2, 3.0)
 			var pos := center + Vector3(cos(ang) * r, 0, sin(ang) * r)
-			if ring == 0 and rng.randf() < cliff_ratio:
+			if ring == 1 and rng.randf() < cliff_ratio:
 				_add_cliff_tier(cfg, rng, pos, ang)
 			else:
-				_add_backdrop_tree(cfg, rng, pos)
+				_add_backdrop_tree(cfg, rng, pos, ring == 0)
+
+	# ROCKY : contreforts bas entre la lisière et les vrais pics lointains
+	# (cf. _build_mountains) — comble le "vide" entre le sol jouable et la
+	# chaîne, sans toucher aux distances des pics (déjà calées pour éviter
+	# qu'une montagne ne traverse la caméra, cf. commentaire plus bas).
+	if cfg.get("midground_cliffs", false):
+		var ground_tint: Color = cfg.get("ground_tint", cfg["hill_b"])
+		var foot_col: Color = (ground_tint as Color).darkened(0.15)
+		var fn := 26
+		for i in fn:
+			var ang := (TAU / float(fn)) * i + rng.randf_range(-0.1, 0.1)
+			var r := base_r + rng.randf_range(9.0, 20.0)
+			var pos := center + Vector3(cos(ang) * r, 0, sin(ang) * r)
+			var foot := MeshInstance3D.new()
+			var mesh := SphereMesh.new()
+			mesh.radius = rng.randf_range(3.0, 6.0)
+			mesh.height = mesh.radius * 1.3
+			mesh.radial_segments = 8
+			mesh.rings = 5
+			foot.mesh = mesh
+			foot.position = pos + Vector3(0, -mesh.radius * 0.5, 0)
+			var mat := StandardMaterial3D.new()
+			mat.albedo_color = foot_col.lerp(Color(0.55, 0.52, 0.48), rng.randf_range(0.0, 0.3))
+			mat.roughness = 1.0
+			foot.material_override = mat
+			_backdrop.add_child(foot)
+			_disable_shadows(foot)
 
 
 ## Petit affleurement rocheux en second plan — empile 2-3 vrais blocs de
@@ -580,12 +610,14 @@ func _add_cliff_tier(cfg: Dictionary, rng: RandomNumberGenerator, pos: Vector3, 
 ## plan, cf. KitProps), pas d'ombre portée pour rester léger en second plan.
 ## Le brouillard de la scène (cf. _apply_environment) assure à lui seul la
 ## perspective atmosphérique — pas besoin de teinter/désaturer à la main.
-func _add_backdrop_tree(cfg: Dictionary, rng: RandomNumberGenerator, pos: Vector3) -> void:
+func _add_backdrop_tree(cfg: Dictionary, rng: RandomNumberGenerator, pos: Vector3, close: bool = false) -> void:
 	var pool: Array = KitProps.TREES_PINE if cfg.get("midground_cliffs", false) else KitProps.TREES_ROUND
 	var file: String = pool[rng.randi() % pool.size()]
 	var native_h: float = KitProps.TREE_NATIVE_HEIGHT.get(file, 1.7)
 	var tree := KitProps.instance(file)
-	var target_h := rng.randf_range(3.0, 6.5)
+	# L'anneau le plus proche (`close`) reste plus BAS/dense (lisière/
+	# sous-bois) — les grands arbres attendent le second plan.
+	var target_h := rng.randf_range(2.2, 4.2) if close else rng.randf_range(3.5, 7.0)
 	tree.scale       = Vector3.ONE * (target_h / native_h)
 	tree.rotation.y  = rng.randf_range(0.0, TAU)
 	tree.position    = pos
