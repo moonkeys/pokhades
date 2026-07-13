@@ -409,7 +409,17 @@ func _preload_all() -> void:
 	background.append_array(POOL_CAVE_DEMIBOSS)
 	for t in POOL_BIOME:
 		background.append_array(POOL_BIOME[t])
+	# TOUTE la chaîne d'évolution de chaque espèce des viviers — les actes
+	# 2+ font apparaître les formes évoluées (cf. _pool_for_room) : sans ce
+	# préchargement, elles manquaient au cache et les vagues sortaient
+	# VIDES (salle insoluble, cf. bug "plus d'ennemis en fin de run").
+	var with_evos: Array = background.duplicate()
 	for eid: int in background:
+		var cur: int = eid
+		while GameManager.EVOLUTIONS.has(cur):
+			cur = int(GameManager.EVOLUTIONS[cur]["evolves_to"])
+			with_evos.append(cur)
+	for eid: int in with_evos:
 		if not priority_seen.has(eid):
 			priority_seen[eid] = true
 			PokemonAPI.get_pokemon(eid, func(data: Dictionary) -> void:
@@ -964,6 +974,25 @@ func _spawn_next_wave() -> void:
 	else:
 		hud.set_wave("%s · %d ennemis · Niv. %d" % [_zone_label(), _room_total, lv0])
 
+	# Filet anti-blocage : si RIEN n'a pu apparaître (_alive est réservé de
+	# façon synchrone par _spawn_from_pool), la salle serait insoluble — on
+	# enchaîne au lieu d'attendre une mort qui ne viendra jamais.
+	if _alive <= 0 and (not _mp or multiplayer.is_server()):
+		push_warning("CombatArena: vague %d vide (aucun spawn possible) — on enchaîne." % _wave_num)
+		_room_total = maxi(0, _room_total - _wave_size_estimate(specs))
+		hud.set_kills(_killed, _room_total)
+		if not _wave_queue.is_empty():
+			_spawn_next_wave()
+		else:
+			_on_room_cleared()
+
+
+func _wave_size_estimate(specs: Array) -> int:
+	var n := 0
+	for spec: Dictionary in specs:
+		n += int(spec["count"])
+	return n
+
 
 ## Instancie le dresseur champion dans l'arène (planté près de la sortie
 ## nord), visible pendant tout le combat — cf. TrainerNPC.flee_to() pour
@@ -1101,8 +1130,12 @@ func _spawn_from_pool(pool: Array[int], count: int, lv: int, champion: bool = fa
 		return   # seuls les ennemis de l'hôte font autorité — les clients reçoivent _net_spawn_enemy
 	for i in count:
 		var id: int = pool[randi() % pool.size()]
-		var cache_key: String = str(id)
-		if not _cache.has(cache_key):
+		# Espèce pas (encore) en cache — replie vers sa forme de BASE (chargée
+		# en phase 1) plutôt que de sauter le spawn : une vague entièrement
+		# sautée laissait la salle insoluble (_alive restait à 0, rien à tuer).
+		if not _cache.has(str(id)):
+			id = GameManager.base_species_of(id)
+		if not _cache.has(str(id)):
 			continue
 		# Spawn TÉLÉPHONÉ : un anneau grandit au sol pendant ~0,5 s avant que
 		# l'ennemi n'apparaisse — la vague se lit, plus de pop-in brutal.
