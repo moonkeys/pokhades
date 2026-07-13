@@ -286,6 +286,7 @@ func _generate() -> void:
 	_gen_tree_noise()
 	_carve_border()
 	_carve_paths()
+	_smooth_path_mask()
 	if theme == MapTheme.LAKE:
 		_carve_lake()   # après les chemins : le grand lac central prime
 	# Après les chemins : rogne la silhouette sans jamais couper une route
@@ -777,13 +778,50 @@ func _carve_single_path(from: Vector2i, to: Vector2i) -> void:
 		cur = came_from[cur]
 	path.append(from)
 
+	# Tampon CIRCULAIRE (pas carré) autour de chaque case du squelette BFS —
+	# un chemin en "escalier" (BFS 4-directions) stampé au carré donnait des
+	# corridors à angles droits façon couloirs ; le disque arrondit déjà les
+	# virages avant même le lissage ci-dessous (retour joueurs : chemins trop
+	# rectilignes).
 	var half := path_width / 2
+	var rad2 := float(half) * float(half) + 0.6
 	for tile: Vector2i in path:
 		for dy in range(-half, half + 1):
 			for dx in range(-half, half + 1):
+				if float(dx * dx + dy * dy) > rad2: continue
 				var cell := tile + Vector2i(dx, dy)
 				if cell.x < 2 or cell.x >= W - 2 or cell.y < 2 or cell.y >= H - 2: continue
 				_grid[cell.y][cell.x] = Terrain.PATH
+
+
+## Automate cellulaire (règle majoritaire) sur le masque PATH — arrondit les
+## coins concaves/convexes laissés par le tampon circulaire (virages en
+## escalier du squelette BFS 4-directions). Purement visuel : PATH ne bloque
+## jamais le pathfinding (seule l'eau le fait, cf. _compute_reachable), donc
+## aucun risque de casser l'accessibilité d'un portail.
+func _smooth_path_mask() -> void:
+	var W := map_size.x
+	var H := map_size.y
+	for _pass_i in 2:
+		var adds:    Array[Vector2i] = []
+		var removes: Array[Vector2i] = []
+		for r in range(3, H - 3):
+			for c in range(3, W - 3):
+				var is_path: bool = _grid[r][c] == Terrain.PATH
+				var n := 0
+				for dy in range(-1, 2):
+					for dx in range(-1, 2):
+						if dx == 0 and dy == 0: continue
+						if _grid[r + dy][c + dx] == Terrain.PATH:
+							n += 1
+				if not is_path and n >= 6:
+					adds.append(Vector2i(c, r))
+				elif is_path and n <= 2:
+					removes.append(Vector2i(c, r))
+		for cell: Vector2i in adds:
+			_grid[cell.y][cell.x] = Terrain.PATH
+		for cell: Vector2i in removes:
+			_grid[cell.y][cell.x] = Terrain.GRASS
 
 
 ## ─────────────────────────────────────────────────────────────────

@@ -179,6 +179,10 @@ func _bake_ground_plane() -> void:
 
 	_bake_layer(img, src, _map._ground, false, sz)
 	_bake_layer(img, src, _map._water, true, sz)
+	# Transitions douces entre types de sol (herbe/chemin/eau) — retour
+	# joueurs : bords de tuiles trop nets. Appliqué APRÈS sol+eau mais AVANT
+	# les décors, qui doivent rester nets par-dessus.
+	_soften_terrain_edges(img, sz)
 	_bake_tall_grass_flat(img, src, sz)
 	_bake_flat_decors(img, src, sz)
 
@@ -387,6 +391,45 @@ func _place_water_edge(pos: Vector3, rot_y_deg: float, mat: StandardMaterial3D) 
 	mi.material_override = mat
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mi)
+
+
+## Adoucit les frontières entre types de sol (herbe/chemin/eau) — sans ça
+## chaque case a un bord de tuile parfaitement net, ce qui donne l'effet
+## "rectangles collés" (retour joueurs). Technique bon marché : une version
+## floutée de l'image (rétrécie puis ré-agrandie, filtrage bilinéaire — pas
+## de flou pixel par pixel coûteux) est mélangée à l'originale, MAIS
+## uniquement sur les cases dont un voisin direct a un type de terrain
+## différent — l'intérieur des grandes zones homogènes reste net.
+func _soften_terrain_edges(img: Image, sz: Vector2i) -> void:
+	var w := sz.x * TILE_PX
+	var h := sz.y * TILE_PX
+	var blurred := img.duplicate()
+	var small := Vector2i(maxi(1, w / 4), maxi(1, h / 4))
+	blurred.resize(small.x, small.y, Image.INTERPOLATE_BILINEAR)
+	blurred.resize(w, h, Image.INTERPOLATE_BILINEAR)
+
+	var grid: Array = _map._grid
+	for r in range(1, sz.y - 1):
+		var row: PackedByteArray = grid[r]
+		for c in range(1, sz.x - 1):
+			var t: int = row[c]
+			if t == MapGenerator.Terrain.TREE:
+				continue
+			var boundary := false
+			for d: Vector2i in [Vector2i(1,0), Vector2i(-1,0), Vector2i(0,1), Vector2i(0,-1)]:
+				var nt: int = grid[r + d.y][c + d.x]
+				if nt != MapGenerator.Terrain.TREE and nt != t:
+					boundary = true
+					break
+			if not boundary:
+				continue
+			var x0 := c * TILE_PX
+			var y0 := r * TILE_PX
+			for py in TILE_PX:
+				for px in TILE_PX:
+					var sharp: Color = img.get_pixel(x0 + px, y0 + py)
+					var soft:  Color = blurred.get_pixel(x0 + px, y0 + py)
+					img.set_pixel(x0 + px, y0 + py, sharp.lerp(soft, 0.55))
 
 
 func _bake_layer(img: Image, src: Image, layer: TileMapLayer, blend: bool, sz: Vector2i) -> void:
