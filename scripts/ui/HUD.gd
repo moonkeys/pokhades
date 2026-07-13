@@ -680,3 +680,47 @@ func _lbl(text: String, x: float, y: float, w: float, h: float,
 	if centered:
 		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	return l
+
+
+# ── Annonce de zone : le nom s'affiche en GRAND au centre, fondu + glow ──
+var _zone_announce: Control = null
+
+func announce_zone(zone_name: String) -> void:
+	if is_instance_valid(_zone_announce):
+		_zone_announce.queue_free()
+	var root := Control.new()
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(root)
+	_zone_announce = root
+
+	# Deux labels superposés : un flou doré derrière (le "glow", même texte
+	# grossi et translucide) + le titre net par-dessus.
+	for cfg: Dictionary in [
+		{"fs": 58, "col": Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.35), "outline": 0},
+		{"fs": 52, "col": C_TEXT, "outline": 10},
+	]:
+		var l := Label.new()
+		l.text = zone_name
+		l.set_anchors_preset(Control.PRESET_FULL_RECT)
+		l.offset_top = -140.0   # légèrement au-dessus du centre
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		l.vertical_alignment   = VERTICAL_ALIGNMENT_CENTER
+		l.add_theme_font_size_override("font_size", UiKit.scaled_font(cfg["fs"]))
+		l.add_theme_color_override("font_color", cfg["col"])
+		if int(cfg["outline"]) > 0:
+			l.add_theme_constant_override("outline_size", int(cfg["outline"]))
+			l.add_theme_color_override("font_outline_color", Color(0.14, 0.09, 0.05, 0.9))
+		l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		root.add_child(l)
+
+	root.modulate.a = 0.0
+	root.scale = Vector2.ONE * 1.06
+	root.pivot_offset = get_viewport().get_visible_rect().size * 0.5
+	var tw := root.create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(root, "modulate:a", 1.0, 0.5).set_ease(Tween.EASE_OUT)
+	tw.tween_property(root, "scale", Vector2.ONE, 0.6).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.chain().tween_interval(1.6)
+	tw.chain().tween_property(root, "modulate:a", 0.0, 0.7).set_ease(Tween.EASE_IN)
+	tw.chain().tween_callback(root.queue_free)

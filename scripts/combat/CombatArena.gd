@@ -22,6 +22,8 @@ var _cs_triggers: Array = []   # [{"area":Area3D, "cs_id":String, "prompt":Strin
 ## _refresh_cs_prompt) pour réagir immédiatement à un changement de Pokémon
 ## actif même sans bouger.
 var _near_obstacle: Dictionary = {}
+var _near_vendor:   bool = false   # à portée du marchand ([E] pour parler)
+var _near_boon:     bool = false   # à portée du don de fin de zone ([E])
 var _near_chest_prompt: String = ""   # "" si aucun coffre à portée
 
 
@@ -245,6 +247,11 @@ func _process(delta: float) -> void:
 		hud.set_follow_mode(_follow_mode)
 
 	_refresh_cs_prompt()
+	if Input.is_action_just_pressed("interact"):
+		if _near_vendor and not is_instance_valid(_boutique_screen):
+			_open_boutique_shop()
+		elif _near_boon and not is_instance_valid(_boon_screen):
+			_open_boon()
 	if not _near_obstacle.is_empty() and Input.is_action_just_pressed("cs_use"):
 		var cb: Callable = _near_obstacle["on_use"]
 		var used_cs: String = _near_obstacle.get("cs_id", "")
@@ -505,6 +512,7 @@ func _start_zone() -> void:
 	_killed     = 0
 	_room_total = 0
 	_spawn_team()
+	hud.announce_zone(_zone_label())   # le nom de la zone en grand, fondu + glow
 	# Salle-boutique : pas de combat — le vendeur Perrserker et ses PNJ, puis
 	# on repart par un portail de sortie (cf. _enter_boutique).
 	if _is_shop_room(RunManager.inst().rooms_cleared):
@@ -1075,7 +1083,9 @@ func _on_room_cleared() -> void:
 		_run_victory()
 		return
 
-	var gold := 30 + room * 20
+	# Courbe adoucie (retour joueurs : "trop riche dès le biome 3") — la
+	# salle 15 rapportait 330 ₽, elle en rapporte maintenant 145.
+	var gold := 25 + room * 8
 	if _is_boss_room(room):
 		gold *= 3   # butin de boss intermédiaire
 		# Boss vaincu : musique de victoire (jusqu'au changement de zone,
@@ -1490,10 +1500,18 @@ func _spawn_vendor_trigger(cell: Vector2i) -> void:
 	lbl.outline_modulate = Color(0.12, 0.08, 0.02)
 	lbl.outline_size = 12
 	area.add_child(lbl)
+	# On PARLE au marchand avec [E] (comme les coffres) — plus d'ouverture
+	# automatique au contact, qui surprenait en plein déplacement.
 	area.body_entered.connect(func(body: Node) -> void:
 		if not (body.is_in_group("players") and body.get("is_active") == true):
 			return
-		_open_boutique_shop()
+		_near_vendor = true
+		_refresh_interact_prompt()
+	)
+	area.body_exited.connect(func(body: Node) -> void:
+		if body.is_in_group("players") and body.get("is_active") == true:
+			_near_vendor = false
+			_refresh_interact_prompt()
 	)
 	add_child(area)
 	_boutique_nodes.append(area)
@@ -1619,6 +1637,8 @@ func _clear_boutique_nodes() -> void:
 		if is_instance_valid(n):
 			n.queue_free()
 	_boutique_nodes.clear()
+	_near_vendor = false
+	_refresh_interact_prompt()
 
 
 # ── Don de fin de zone (façon Hades) ──────────────────────────────────
@@ -1673,9 +1693,17 @@ func _spawn_boon(bonus_type: int) -> void:
 	lbl.outline_modulate = Color(0.08, 0.06, 0.04)
 	area.add_child(lbl)
 
+	# Récompense récupérée avec [E] — même langage d'interaction que les
+	# coffres et le marchand.
 	area.body_entered.connect(func(body: Node) -> void:
 		if body.is_in_group("players") and body.get("is_active") == true:
-			_open_boon()
+			_near_boon = true
+			_refresh_interact_prompt()
+	)
+	area.body_exited.connect(func(body: Node) -> void:
+		if body.is_in_group("players") and body.get("is_active") == true:
+			_near_boon = false
+			_refresh_interact_prompt()
 	)
 	add_child(area)
 	_boon_node = area
@@ -1685,6 +1713,8 @@ func _clear_boon() -> void:
 	if is_instance_valid(_boon_node):
 		_boon_node.queue_free()
 	_boon_node = null
+	_near_boon = false
+	_refresh_interact_prompt()
 	if is_instance_valid(_boon_screen):
 		_boon_screen.queue_free()
 	_boon_screen = null
@@ -1807,6 +1837,10 @@ func _wire_chest_prompt(chest: Chest) -> void:
 func _refresh_interact_prompt() -> void:
 	if not _near_chest_prompt.is_empty():
 		hud.set_interact_prompt(true, _near_chest_prompt)
+	elif _near_vendor:
+		hud.set_interact_prompt(true, "Appuyer sur [E] pour parler au marchand")
+	elif _near_boon:
+		hud.set_interact_prompt(true, "Appuyer sur [E] pour récupérer la récompense")
 	elif not _near_obstacle.is_empty():
 		hud.set_interact_prompt(true, _near_obstacle["prompt"])
 	else:
@@ -2251,6 +2285,7 @@ func _transition_to_next_zone() -> void:
 
 		hud.set_wave(_zone_label())
 		hud.set_kills(0, 0)
+		hud.announce_zone(_zone_label())   # le nom de la zone en grand, fondu + glow
 
 		# Fondu depuis le noir
 		var tw2 := create_tween()
@@ -2494,7 +2529,7 @@ func _on_cave_cleared() -> void:
 	# localement (or/soins chacun chez soi, même coffre, même sortie).
 	if _mp and multiplayer.is_server():
 		_net_cave_cleared.rpc(_cave_demiboss_pid)
-	var gold := 150 + RunManager.inst().rooms_cleared * 30
+	var gold := 100 + RunManager.inst().rooms_cleared * 12
 	GameManager.add_gold(gold)
 	for i in _team.size():
 		var m = _team[i]
