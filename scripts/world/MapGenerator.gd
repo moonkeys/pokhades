@@ -5,6 +5,11 @@ extends MapBase  # MUST extend MapBase — CombatArena.gd cast: get_node("Map") 
 enum Terrain { GRASS = 0, PATH = 1, WATER = 2, TREE = 3 }
 enum GatingType { NONE = 0, SURF = 1, COUPE = 2, FORCE = 3 }
 enum MapTheme { FOREST = 0, SWAMP = 1, MEADOW = 2, ROCKY = 3, AUTUMN = 4, LAKE = 5 }
+## Forme de la zone jouable — casse la silhouette rectangulaire par défaut.
+## RECT reste possible (tirage pondéré) pour ne pas perdre les grandes maps
+## ouvertes ; CIRCLE/L_SHAPE rognent les coins en forêt dense (cf.
+## _carve_shape_mask), appliqué APRÈS les chemins pour ne jamais les couper.
+enum MapShape { RECT = 0, CIRCLE = 1, L_SHAPE = 2 }
 
 ## Couche physique dédiée à l'eau — séparée des autres obstacles pour que
 ## seule la CS Surf puisse l'ignorer (cf. CombatArena._apply_cs_unlocks).
@@ -16,11 +21,13 @@ const WATER_LAYER := 4
 ##  sont hérités de MapBase — ne pas re-déclarer ici)
 ## ─────────────────────────────────────────────────────────────────
 @export_group("Map — Taille")
-@export var map_size:     Vector2i = Vector2i(80, 45)
+@export var map_size:     Vector2i = Vector2i(68, 38)
 @export var map_seed:     int      = 0
 @export var random_size:  bool     = true
-@export var map_size_min: Vector2i = Vector2i(60, 35)
-@export var map_size_max: Vector2i = Vector2i(96, 56)
+## Réduits par rapport à l'original (60-96 × 35-56) — retour joueurs : les
+## zones étaient trop grandes/vides, on resserre pour un rythme plus dense.
+@export var map_size_min: Vector2i = Vector2i(48, 28)
+@export var map_size_max: Vector2i = Vector2i(74, 42)
 
 @export_group("Map — Chemins")
 @export_range(1, 7) var path_width: int = 3
@@ -100,6 +107,7 @@ var _rng:  RandomNumberGenerator = RandomNumberGenerator.new()
 ## retour joueurs : l'eau profonde partout cassait le rythme).
 var _shallow_cells: Dictionary = {}
 var _water_mode: String = "deep"
+var _map_shape: MapShape = MapShape.RECT
 
 func is_shallow_cell(cell: Vector2i) -> bool:
 	return _shallow_cells.has(cell)
@@ -261,6 +269,13 @@ func _generate() -> void:
 
 	_apply_theme()
 
+	# Silhouette de la zone : 1 chance sur 2 de garder le rectangle plein
+	# (grandes maps ouvertes), sinon cercle ou coin en L — casse la monotonie
+	# des zones toujours carrées/rectangulaires (retour joueurs).
+	var shape_roll := _rng.randf()
+	_map_shape = MapShape.RECT if shape_roll < 0.5 \
+		else (MapShape.CIRCLE if shape_roll < 0.75 else MapShape.L_SHAPE)
+
 	_init_grid()
 	_shallow_cells.clear()
 	if _water_mode != "none":
@@ -273,6 +288,9 @@ func _generate() -> void:
 	_carve_paths()
 	if theme == MapTheme.LAKE:
 		_carve_lake()   # après les chemins : le grand lac central prime
+	# Après les chemins : rogne la silhouette sans jamais couper une route
+	# déjà tracée (cf. _carve_shape_mask, qui épargne Terrain.PATH).
+	_carve_shape_mask()
 	_apply_to_tilemap()
 	_gen_tall_grass()
 	_gen_decorations()
@@ -672,6 +690,41 @@ func _carve_border() -> void:
 	for r in H:
 		for c in W:
 			if r < 4 or r >= H - 4 or c < 4 or c >= W - 4:
+				_grid[r][c] = Terrain.TREE
+
+
+## Rogne les coins de la zone selon `_map_shape` (RECT = no-op). Épargne
+## systématiquement : les chemins déjà carvés (Terrain.PATH), l'eau, et un
+## rayon de sécurité autour de l'entrée/des sorties — la forme ne doit jamais
+## rendre un portail inaccessible, seulement casser le contour extérieur.
+func _carve_shape_mask() -> void:
+	if _map_shape == MapShape.RECT:
+		return
+	var W := map_size.x
+	var H := map_size.y
+	var cx := float(W) * 0.5
+	var cy := float(H) * 0.5
+	# Rayon du cercle inscrit, légèrement agrandi pour ne pas trop mordre.
+	var radius := minf(cx, cy) * 1.05
+	# Coin retiré pour le L : le plus loin du centre des sorties (haut) et de
+	# l'entrée (bas-centre) — bas-gauche ou bas-droite, tiré à la graine.
+	var l_left := _rng.randf() < 0.5
+	var l_x0: int = 4 if l_left else int(W * 0.62)
+	var l_x1: int = int(W * 0.38) if l_left else W - 4
+	var l_y0: int = int(H * 0.55)
+	var l_y1: int = H - 4
+
+	for r in H:
+		for c in W:
+			if _grid[r][c] == Terrain.PATH or _grid[r][c] == Terrain.WATER: continue
+			if _is_near_portal(c, r, 6): continue
+			var cut := false
+			match _map_shape:
+				MapShape.CIRCLE:
+					cut = Vector2(c - cx, r - cy).length() > radius
+				MapShape.L_SHAPE:
+					cut = c >= l_x0 and c < l_x1 and r >= l_y0 and r < l_y1
+			if cut:
 				_grid[r][c] = Terrain.TREE
 
 
