@@ -1157,9 +1157,19 @@ func _spawn_from_pool(pool: Array[int], count: int, lv: int, champion: bool = fa
 		# pendant que des apparitions sont en cours.
 		_alive += 1
 		var pos := _random_valid_spawn()
+		var captured_id := id
+		# Salle de dresseur : le Pokémon sort d'une POKÉBALL lancée par le
+		# champion (flash, spin, burst d'ouverture — cf. PokeballFX) au lieu
+		# de l'anneau de télégraphie générique.
+		if _is_boss_room(RunManager.inst().rooms_cleared) and not _cave_active:
+			PokeballFX.play_send(self, pos, func() -> void:
+				if _game_over_triggered or _victory_triggered or not is_instance_valid(self):
+					return
+				_materialize_enemy(captured_id, lv, pos, champion, boss)
+			)
+			continue
 		_spawn_telegraph_ring(pos, 1.6 if boss else (1.2 if champion else 0.9),
 			SPAWN_TELEGRAPH_TIME)
-		var captured_id := id
 		get_tree().create_timer(SPAWN_TELEGRAPH_TIME).timeout.connect(func() -> void:
 			if _game_over_triggered or _victory_triggered or not is_instance_valid(self):
 				return
@@ -2719,6 +2729,9 @@ func _net_spawn_enemy(ename: String, pid: int, lv: int, pos: Vector3,
 	enemy.global_position = pos
 	enemy.setup(instance, champion, boss, demi)
 	enemy.set_net_shell()
+	# Salle de dresseur : même langage visuel que l'hôte (burst de pokéball)
+	if _is_boss_room(RunManager.inst().rooms_cleared) and not _cave_active:
+		PokeballFX.play_burst(self, pos)
 
 
 ## Hôte → clients : positions groupées de tous les ennemis vivants.
