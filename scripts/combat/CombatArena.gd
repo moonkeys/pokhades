@@ -587,8 +587,7 @@ func _spawn_team() -> void:
 				hud.show_levelup(lv)
 		)
 		member.evolved.connect(func(name_fr: String) -> void:
-			if idx == _active_index:
-				hud.show_evolution(name_fr)
+			hud.notify("✦  %s a évolué !" % name_fr.capitalize(), Color(0.72, 0.55, 0.95))
 		)
 		member.portrait_ready.connect(func(midx: int, tex: Texture2D) -> void:
 			hud.update_team_portrait(midx, tex)
@@ -681,8 +680,7 @@ func _spawn_team_mp() -> void:
 				hud.show_levelup(lv)
 		)
 		member.evolved.connect(func(name_fr: String) -> void:
-			if idx == _active_index:
-				hud.show_evolution(name_fr)
+			hud.notify("✦  %s a évolué !" % name_fr.capitalize(), Color(0.72, 0.55, 0.95))
 		)
 		member.portrait_ready.connect(func(midx: int, tex: Texture2D) -> void:
 			hud.update_team_portrait(midx, tex)
@@ -1274,6 +1272,9 @@ func _on_enemy_died(xp_reward: int, attacker_peer: int, pid: int, is_base_form: 
 
 func _on_team_member_died(idx: int) -> void:
 	hud.update_team_hp(idx, 0.0)
+	if idx < _team.size() and is_instance_valid(_team[idx]):
+		hud.notify("✖  %s est K.O. !" % _team[idx].pokemon_instance.data.name_fr.capitalize(),
+			Color(0.80, 0.33, 0.25))
 
 	# Filet de sécurité : si toute l'équipe est KO, on quitte quel que soit
 	# l'index qui vient de mourir (évite un blocage si _active_index est périmé).

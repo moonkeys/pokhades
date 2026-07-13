@@ -724,3 +724,47 @@ func announce_zone(zone_name: String) -> void:
 	tw.chain().tween_interval(1.6)
 	tw.chain().tween_property(root, "modulate:a", 0.0, 0.7).set_ease(Tween.EASE_IN)
 	tw.chain().tween_callback(root.queue_free)
+
+
+# ── Notifications BAS-DROITE (évolution, K.O., capture…) — style UiKit ──
+# Pile séparée des toasts haut-droite (level up/unlock) : elle porte les
+# événements d'ÉQUIPE et monte depuis le coin bas-droit, au-dessus de rien
+# (panneau Pokémon en bas-gauche, keycaps au centre — le coin est libre).
+var _notif_stack: Array = []
+
+func notify(text: String, accent: Color = C_GOLD) -> void:
+	var vp := get_viewport().get_visible_rect().size
+	var panel := Panel.new()
+	panel.size = Vector2(330, 44)
+	panel.add_theme_stylebox_override("panel",
+		UiKit.style(Color(0.89, 0.76, 0.53, 0.96), accent, 8, 3))   # parchemin UiKit.TAN
+	add_child(panel)
+
+	var l := _lbl(text, 12, 10, 306, 24, 14, Color(0.28, 0.17, 0.08))   # UiKit.TEXT_DARK
+	panel.add_child(l)
+
+	_notif_stack.append(panel)
+	_restack_notifs()
+
+	panel.modulate.a = 0.0
+	panel.position.x = vp.x + 20.0
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(panel, "modulate:a", 1.0, 0.18)
+	tw.tween_property(panel, "position:x", vp.x - 344.0, 0.24).set_ease(Tween.EASE_OUT)
+	tw.chain().tween_interval(3.0)
+	tw.chain().tween_property(panel, "modulate:a", 0.0, 0.4)
+	tw.chain().tween_callback(func() -> void:
+		_notif_stack.erase(panel)
+		panel.queue_free()
+		_restack_notifs()
+	)
+
+
+func _restack_notifs() -> void:
+	var vp := get_viewport().get_visible_rect().size
+	for i in _notif_stack.size():
+		var p: Panel = _notif_stack[i]
+		if is_instance_valid(p):
+			# i=0 le plus bas ; les suivantes s'empilent au-dessus
+			p.position.y = vp.y - 64.0 - (_notif_stack.size() - 1 - i) * 52.0

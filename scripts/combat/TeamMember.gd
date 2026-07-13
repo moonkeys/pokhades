@@ -365,7 +365,7 @@ var _status_shown: String = ""
 func _tick_status(delta: float) -> bool:
 	var inst := pokemon_instance
 	var dot := inst.tick_status(delta)
-	if dot > 0:
+	if dot > 0 and not _evolving:   # invincible pendant l'évolution (statuts inclus)
 		inst.take_damage(dot)
 		hp_changed.emit(inst.hp_ratio())
 		CombatVFX.spawn_damage_number(get_parent(), global_position, dot, "player")
@@ -768,6 +768,11 @@ func take_damage(amount: int, source_pos: Vector3 = Vector3(INF, INF, INF)) -> v
 	if remote_peer != 0:
 		if multiplayer.is_server():
 			_net_take_damage.rpc_id(remote_peer, amount, source_pos)
+		return
+	# INVINCIBLE pendant l'évolution : la transformation est un moment
+	# protégé — en contrepartie le Pokémon ne peut pas attaquer non plus
+	# (cf. les gardes _evolving sur _attack_timer).
+	if _evolving:
 		return
 	pokemon_instance.take_damage(amount)
 	net_broadcast_hp()
