@@ -243,7 +243,12 @@ func _apply_environment(cfg: Dictionary) -> void:
 	e.ambient_light_energy = cfg["ambient_energy"]
 	e.fog_enabled     = true
 	e.fog_light_color = cfg["fog_color"]
-	e.fog_density     = cfg["fog_density"]
+	# Densité calibrée pour la caméra HD-2D dézoomée du jeu (CombatArena :
+	# hauteur/recul fixes) — dans le viewport 3D de l'ÉDITEUR, la caméra libre
+	# est souvent bien plus proche/à un autre angle, ce qui rend ce même
+	# brouillard écrasant ("tout embrumé" en régénérant la map). Atténué
+	# fortement UNIQUEMENT en preview éditeur ; inchangé en jeu.
+	e.fog_density = cfg["fog_density"] * (0.12 if Engine.is_editor_hint() else 1.0)
 	e.fog_sun_scatter = cfg["fog_scatter"]
 	e.glow_enabled    = true
 	e.glow_intensity  = cfg["glow_intensity"]
