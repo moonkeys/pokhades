@@ -9,8 +9,9 @@ const NPC_DEFS: Array[Dictionary] = [
 	{"id": "pokedex",   "pid": 137, "pos": Vector3(15.5, 0, 20.5), "accent": Color(0.40, 0.58, 0.95)},  # Porygon — vers l'étang
 	{"id": "upgrades",  "pid": 65,  "pos": Vector3(46.0, 0, 13.5), "accent": Color(0.68, 0.35, 0.92)},  # Alakazam — chemin est
 	{"id": "gromago",   "pid": 1000, "pos": Vector3(32.5, 0, 11.5), "accent": Color(0.92, 0.78, 0.25)},  # Gromago (#1000) — bazar d'objets, NE de la plaza
-	# (Les CS et les capacités s'achètent désormais dans la BOUTIQUE en run —
-	# l'ancien PNJ "moves"/Mentali a été retiré.)
+	# Tuteur de CT — de retour au hub (retour joueurs : vendeur de CT avec
+	# large choix d'attaques à effets réels, cf. MoveShopScreen).
+	{"id": "moves",     "pid": 122, "pos": Vector3(40.0, 0, 20.5), "accent": Color(0.90, 0.42, 0.55)},  # Mr. Mime — bande horizontale, vers l'est
 ]
 
 # Pokémon décoratifs — déambulent autour de leur position de départ
@@ -529,6 +530,7 @@ func _update_prompt(npc: HubNPC) -> void:
 		"pokedex":   role = "Pokédex & Équipe"
 		"upgrades":  role = "Améliorations"
 		"gromago":   role = "Bazar d'objets"
+		"moves":     role = "Tuteur de Capacités"
 		_:           role = "Parler"
 
 	var display_name := npc.npc_name if not npc.npc_name.is_empty() else "…"
@@ -560,6 +562,8 @@ func _interact(npc: HubNPC) -> void:
 			screen = UpgradeShopScreen.new()
 		"gromago":
 			screen = GromagoShopScreen.new()
+		"moves":
+			screen = MoveShopScreen.new()
 
 	if screen == null:
 		_blocked = false

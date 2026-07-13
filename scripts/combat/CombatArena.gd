@@ -501,7 +501,15 @@ func _preload_moves() -> void:
 		PokemonAPI.get_move(mname, func(move_data: Dictionary) -> void:
 			var power_v: Variant = move_data.get("power")
 			var power: int = int(power_v) if power_v != null else 0
-			if power > 0 and not move_data.is_empty():
+			# Les CT de statut (puissance 0) sont désormais chargées elles
+			# aussi — leur "effet" réel (soin, altération garantie) vient de
+			# MoveShopScreen.MOVE_LIST, cf. boucle ci-dessous.
+			if not move_data.is_empty():
+				var ct_effect: Dictionary = {}
+				for m: Dictionary in MoveShopScreen.MOVE_LIST:
+					if str(m.get("api", "")) == mname:
+						ct_effect = m.get("effect", {})
+						break
 				for entry: Dictionary in entries:
 					var pd: PokemonData = entry["pd"]
 					var lv: int         = entry["level"]
@@ -513,6 +521,7 @@ func _preload_moves() -> void:
 					md.power        = power
 					md.damage_class = move_data.get("damage_class", "physical")
 					md.level_learned = lv
+					md.effect       = ct_effect
 					pd.preloaded_moves.append(md)
 			counter[0] += 1
 			if counter[0] >= total:

@@ -37,6 +37,23 @@ const MOVE_LIST: Array[Dictionary] = [
 	{"api": "calm-mind",    "label": "Méditation",      "type": "psychic",  "price": 200},
 	{"api": "protect",      "label": "Protection",      "type": "normal",   "price": 120},
 	{"api": "recover",      "label": "Récupération",    "type": "normal",   "price": 180},
+	# CT à effet réel — attaques de statut PokéAPI (puissance 0, damage_class
+	# "status") : soin ou altération GARANTIE (pas de tirage par type comme
+	# sur les attaques normales), pour un vrai choix de rôle soigneur/contrôle
+	# à la vente (retour joueurs : encourager healer/tank/attaquant à
+	# distance via le tuteur de CT).
+	{"api": "toxic",        "label": "Toxik",            "type": "poison",   "price": 140,
+		"power": 0, "damage_class": "status", "effect": {"kind": "status", "status": "poison"}},
+	{"api": "thunder-wave", "label": "Cage-Éclair",      "type": "electric", "price": 130,
+		"power": 0, "damage_class": "status", "effect": {"kind": "status", "status": "paralysis"}},
+	{"api": "will-o-wisp",  "label": "Feu Follet",       "type": "fire",     "price": 130,
+		"power": 0, "damage_class": "status", "effect": {"kind": "status", "status": "burn"}},
+	{"api": "sing",         "label": "Berceuse",         "type": "psychic",  "price": 130,
+		"power": 0, "damage_class": "status", "effect": {"kind": "status", "status": "sleep"}},
+	{"api": "wish",         "label": "Vœu",              "type": "normal",   "price": 190,
+		"power": 0, "damage_class": "status", "effect": {"kind": "heal_team", "pct": 0.30}},
+	{"api": "rest",         "label": "Repos",            "type": "psychic",  "price": 160,
+		"power": 0, "damage_class": "status", "effect": {"kind": "heal_self", "pct": 1.0}},
 ]
 
 
@@ -74,7 +91,7 @@ func _build() -> void:
 	cs_btn.text     = "⛰  CS / Capacités Spéciales"
 	cs_btn.position = Vector2(620, 16)
 	cs_btn.size     = Vector2(260, 40)
-	cs_btn.add_theme_font_size_override("font_size", 15)
+	cs_btn.add_theme_font_size_override("font_size", UiKit.scaled_font(15))
 	cs_btn.add_theme_color_override("font_color", C_GOLD_LT)
 	_btn_neutral(cs_btn)
 	cs_btn.pressed.connect(_open_cs_screen)
@@ -101,7 +118,7 @@ func _build() -> void:
 	close.text     = "✕  Fermer"
 	close.position = Vector2(24, 598)
 	close.size     = Vector2(160, 36)
-	close.add_theme_font_size_override("font_size", 15)
+	close.add_theme_font_size_override("font_size", UiKit.scaled_font(15))
 	close.add_theme_color_override("font_color", C_DIM)
 	_btn_neutral(close)
 	close.pressed.connect(func() -> void: closed.emit())
@@ -144,7 +161,7 @@ func _build_move_card(parent: Node, m: Dictionary, x: float, y: float,
 		btn.position = Vector2(w - 108, 28)
 		btn.size     = Vector2(100, 28)
 		btn.disabled = not can_buy
-		btn.add_theme_font_size_override("font_size", 12)
+		btn.add_theme_font_size_override("font_size", UiKit.scaled_font(12))
 		btn.add_theme_color_override("font_color", C_GOLD if can_buy else C_DIM)
 		var sn := StyleBoxFlat.new()
 		sn.bg_color = Color(0.22, 0.17, 0.09)
@@ -191,7 +208,7 @@ func _lbl(parent: Node, text: String, x: float, y: float, w: float, h: float,
 		fs: int, color: Color, centered: bool = false) -> Label:
 	var l := Label.new()
 	l.text = text; l.position = Vector2(x, y); l.size = Vector2(w, h)
-	l.add_theme_font_size_override("font_size", fs)
+	l.add_theme_font_size_override("font_size", UiKit.scaled_font(fs))
 	l.add_theme_color_override("font_color", color)
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	if centered:

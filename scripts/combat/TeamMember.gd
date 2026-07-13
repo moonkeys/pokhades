@@ -615,6 +615,13 @@ func _attack() -> void:
 	if not moves.is_empty():
 		var idx  := clampi(_selected_move_idx, 0, moves.size() - 1)
 		var move: MoveData = moves[idx]
+		# CT de statut à effet réel (soin, altération garantie) — cf.
+		# MoveShopScreen.MOVE_LIST. Une CT de statut sans effet connu (moves
+		# d'espèce type Rugissement, non achetables) retombe sur l'attaque de
+		# base pour ne jamais laisser un slot inerte.
+		if move and move.power <= 0 and move.damage_class == "status" and not move.effect.is_empty():
+			_use_status_move(move)
+			return
 		if move and move.power > 0:
 			move_type  = move.type
 			move_power = move.power
@@ -686,6 +693,46 @@ func _attack() -> void:
 				if is_instance_valid(self) and not _evolving:
 					sprite.modulate = Color.WHITE
 			)
+
+
+## CT de statut à effet réel (cf. MoveData.effect) : soin (soi/équipe) ou
+## altération GARANTIE sur l'ennemi le plus proche à portée — contrairement
+## au tirage par type des attaques normales (StatusFx.roll), ces CT
+## réussissent toujours, ce qui justifie leur coût et fait un vrai choix de
+## rôle (soigneur/contrôle) à l'achat chez le Tuteur de capacités.
+const STATUS_MOVE_RANGE := 9.0
+const HEAL_TEAM_RADIUS  := 7.0
+
+func _use_status_move(move: MoveData) -> void:
+	_attack_flash = 1.0
+	var kind: String = move.effect.get("kind", "")
+	match kind:
+		"heal_self":
+			pokemon_instance.heal_percent(float(move.effect.get("pct", 0.3)))
+			CombatVFX.spawn_damage_number(get_parent(), global_position, 0, "heal")
+		"heal_team":
+			var pct: float = float(move.effect.get("pct", 0.3))
+			pokemon_instance.heal_percent(pct)
+			CombatVFX.spawn_damage_number(get_parent(), global_position, 0, "heal")
+			for ally in get_tree().get_nodes_in_group("players"):
+				if not is_instance_valid(ally) or ally == self: continue
+				if global_position.distance_to(ally.global_position) > HEAL_TEAM_RADIUS: continue
+				ally.pokemon_instance.heal_percent(pct)
+				CombatVFX.spawn_damage_number(get_parent(), ally.global_position, 0, "heal")
+		"status":
+			var target := _nearest_enemy(STATUS_MOVE_RANGE)
+			if is_instance_valid(target):
+				target.pokemon_instance.apply_status(
+					str(move.effect.get("status", "")),
+					StatusFx.duration(str(move.effect.get("status", ""))))
+				AttackAnim.play(get_parent(), target.global_position, move.type)
+
+	if not _evolving:
+		sprite.modulate = Color(1.4, 2.0, 1.4)
+		get_tree().create_timer(0.12).timeout.connect(func():
+			if is_instance_valid(self) and not _evolving:
+				sprite.modulate = Color.WHITE
+		)
 
 
 ## Attaque à distance : tire un Projectile sur l'ennemi le plus proche

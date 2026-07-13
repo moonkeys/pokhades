@@ -40,6 +40,10 @@ static func spawn_damage_number(parent: Node, pos: Vector3, amount: int, kind: S
 		"player":
 			lbl.font_size = 52
 			lbl.modulate = Color(1.0, 0.30, 0.25)
+		"heal":
+			lbl.font_size = 46
+			lbl.modulate = Color(0.35, 0.95, 0.45)
+			lbl.text = "+PV"
 		_:
 			lbl.font_size = 50
 			lbl.modulate = Color(0.98, 0.95, 0.88)
@@ -237,6 +241,58 @@ static func spawn_gold_orbs(parent: Node, pos: Vector3, count: int = 4) -> void:
 		var orb := GoldOrb.new()
 		orb.position = pos + Vector3(randf_range(-0.4, 0.4), 0.5, randf_range(-0.4, 0.4))
 		parent.add_child(orb)
+
+
+## ── Traînée de vitesse du dash (façon Hades) ──────────────────────────────
+## Petits éclats étirés laissés dans le sillage du dash, additifs et
+## billboardés (via le matériau partagé de spawn_impact) : donne une
+## sensation de vitesse/flou sans vrai shader de motion blur.
+static func spawn_dash_streaks(parent: Node, pos: Vector3, dir: Vector3, tint: Color = Color(0.65, 0.85, 1.0, 0.85)) -> void:
+	if not is_instance_valid(parent) or not parent.is_inside_tree():
+		return
+	var back := Vector3(-dir.x, 0.0, -dir.z)
+	if back.length() > 0.01:
+		back = back.normalized()
+	for i in 4:
+		var mi := MeshInstance3D.new()
+		var mesh := QuadMesh.new()
+		mesh.size = Vector2(0.55, 0.14) * (1.0 - i * 0.15)
+		mi.mesh              = mesh
+		mi.material_override = _get_impact_mat(tint)
+		mi.position = pos + Vector3(0, 0.7 + randf_range(-0.08, 0.08), 0) + back * (0.2 + i * 0.26)
+		parent.add_child(mi)
+		var tw := mi.create_tween().set_parallel(true)
+		tw.tween_property(mi, "position", mi.position + back * 0.35, 0.20)
+		tw.tween_property(mi, "transparency", 1.0, 0.16 + i * 0.02).set_delay(i * 0.015)
+		tw.chain().tween_callback(mi.queue_free)
+
+
+## ── Rémanence du sprite (afterimage) pendant le dash ──────────────────────
+## Fige un instantané de l'anim en cours, teinté, qui s'efface vite —
+## renforce la lecture de la trajectoire à haute vitesse.
+static func spawn_dash_afterimage(parent: Node, sprite: AnimatedSprite3D, tint: Color = Color(0.65, 0.85, 1.0, 0.55)) -> void:
+	if not is_instance_valid(parent) or not parent.is_inside_tree() or not is_instance_valid(sprite):
+		return
+	if sprite.sprite_frames == null or not sprite.sprite_frames.has_animation(sprite.animation):
+		return
+	var tex := sprite.sprite_frames.get_frame_texture(sprite.animation, sprite.frame)
+	if tex == null:
+		return
+	var ghost := Sprite3D.new()
+	ghost.texture        = tex
+	ghost.billboard       = sprite.billboard
+	ghost.pixel_size      = sprite.pixel_size
+	ghost.offset          = sprite.offset
+	ghost.flip_h          = sprite.flip_h
+	ghost.shaded          = false
+	ghost.transparent     = true
+	ghost.modulate        = tint
+	ghost.global_position = sprite.global_position
+	ghost.global_rotation = sprite.global_rotation
+	parent.add_child(ghost)
+	var tw := ghost.create_tween()
+	tw.tween_property(ghost, "modulate:a", 0.0, 0.22).set_ease(Tween.EASE_IN)
+	tw.tween_callback(ghost.queue_free)
 
 
 static func _get_soft_texture() -> GradientTexture2D:
