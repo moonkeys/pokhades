@@ -48,7 +48,7 @@ func _build() -> void:
 	close.text     = "✕  Fermer"
 	close.position = Vector2(24, 576)
 	close.size     = Vector2(180, 44)
-	close.add_theme_font_size_override("font_size", 16)
+	close.add_theme_font_size_override("font_size", UiKit.scaled_font(16))
 	close.add_theme_color_override("font_color", C_DIM)
 	_btn_neutral(close)
 	close.pressed.connect(func() -> void: closed.emit())
@@ -107,7 +107,7 @@ func _build_cs_section(def: Dictionary, y: float) -> void:
 		buy.text     = "Acheter"
 		buy.position = Vector2(900, 100)
 		buy.size     = Vector2(150, 38)
-		buy.add_theme_font_size_override("font_size", 15)
+		buy.add_theme_font_size_override("font_size", UiKit.scaled_font(15))
 		buy.add_theme_color_override("font_color", C_TEXT)
 		_btn_buy(buy)
 		buy.pressed.connect(func() -> void: _buy(cs_id, def["name"], price))
@@ -136,7 +136,7 @@ func _build_cs_section(def: Dictionary, y: float) -> void:
 		btn.text     = ("✓ " + nm) if is_holder else nm
 		btn.position = Vector2(bx + col * (bw + 10), by + row * 36)
 		btn.size     = Vector2(bw, 30)
-		btn.add_theme_font_size_override("font_size", 12)
+		btn.add_theme_font_size_override("font_size", UiKit.scaled_font(12))
 		btn.add_theme_color_override("font_color", C_TEXT)
 		if is_holder:
 			_btn_owned(btn)
@@ -192,7 +192,9 @@ func _lbl(text: String, x: float, y: float, w: float, h: float,
 	l.text = text
 	l.position = Vector2(x, y)
 	l.size     = Vector2(w, h)
-	l.add_theme_font_size_override("font_size", fs)
+	l.clip_text = true
+	l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	l.add_theme_font_size_override("font_size", UiKit.scaled_font(fs))
 	l.add_theme_color_override("font_color", color)
 	if centered:
 		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER

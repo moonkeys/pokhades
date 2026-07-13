@@ -21,6 +21,14 @@ const GREEN_DARK := Color(0.18, 0.45, 0.16)
 const CYAN_SEL   := Color(0.25, 0.88, 0.82)   # surbrillance de sélection
 const RED_SOFT   := Color(0.80, 0.33, 0.25)
 
+## Multiplicateur global de taille de texte — le contenu (labels, boutons,
+## bannières, pastilles) était trop petit/illisible en jeu. Centralisé ici :
+## un seul nombre à changer plutôt que rouvrir chaque écran.
+const FONT_SCALE := 1.25
+
+static func scaled_font(fs: float) -> int:
+	return int(round(fs * FONT_SCALE))
+
 
 static func style(bg: Color, border: Color, radius: int = 10, bw: int = 3) -> StyleBoxFlat:
 	var s := StyleBoxFlat.new()
@@ -60,7 +68,7 @@ static func banner(parent: Control, text: String, y: float = 14.0) -> void:
 	l.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l.vertical_alignment   = VERTICAL_ALIGNMENT_CENTER
-	l.add_theme_font_size_override("font_size", 24)
+	l.add_theme_font_size_override("font_size", scaled_font(24))
 	l.add_theme_color_override("font_color", GOLD)
 	bar.add_child(l)
 
@@ -104,7 +112,7 @@ static func button(text: String, size: Vector2, green: bool = true) -> Button:
 	b.add_theme_color_override("font_color", Color.WHITE if green else TEXT_DARK)
 	b.add_theme_color_override("font_hover_color", Color.WHITE if green else TEXT_DARK)
 	b.add_theme_color_override("font_disabled_color", Color(1, 1, 1, 0.45) if green else TEXT_DARK.lightened(0.3))
-	b.add_theme_font_size_override("font_size", 17)
+	b.add_theme_font_size_override("font_size", scaled_font(17))
 	juice(b)   # survol/focus = pop, clic = son — tous les boutons du kit
 	return b
 
@@ -122,19 +130,30 @@ static func icon_square(parent: Control, pos: Vector2, sym: String,
 	l.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l.vertical_alignment   = VERTICAL_ALIGNMENT_CENTER
-	l.add_theme_font_size_override("font_size", int(size * 0.5))
+	l.add_theme_font_size_override("font_size", scaled_font(size * 0.5))
 	sq.add_child(l)
 
 
+## `wrap` : true = retour à la ligne automatique (le label grandit vers le
+## bas — prévoir la place). false (défaut) = une ligne, coupée par « … » si
+## le texte dépasse `w` au lieu de déborder du conteneur.
 static func label(parent: Control, text: String, pos: Vector2, fs: int,
 		col: Color = TEXT_DARK, w: float = 400.0,
-		align: HorizontalAlignment = HORIZONTAL_ALIGNMENT_LEFT) -> Label:
+		align: HorizontalAlignment = HORIZONTAL_ALIGNMENT_LEFT,
+		wrap: bool = false) -> Label:
 	var l := Label.new()
 	l.text = text
 	l.position = pos
-	l.size = Vector2(w, fs + 12)
+	var scaled_fs := scaled_font(fs)
+	l.size = Vector2(w, scaled_fs + 12)
 	l.horizontal_alignment = align
-	l.add_theme_font_size_override("font_size", fs)
+	if wrap:
+		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		l.custom_minimum_size = Vector2(w, 0)
+	else:
+		l.clip_text = true
+		l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	l.add_theme_font_size_override("font_size", scaled_fs)
 	l.add_theme_color_override("font_color", col)
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	parent.add_child(l)
@@ -178,7 +197,7 @@ static func type_badge(parent: Control, pos: Vector2, t: String, h: float = 22.0
 	l.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l.vertical_alignment   = VERTICAL_ALIGNMENT_CENTER
-	l.add_theme_font_size_override("font_size", int(h * 0.55))
+	l.add_theme_font_size_override("font_size", scaled_font(h * 0.55))
 	l.add_theme_color_override("font_color", Color.WHITE)
 	l.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.5))
 	l.add_theme_constant_override("shadow_offset_y", 1)

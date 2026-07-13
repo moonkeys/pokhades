@@ -29,6 +29,17 @@ const C_KO      := Color(0.45, 0.38, 0.30)
 
 const LOW_HP_THRESHOLD := 0.25
 
+# ── Overlays de barre de PV (assets Essentials — Party screen) ─────────
+# overlay_hp.png : 96×24, 3 bandes de 8px (vert/jaune/rouge, de haut en
+# bas) — on ne montre que la portion [0, ratio*96] pour l'effet de vidage.
+# overlay_hp_back.png : le cadre (fond) de la barre, sans remplissage.
+const HP_OVERLAY_PATH := "res://Pokemon Essentials v21.1 2023-07-30/Graphics/UI/Party/overlay_hp.png"
+const HP_BACK_PATH     := "res://Pokemon Essentials v21.1 2023-07-30/Graphics/UI/Party/overlay_hp_back.png"
+const HP_OVERLAY_NATIVE_W := 96.0
+const HP_OVERLAY_ROW_H    := 8.0
+static var _hp_overlay_tex: Texture2D = null
+static var _hp_back_tex:    Texture2D = null
+
 # ── État ──────────────────────────────────────────────────────────────
 var _player_instance: PokemonInstance = null
 
@@ -41,7 +52,7 @@ var _portrait_tex: TextureRect = null
 var _name_label:   Label       = null
 var _level_label:  Label       = null
 var _type_holder:  Control     = null
-var _hp_fill:      ColorRect   = null
+var _hp_fill:      TextureRect = null   # overlay_hp.png (3 teintes), croqué selon le ratio
 var _hp_ghost:     ColorRect   = null
 var _hp_numbers:   Label       = null
 var _xp_fill:      ColorRect   = null
@@ -197,21 +208,18 @@ func setup_team(instances: Array, active_idx: int) -> void:
 		var lvl := _lbl("N.%d" % inst.level, 146, 3, 30, 16, 10, C_DIM)
 		root.add_child(lvl)
 
-		# Barre PV fine + fantôme
-		var bg := ColorRect.new()
+		# Barre PV fine + fantôme (cadre + remplissage Essentials)
+		var bg := _make_hp_back(Vector2(TEAM_BAR_W + 2, 8))
 		bg.position = Vector2(44, 22)
-		bg.size     = Vector2(TEAM_BAR_W + 2, 8)
-		bg.color    = Color(0, 0, 0, 0.55)
 		root.add_child(bg)
 		var ghost := ColorRect.new()
 		ghost.position = Vector2(45, 23)
 		ghost.size     = Vector2(TEAM_BAR_W * inst.hp_ratio(), 6)
 		ghost.color    = C_GHOST
 		root.add_child(ghost)
-		var fill := ColorRect.new()
+		var fill := _make_hp_fill(TEAM_BAR_W / HP_OVERLAY_NATIVE_W, 6.0)
 		fill.position = Vector2(45, 23)
-		fill.size     = Vector2(TEAM_BAR_W * inst.hp_ratio(), 6)
-		fill.color    = _hp_color(inst.hp_ratio())
+		_update_hp_fill(fill, inst.hp_ratio())
 		root.add_child(fill)
 
 		# Barre XP ultra-fine sous les PV
@@ -239,11 +247,10 @@ func update_team_hp(idx: int, ratio: float) -> void:
 	if idx >= _team_cards.size():
 		return
 	var card: Dictionary = _team_cards[idx]
-	var fill: ColorRect = card.get("fill")
+	var fill: TextureRect = card.get("fill")
 	if not is_instance_valid(fill):
 		return
-	fill.size.x  = TEAM_BAR_W * clampf(ratio, 0.0, 1.0)
-	fill.color   = _hp_color(ratio) if ratio > 0.0 else C_KO
+	_update_hp_fill(fill, ratio)
 	_ghost_targets[card["ghost"]] = fill.size.x
 	if ratio <= 0.0:
 		(card["root"] as Panel).modulate = Color(1, 1, 1, 0.45)
@@ -300,21 +307,17 @@ func _build_player_panel() -> void:
 	_type_holder.position = Vector2(96, 30)
 	panel.add_child(_type_holder)
 
-	# PV : gros, lisible — fantôme + nombres
-	var hp_bg := ColorRect.new()
+	# PV : gros, lisible — cadre Essentials + fantôme + remplissage 3 teintes
+	var hp_bg := _make_hp_back(Vector2(HP_BAR_W + 4, 18))
 	hp_bg.position = Vector2(96, 56)
-	hp_bg.size     = Vector2(HP_BAR_W + 4, 18)
-	hp_bg.color    = Color(0, 0, 0, 0.55)
 	panel.add_child(hp_bg)
 	_hp_ghost = ColorRect.new()
 	_hp_ghost.position = Vector2(98, 58)
 	_hp_ghost.size     = Vector2(HP_BAR_W, 14)
 	_hp_ghost.color    = C_GHOST
 	panel.add_child(_hp_ghost)
-	_hp_fill = ColorRect.new()
+	_hp_fill = _make_hp_fill(HP_BAR_W / HP_OVERLAY_NATIVE_W, 14.0)
 	_hp_fill.position = Vector2(98, 58)
-	_hp_fill.size     = Vector2(HP_BAR_W, 14)
-	_hp_fill.color    = C_HP_HIGH
 	panel.add_child(_hp_fill)
 	_hp_numbers = _lbl("-- / --", 96, 76, HP_BAR_W, 16, 11, C_DIM)
 	_hp_numbers.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -362,8 +365,7 @@ func setup_player(instance: PokemonInstance) -> void:
 func update_hp(ratio: float) -> void:
 	ratio = clampf(ratio, 0.0, 1.0)
 	if is_instance_valid(_hp_fill):
-		_hp_fill.size.x = HP_BAR_W * ratio
-		_hp_fill.color  = _hp_color(ratio)
+		_update_hp_fill(_hp_fill, ratio)
 		_ghost_targets[_hp_ghost] = _hp_fill.size.x
 	if is_instance_valid(_hp_numbers) and _player_instance != null:
 		_hp_numbers.text = "%d / %d" % [_player_instance.current_hp, _player_instance.max_hp]
@@ -600,6 +602,57 @@ func _hp_color(ratio: float) -> Color:
 	return C_HP_LOW
 
 
+## Crée le TextureRect de fond (cadre vide, sans remplissage) d'une barre de
+## PV — taille cible en pixels écran.
+func _make_hp_back(target_size: Vector2) -> TextureRect:
+	if _hp_back_tex == null:
+		_hp_back_tex = load(HP_BACK_PATH)
+	var tr := TextureRect.new()
+	tr.texture         = _hp_back_tex
+	tr.expand_mode     = TextureRect.EXPAND_IGNORE_SIZE
+	tr.stretch_mode    = TextureRect.STRETCH_SCALE
+	tr.texture_filter  = CanvasItem.TEXTURE_FILTER_NEAREST
+	tr.size            = target_size
+	return tr
+
+
+## Crée le TextureRect de remplissage — sa largeur ET la région croquée
+## dans l'atlas rétrécissent ENSEMBLE avec `ratio` (troncature, pas
+## d'écrasement de l'image) ; la bande verte/jaune/rouge est choisie
+## automatiquement. `native_to_screen` = échelle appliquée à la largeur
+## native de 96px pour obtenir la largeur affichée à plein PV ;
+## `target_height` = hauteur fixe affichée (la bande source fait 8px de haut).
+func _make_hp_fill(native_to_screen: float, target_height: float = 8.0) -> TextureRect:
+	if _hp_overlay_tex == null:
+		_hp_overlay_tex = load(HP_OVERLAY_PATH)
+	var tr := TextureRect.new()
+	tr.expand_mode    = TextureRect.EXPAND_IGNORE_SIZE
+	tr.stretch_mode   = TextureRect.STRETCH_SCALE
+	tr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	tr.set_meta("native_to_screen", native_to_screen)
+	tr.size.y = target_height
+	_update_hp_fill(tr, 1.0)
+	return tr
+
+
+## Recroque + redimensionne un TextureRect créé par _make_hp_fill() pour
+## refléter `ratio` (0..1).
+func _update_hp_fill(tr: TextureRect, ratio: float) -> void:
+	if not is_instance_valid(tr):
+		return
+	ratio = clampf(ratio, 0.0, 1.0)
+	var row := 0
+	if ratio <= 0.25: row = 2
+	elif ratio <= 0.5: row = 1
+	var at := AtlasTexture.new()
+	at.atlas  = _hp_overlay_tex
+	at.region = Rect2(0, row * HP_OVERLAY_ROW_H,
+		maxf(1.0, HP_OVERLAY_NATIVE_W * ratio), HP_OVERLAY_ROW_H)
+	tr.texture = at
+	var scale: float = tr.get_meta("native_to_screen", 1.0)
+	tr.size.x = HP_OVERLAY_NATIVE_W * ratio * scale
+
+
 func _panel_style(p: Panel, active: bool) -> void:
 	var st := StyleBoxFlat.new()
 	st.bg_color     = C_PANEL
@@ -617,7 +670,9 @@ func _lbl(text: String, x: float, y: float, w: float, h: float,
 	l.text = text
 	l.position = Vector2(x, y)
 	l.size     = Vector2(w, h)
-	l.add_theme_font_size_override("font_size", fs)
+	l.clip_text = true
+	l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	l.add_theme_font_size_override("font_size", UiKit.scaled_font(fs))
 	l.add_theme_color_override("font_color", col)
 	l.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.55))
 	l.add_theme_constant_override("shadow_offset_x", 1)

@@ -243,7 +243,7 @@ func _build_start_button() -> void:
 	# Bouton principal VERT du kit (même langage que « Continuer » en run)
 	_btn_start = UiKit.button("COMMENCER LA RÉBELLION  ▶", Vector2(366, 50))
 	_btn_start.position = Vector2(898, 660)
-	_btn_start.add_theme_font_size_override("font_size", 18)
+	_btn_start.add_theme_font_size_override("font_size", UiKit.scaled_font(18))
 	_btn_start.pressed.connect(func() -> void: starter_chosen.emit(_selected_id))
 	add_child(_btn_start)
 
@@ -261,7 +261,7 @@ func _build_start_button() -> void:
 	btn_test.add_theme_stylebox_override("pressed", tn)
 	btn_test.add_theme_color_override("font_color", Color(0.80, 0.92, 1.0))
 	btn_test.add_theme_color_override("font_hover_color", Color.WHITE)
-	btn_test.add_theme_font_size_override("font_size", 16)
+	btn_test.add_theme_font_size_override("font_size", UiKit.scaled_font(16))
 	UiKit.juice(btn_test)   # même vie que les boutons du kit
 	btn_test.pressed.connect(func() -> void: test_mode_chosen.emit(_selected_id))
 	add_child(btn_test)
@@ -508,7 +508,9 @@ func _lbl(text: String, x: float, y: float, w: float, h: float,
 	l.text     = text
 	l.position = Vector2(x, y)
 	l.size     = Vector2(w, h)
-	l.add_theme_font_size_override("font_size", fs)
+	l.clip_text = true
+	l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	l.add_theme_font_size_override("font_size", UiKit.scaled_font(fs))
 	l.add_theme_color_override("font_color", color)
 	if shadow:
 		l.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.55))
