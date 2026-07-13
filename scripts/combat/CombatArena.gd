@@ -545,6 +545,10 @@ func _start_zone() -> void:
 	# Grotte : déclencheur posé seulement une fois la salle nettoyée
 	# (cf. _show_run_status) — pas de détour d'élite en plein combat.
 	_spawn_cs_triggers()
+	# Les maisons/tunnels de sortie sont visibles DÈS L'ENTRÉE dans la salle
+	# (retour joueurs) — mais fermées (pas de halo, pas de trigger) tant que
+	# la salle n'est pas nettoyée (cf. _open_exit_doors dans _on_room_cleared).
+	_spawn_exit_doors_closed()
 	hud.set_wave(_zone_label())
 	hud.set_kills(0, 0)
 	await get_tree().create_timer(1.2).timeout
@@ -1137,9 +1141,13 @@ func _on_room_cleared() -> void:
 	hud.set_kills(_killed, _room_total)
 	await get_tree().create_timer(0.8).timeout
 	# Don façon Hades : un item apparaît au CENTRE (type annoncé par la porte
-	# choisie pour entrer ici) ; les portes de sortie s'ouvrent en parallèle.
+	# choisie pour entrer ici) ; les portes de sortie (déjà là mais fermées,
+	# cf. _spawn_exit_doors_closed) s'OUVRENT en parallèle.
 	_spawn_boon(RunManager.inst().current_zone_bonus)
-	_spawn_exit_portals()
+	if _exit_portals.is_empty():
+		_spawn_exit_portals()   # filet de sécurité si jamais rien n'a été posé
+	else:
+		_open_exit_doors()
 	_spawn_cave_portals()
 
 
@@ -2456,10 +2464,49 @@ func _spawn_entry_barrier() -> void:
 func _spawn_exit_portals() -> void:
 	# get_exits() tire au hasard (biomes/dons) : en multijoueur, seule la
 	# version de l'HÔTE fait foi — elle est diffusée à tous les clients.
+	# Portes ACTIVES d'emblée (boutique, ou filet de sécurité) — cf.
+	# _spawn_exit_doors_closed pour les salles de combat (fermées au départ).
 	var exits_data := RunManager.inst().get_exits(2)
 	if _mp and multiplayer.is_server():
 		_net_exits.rpc(exits_data)
 	_spawn_exit_portals_from(exits_data)
+	hud.set_wave("Choisissez une sortie ↑")
+
+
+## Portes visibles DÈS L'ENTRÉE dans la salle mais INERTES (pas de halo, pas
+## de trigger) — cf. _open_exit_doors, appelé une fois la salle nettoyée.
+## Une seule porte si la salle suivante est la boutique (même destination,
+## pas besoin de la dupliquer) ; style "tunnel" en biome Montagne.
+func _spawn_exit_doors_closed() -> void:
+	var room  := RunManager.inst().rooms_cleared
+	var count := 1 if RunManager.inst().is_shop_room(room + 1) else 2
+	var style := "tunnel" if RunManager.inst().current_biome() == MapGenerator.MapTheme.ROCKY else "house"
+	var exits_data := RunManager.inst().get_exits(count)
+	for e: Dictionary in exits_data:
+		e["active"] = false
+		e["style"]  = style
+	if _mp and multiplayer.is_server():
+		_net_exits.rpc(exits_data)
+	_spawn_exit_portals_from(exits_data)
+
+
+## Ouvre les portes déjà posées (fin de salle) — pas de respawn, juste
+## réveil visuel + activation du trigger sur chaque ExitPortal existant.
+func _open_exit_doors() -> void:
+	_advancing = false   # nouveau choix possible
+	for p in _exit_portals:
+		if is_instance_valid(p):
+			p.open()
+	hud.set_wave("Choisissez une sortie ↑")
+	if _mp and multiplayer.is_server():
+		_net_open_exits.rpc()
+
+
+@rpc("authority", "call_remote", "reliable")
+func _net_open_exits() -> void:
+	for p in _exit_portals:
+		if is_instance_valid(p):
+			p.open()
 
 
 func _spawn_exit_portals_from(exits_data: Array) -> void:
@@ -2473,8 +2520,6 @@ func _spawn_exit_portals_from(exits_data: Array) -> void:
 		return
 
 	var exit_tiles := [_map.exit_A, _map.exit_B, _map.exit_C]
-
-	hud.set_wave("Choisissez une sortie ↑")
 
 	for i in exits_data.size():
 		var data: Dictionary = exits_data[i]

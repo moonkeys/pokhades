@@ -22,16 +22,29 @@ const C_WALL := Color(0.86, 0.80, 0.64)
 const C_ROOF := Color(0.55, 0.22, 0.20)
 const C_DOOR := Color(0.14, 0.10, 0.06)
 
+## Modèle de bouche de grotte (kit nature) — réutilisé pour le style
+## "tunnel" (biome montagne), cf. MapRender3D._add_cave_entrance.
+const KIT_CAVE_FACE := "cliff_cave_rock.glb"
+
 var _data:      Dictionary = {}
 var _triggered: bool       = false
+var _active:    bool       = false   # une porte FERMÉE ne déclenche rien
 var _pulse:     float      = 0.0
 
 var _glow:     MeshInstance3D     = null
 var _glow_mat: StandardMaterial3D = null
+var _door:     MeshInstance3D     = null   # battant (sombre = fermé)
+var _is_tunnel: bool = false
 
 
+## `data.active` (défaut true) : porte ouverte (halo + trigger) ou fermée
+## (visible mais inerte, jusqu'à `open()`). `data.style` : "house" (défaut)
+## ou "tunnel" (montagne). `data.bonus_label` : SEULE étiquette affichée
+## (plus de nom de zone ni de numéro de vague, cf. retour joueurs).
 func setup(data: Dictionary) -> void:
-	_data = data
+	_data   = data
+	_active = bool(data.get("active", true))
+	var style: String = str(data.get("style", "house"))
 
 	# Hitbox de détection joueur — devant le bâtiment, pas besoin de le
 	# traverser pour déclencher le choix de sortie.
@@ -43,12 +56,16 @@ func setup(data: Dictionary) -> void:
 	add_child(cs)
 
 	collision_layer = 8   # layer dédié (n'interfère pas avec murs/ennemis)
-	collision_mask  = 1   # détecte les corps joueurs (layer 1)
+	collision_mask  = 1 if _active else 0   # fermée = ne détecte personne
 
-	_build_gate_building()
+	if style == "tunnel":
+		_is_tunnel = true
+		_build_tunnel()
+	else:
+		_build_gate_building()
 
-	# Léger halo au sol devant la porte, pulsé — indique l'interactivité
-	# sans dominer le bâtiment comme l'ancien grand disque.
+	# Léger halo au sol devant la porte, pulsé — indique l'interactivité.
+	# Masqué tant que la porte est fermée.
 	_glow = MeshInstance3D.new()
 	var disc := CylinderMesh.new()
 	disc.top_radius    = 0.85
@@ -62,36 +79,45 @@ func setup(data: Dictionary) -> void:
 	_glow_mat.shading_mode  = BaseMaterial3D.SHADING_MODE_UNSHADED
 	_glow.material_override = _glow_mat
 	_glow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_glow.visible = _active
 	add_child(_glow)
 
-	# Étiquettes zone / bonus, au-dessus du toit
-	var lbl_z := Label3D.new()
-	lbl_z.text = "→ %s" % data.get("zone_name", "?")
-	lbl_z.position = Vector3(0, WALL_H + ROOF_HEIGHT + 0.5, 0)
-	lbl_z.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	lbl_z.no_depth_test = true
-	lbl_z.font_size = 52
-	lbl_z.pixel_size = 0.009
-	lbl_z.modulate = Color(1.0, 0.95, 0.4)
-	lbl_z.outline_size = 14
-	lbl_z.outline_modulate = Color(0.10, 0.08, 0.02)
-	add_child(lbl_z)
-
+	# UNIQUEMENT le libellé de récompense, au-dessus du bâtiment.
 	var bonus: String = data.get("bonus_label", "")
 	if not bonus.is_empty():
 		var lbl_b := Label3D.new()
 		lbl_b.text = bonus
-		lbl_b.position = Vector3(0, WALL_H + ROOF_HEIGHT, 0)
+		lbl_b.position = Vector3(0, WALL_H + ROOF_HEIGHT + 0.35, 0)
 		lbl_b.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 		lbl_b.no_depth_test = true
-		lbl_b.font_size = 44
+		lbl_b.font_size = 46
 		lbl_b.pixel_size = 0.009
-		lbl_b.modulate = Color(0.5, 1.0, 0.55)
-		lbl_b.outline_size = 12
+		lbl_b.modulate = Color(0.5, 1.0, 0.55) if _active else Color(0.70, 0.72, 0.62)
+		lbl_b.outline_size = 13
 		lbl_b.outline_modulate = Color(0.05, 0.12, 0.05)
+		lbl_b.name = "BonusLabel"
 		add_child(lbl_b)
 
 	body_entered.connect(_on_body_entered)
+
+
+## Ouvre une porte spawée fermée (fin de salle) : réveille le halo, active
+## la hitbox et éclaircit le battant + le libellé.
+func open() -> void:
+	if _active:
+		return
+	_active = true
+	collision_mask = 1
+	if is_instance_valid(_glow):
+		_glow.visible = true
+	if is_instance_valid(_door):
+		if _is_tunnel:
+			_door.visible = false
+		else:
+			(_door.material_override as StandardMaterial3D).albedo_color = C_DOOR
+	var lbl := get_node_or_null("BonusLabel")
+	if lbl is Label3D:
+		(lbl as Label3D).modulate = Color(0.5, 1.0, 0.55)
 
 
 ## Petit bâtiment de jonction : murs (BoxMesh) + toit en pente (deux
@@ -112,20 +138,48 @@ func _build_gate_building() -> void:
 
 	# Porte — inset sombre sur la face sud (celle que le joueur voit en
 	# arrivant depuis la map), légèrement en avant pour éviter le z-fight.
+	# Couleur assombrie tant que la porte est FERMÉE (cf. open()).
 	var door := MeshInstance3D.new()
 	var door_quad := QuadMesh.new()
 	door_quad.size = Vector2(0.7, 1.1)
 	door.mesh = door_quad
 	door.position = Vector3(0, 0.55, WALL_D * 0.5 + 0.01)
 	var door_mat := StandardMaterial3D.new()
-	door_mat.albedo_color = C_DOOR
+	door_mat.albedo_color = C_DOOR if _active else C_DOOR.darkened(0.5)
 	door_mat.shading_mode  = BaseMaterial3D.SHADING_MODE_UNSHADED
 	door.material_override = door_mat
 	door.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(door)
+	_door = door
 
 	_add_roof_pitch(WALL_W * 0.5 + ROOF_OVERHANG,  1.0)
 	_add_roof_pitch(WALL_W * 0.5 + ROOF_OVERHANG, -1.0)
+
+
+## Style "montagne" : bouche de grotte (même modèle que les caves) au lieu
+## d'une maison — cf. MapRender3D._add_cave_entrance pour la référence.
+func _build_tunnel() -> void:
+	var plate := KitProps.instance(KIT_CAVE_FACE, {"dirt": Color(0.10, 0.08, 0.09)})
+	plate.scale    = Vector3(1.3, 2.1, 1.3)
+	plate.position = Vector3(0, 0, WALL_D * 0.3)
+	add_child(plate)
+
+	# "Battant" virtuel : un voile sombre qui bouche le trou tant que fermé,
+	# retiré à l'ouverture (même rôle que la porte de la maison).
+	var seal := MeshInstance3D.new()
+	var seal_quad := QuadMesh.new()
+	seal_quad.size = Vector2(1.1, 1.6)
+	seal.mesh = seal_quad
+	seal.position = Vector3(0, 0.9, WALL_D * 0.3 + 0.45)
+	var seal_mat := StandardMaterial3D.new()
+	seal_mat.albedo_color = Color(0.05, 0.04, 0.05, 0.95 if not _active else 0.0)
+	seal_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	seal_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	seal.material_override = seal_mat
+	seal.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	seal.visible = not _active
+	add_child(seal)
+	_door = seal
 
 
 ## Un pan de toit — box fine inclinée depuis le faîte central vers un bord
