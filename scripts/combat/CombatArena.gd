@@ -272,6 +272,8 @@ func _process(delta: float) -> void:
 			_open_boutique_shop()
 		elif _near_boon and not is_instance_valid(_boon_screen):
 			_open_boon()
+		elif _near_recruit and not is_instance_valid(_recruit_screen):
+			_open_recruit_dialog()
 	if not _near_obstacle.is_empty() and Input.is_action_just_pressed("cs_use"):
 		var cb: Callable = _near_obstacle["on_use"]
 		var used_cs: String = _near_obstacle.get("cs_id", "")
@@ -584,40 +586,7 @@ func _spawn_team() -> void:
 		var is_active := i == 0
 		member.setup(instance, i, is_active)
 		_team.append(member)
-
-		# Connexions HUD — les lambdas capturent 'i' par valeur via idx
-		var idx := i
-		member.hp_changed.connect(func(ratio: float) -> void:
-			hud.update_team_hp(idx, ratio)
-			if idx == _active_index:
-				hud.update_hp(ratio)
-		)
-		member.cooldown_changed.connect(func(ratio: float) -> void:
-			if idx == _active_index:
-				hud.update_cooldown(ratio)
-		)
-		member.xp_changed.connect(func(ratio: float, lv: int) -> void:
-			hud.update_team_level(idx, lv)
-			hud.update_team_xp(idx, ratio)
-			if idx == _active_index:
-				hud.update_xp(ratio, lv)
-		)
-		member.leveled_up.connect(func(lv: int) -> void:
-			if idx == _active_index:
-				hud.show_levelup(lv)
-		)
-		member.evolved.connect(func(name_fr: String) -> void:
-			hud.notify("✦  %s a évolué !" % name_fr.capitalize(), Color(0.72, 0.55, 0.95))
-		)
-		member.portrait_ready.connect(func(midx: int, tex: Texture2D) -> void:
-			hud.update_team_portrait(midx, tex)
-			_team[midx].pokemon_instance.portrait_texture = tex
-		)
-		member.died.connect(_on_team_member_died.bind(idx))
-		member.dash_changed.connect(func(charges: int, max_c: int) -> void:
-			if idx == _active_index:
-				hud.update_dash(charges, max_c)
-		)
+		_wire_team_member(member, i)
 
 	# Centre la caméra immédiatement sur le premier membre
 	_cam_pos = _team[0].global_position
@@ -636,6 +605,43 @@ func _spawn_team() -> void:
 	_connect_move_signal(0)
 	_apply_hub_items()
 	_compute_cs_unlocks(team_ids)
+
+
+## Branche un TeamMember sur le HUD (les lambdas capturent l'index par
+## valeur). Partagé entre le spawn initial et le recrutement en run.
+func _wire_team_member(member, idx: int) -> void:
+	member.hp_changed.connect(func(ratio: float) -> void:
+		hud.update_team_hp(idx, ratio)
+		if idx == _active_index:
+			hud.update_hp(ratio)
+	)
+	member.cooldown_changed.connect(func(ratio: float) -> void:
+		if idx == _active_index:
+			hud.update_cooldown(ratio)
+	)
+	member.xp_changed.connect(func(ratio: float, lv: int) -> void:
+		hud.update_team_level(idx, lv)
+		hud.update_team_xp(idx, ratio)
+		if idx == _active_index:
+			hud.update_xp(ratio, lv)
+	)
+	member.leveled_up.connect(func(lv: int) -> void:
+		if idx == _active_index:
+			hud.show_levelup(lv)
+	)
+	member.evolved.connect(func(name_fr: String) -> void:
+		hud.notify("✦  %s a évolué !" % name_fr.capitalize(), Color(0.72, 0.55, 0.95))
+	)
+	member.portrait_ready.connect(func(midx: int, tex: Texture2D) -> void:
+		hud.update_team_portrait(midx, tex)
+		if midx < _team.size() and is_instance_valid(_team[midx]):
+			_team[midx].pokemon_instance.portrait_texture = tex
+	)
+	member.died.connect(_on_team_member_died.bind(idx))
+	member.dash_changed.connect(func(charges: int, max_c: int) -> void:
+		if idx == _active_index:
+			hud.update_dash(charges, max_c)
+	)
 
 
 ## Multijoueur : un TeamMember par joueur connecté, dans l'ordre stable du
@@ -1105,15 +1111,15 @@ func _on_room_cleared() -> void:
 	# salle 15 rapportait 330 ₽, elle en rapporte maintenant 145.
 	var gold := 25 + room * 8
 	if _is_boss_room(room):
-		gold *= 3   # butin de boss intermédiaire
-		# Boss vaincu : musique de victoire (jusqu'au changement de zone,
-		# cf. Sfx.stop_music dans _do_advance).
-		Sfx.play_music(Sfx.BGM_VICTORY)
-		# Toute son équipe vaincue : le dresseur s'enfuit vers la sortie
-		# (« il prend les portes ») — habillage visuel, le combat est déjà gagné.
+		# Butin de boss NETTEMENT plus généreux, croissant avec l'acte : ₽ ×4
+		# + un gros lot de Baies + des Éclats de Champion (ressource), et un
+		# badge de gloire à la première victoire (cf. _reward_boss).
+		gold *= 4
+		Sfx.play_music(Sfx.BGM_VICTORY)   # jusqu'au changement de zone
 		if is_instance_valid(_current_trainer) and is_instance_valid(_map):
 			_current_trainer.flee_to(_map.cell_to_world3(_map.exit_B))
 			_current_trainer = null
+		_reward_boss(room)
 	if _mp:
 		_net_room_cleared.rpc(gold)   # chaque client touche le même butin
 	GameManager.add_run_money(gold)
@@ -1153,6 +1159,247 @@ func _run_victory() -> void:
 @rpc("authority", "call_remote", "reliable")
 func _net_victory() -> void:
 	_run_victory()
+
+
+# ── Récompense de boss + recrutement d'un Pokémon du dresseur ──────────
+var _recruit_node: Area3D = null
+var _recruit_pid:  int    = 0
+var _near_recruit: bool   = false
+var _recruit_screen: CanvasLayer = null
+
+## Butin de boss : gros lot de Baies + Éclats de Champion (ressource
+## persistante, cf. GameManager) croissant avec l'acte, badge de gloire à
+## la première victoire, et — en solo, première victoire — un Pokémon du
+## dresseur qui reste au sol pour être recruté (cf. _spawn_recruit).
+func _reward_boss(room: int) -> void:
+	var act := RunManager.inst().act_of(room)
+	var champ: Dictionary = RunManager.inst().champion_for_act(act)
+	var champ_name: String = str(champ.get("name", "Champion"))
+
+	var berries := 120 + act * 80
+	var shards  := 1 + act
+	if _is_final_boss_room(room):
+		berries += 300
+		shards  += 3
+	GameManager.add_gold(berries)
+	GameManager.add_champion_shards(shards)
+	var first := GameManager.record_champion_win(champ_name)
+	GameManager.save_game()   # badges/éclats persistent tout de suite
+
+	hud.notify("🏅 +%d Baies · +%d Éclat%s de Champion" % [berries, shards, "s" if shards > 1 else ""],
+		Color(0.95, 0.78, 0.28))
+	if first:
+		hud.notify("🎖 Badge de %s obtenu !" % champ_name, Color(0.95, 0.82, 0.35))
+		# Recrutement : seulement en solo (en multi chacun n'a qu'un Pokémon,
+		# une recrue IA désynchroniserait la composition d'équipe).
+		if not _mp:
+			_spawn_recruit(champ)
+
+
+## Fait apparaître un Pokémon du dresseur, endormi au sol (sprite « sleep »),
+## près du centre — le joueur va lui parler avec [E] pour le recruter.
+func _spawn_recruit(champ: Dictionary) -> void:
+	if not is_instance_valid(_map):
+		return
+	if _team.size() >= GameManager.get_max_team_size():
+		hud.notify("Équipe pleine — impossible de recruter", Color(0.80, 0.55, 0.30))
+		return
+	var ids: Array = champ.get("ids", [])
+	if ids.is_empty():
+		return
+	# Forme de BASE d'un membre au hasard : recrutable + évoluera par le niveau.
+	var pick: int = GameManager.base_species_of(int(ids[randi() % ids.size()]))
+	_recruit_pid = pick
+	_load_recruit(pick)   # espèce + attaques en cache pour le moment du recrutement
+
+	var sz := _map.get_map_cell_size()
+	var cell := Vector2i(sz.x / 2, sz.y / 2 + 2)
+	var area := Area3D.new()
+	area.position        = _map.cell_to_world3(cell)
+	area.collision_layer = 0
+	area.collision_mask  = 1
+	var cs := CollisionShape3D.new()
+	var sh := SphereShape3D.new()
+	sh.radius = 1.5
+	cs.shape = sh
+	cs.position = Vector3(0, 0.6, 0)
+	area.add_child(cs)
+
+	var spr := AnimatedSprite3D.new()
+	Billboard3D.setup_sprite(spr)
+	spr.modulate = Color(0.72, 0.72, 0.82)   # grisé : assoupi
+	spr.name = "RecruitSprite"
+	area.add_child(spr)
+	area.add_child(Billboard3D.make_blob_shadow(Vector2(1.0, 0.55)))
+	PMDSprites.get_walk_sprites(pick, area, func(result: Dictionary) -> void:
+		if not is_instance_valid(spr) or result.is_empty():
+			return
+		spr.sprite_frames = result.frames
+		Billboard3D.size_to_width(spr, result, Billboard3D.CHAR_WIDTH)
+		spr.play("sleep" if result.frames.has_animation("sleep") else "idle")
+	)
+
+	var zzz := Label3D.new()
+	zzz.text      = "💤"
+	zzz.position  = Vector3(0.45, 1.7, 0)
+	zzz.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	zzz.no_depth_test = true
+	zzz.pixel_size = 0.01
+	area.add_child(zzz)
+
+	area.body_entered.connect(func(body: Node) -> void:
+		if body.is_in_group("players") and body.get("is_active") == true:
+			_near_recruit = true
+			_refresh_interact_prompt()
+	)
+	area.body_exited.connect(func(body: Node) -> void:
+		if body.is_in_group("players") and body.get("is_active") == true:
+			_near_recruit = false
+			_refresh_interact_prompt()
+	)
+	add_child(area)
+	_recruit_node = area
+	hud.notify("😴 Un Pokémon du dresseur gît au sol — va lui parler [E]", Color(0.55, 0.80, 0.95))
+
+
+## Charge à la demande l'espèce du recrut ET ses attaques (init_moves lit
+## preloaded_moves) — les formes de base de champion ne sont pas toujours
+## dans le cache de préchargement de la zone.
+func _load_recruit(pid: int) -> void:
+	if _cache.has(str(pid)):
+		_load_recruit_moves(pid)
+		return
+	PokemonAPI.get_pokemon(pid, func(d: Dictionary) -> void:
+		if not is_instance_valid(self) or d.is_empty():
+			return
+		_cache[str(int(d["id"]))] = PokemonData.from_api(d)
+		_load_recruit_moves(pid)
+	)
+
+
+func _load_recruit_moves(pid: int) -> void:
+	var pd: PokemonData = _cache.get(str(pid))
+	if pd == null or not pd.preloaded_moves.is_empty():
+		return
+	var count := 0
+	for lm: Dictionary in pd.level_up_moves:
+		if int(lm["level"]) > PLAYER_LEVEL + 20 or count >= 10:
+			continue
+		count += 1
+		var nm: String  = lm["name"]
+		var lvl: int    = int(lm["level"])
+		PokemonAPI.get_move(nm, func(md: Dictionary) -> void:
+			if not is_instance_valid(self) or md.is_empty():
+				return
+			var pw_v: Variant = md.get("power")
+			var pw: int = int(pw_v) if pw_v != null else 0
+			if pw <= 0:
+				return
+			var move := MoveData.new()
+			move.api_name      = nm
+			var fr: String     = md.get("name_fr", "")
+			move.display_name  = fr if fr != "" else nm.replace("-", " ").capitalize()
+			move.type          = md.get("type", "normal")
+			move.power         = pw
+			move.damage_class  = md.get("damage_class", "physical")
+			move.level_learned = lvl
+			pd.preloaded_moves.append(move)
+			pd.preloaded_moves.sort_custom(func(a: MoveData, b: MoveData) -> bool:
+				return a.level_learned < b.level_learned)
+		)
+
+
+## Petit dialogue Oui/Non (UiKit) — rejoindre l'équipe ou laisser dormir.
+func _open_recruit_dialog() -> void:
+	if is_instance_valid(_recruit_screen):
+		return
+	Sfx.play_file(Sfx.SE_MENU_OPEN, -6.0)
+	var layer := CanvasLayer.new()
+	layer.layer = 30
+	layer.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(layer)
+	_recruit_screen = layer
+
+	var data: PokemonData = _cache.get(str(_recruit_pid))
+	var nm: String = data.name_fr.capitalize() if data else "Ce Pokémon"
+
+	var panel := UiKit.main_panel(Vector2(390, 210), Vector2(500, 240))
+	layer.add_child(panel)
+	UiKit.pop_in(panel)
+	UiKit.banner(panel, "RECRUTEMENT")
+	UiKit.label(panel, "%s, K.O. mais encore vaillant, veut se joindre à toi.\nIl rejoindra l'équipe avec 1 PV." % nm,
+		Vector2(30, 92), 15, UiKit.CREAM, 440, HORIZONTAL_ALIGNMENT_CENTER, true)
+
+	var yes := UiKit.button("✔  L'accueillir", Vector2(200, 52))
+	yes.position = Vector2(40, 168)
+	panel.add_child(yes)
+	yes.pressed.connect(func() -> void:
+		_close_recruit_dialog()
+		_do_recruit()
+	)
+	var no := UiKit.button("✖  Le laisser dormir", Vector2(200, 52), false)
+	no.position = Vector2(260, 168)
+	panel.add_child(no)
+	no.pressed.connect(_close_recruit_dialog)
+	MenuNav.focus_first(panel)
+
+
+func _close_recruit_dialog() -> void:
+	if is_instance_valid(_recruit_screen):
+		Sfx.play_file(Sfx.SE_MENU_CLOSE, -6.0)
+		_recruit_screen.queue_free()
+	_recruit_screen = null
+
+
+## Ajoute la recrue comme compagnon IA (1 PV), la débloque durablement, et
+## réveille le sprite endormi sur place.
+func _do_recruit() -> void:
+	var pid := _recruit_pid
+	var data: PokemonData = _cache.get(str(pid))
+	if data == null:
+		hud.notify("Chargement du Pokémon… réessaie dans un instant", Color(0.80, 0.55, 0.30))
+		return
+	if _team.size() >= GameManager.get_max_team_size():
+		return
+	var idx := _team.size()
+	var instance := PokemonInstance.new(data, PLAYER_LEVEL + RunManager.inst().rooms_cleared)
+	instance.init_moves()
+	instance.current_hp = 1   # rejoint à 1 PV (cf. cahier des charges)
+
+	var spawn_ref: Vector3 = _team[_active_index].global_position if _active_index < _team.size() else Vector3.ZERO
+	var member = TEAM_SCENE.instantiate()
+	add_child(member)
+	member.global_position = spawn_ref + SPAWN_OFFSETS[idx % SPAWN_OFFSETS.size()]
+	member.setup(instance, idx, false)   # compagnon IA
+	_team.append(member)
+	_wire_team_member(member, idx)
+	_update_leaders()
+
+	var instances: Array = []
+	for m in _team:
+		instances.append(m.pokemon_instance)
+	hud.setup_team(instances, _active_index)
+
+	GameManager.unlock_pokemon(pid)
+	GameManager.save_game()
+	Sfx.play_file(Sfx.SE_MOVE_LEARNT)
+	hud.notify("★ %s rejoint l'équipe !" % data.name_fr.capitalize(), Color(0.35, 0.80, 0.55))
+
+	# Le sprite endormi se réveille (petit sursaut) puis disparaît — la
+	# recrue « active » est le TeamMember qui vient de spawn à côté.
+	if is_instance_valid(_recruit_node):
+		var spr := _recruit_node.get_node_or_null("RecruitSprite")
+		if spr is AnimatedSprite3D and spr.sprite_frames:
+			spr.modulate = Color.WHITE
+			if spr.sprite_frames.has_animation("idle"):
+				spr.play("idle")
+		var tw := _recruit_node.create_tween()
+		tw.tween_property(_recruit_node, "position:y", _recruit_node.position.y + 1.2, 0.4).set_ease(Tween.EASE_OUT)
+		tw.parallel().tween_property(_recruit_node, "scale", Vector3.ZERO, 0.4)
+		tw.tween_callback(_recruit_node.queue_free)
+	_recruit_node = null
+	_near_recruit = false
+	_refresh_interact_prompt()
 
 
 const SPAWN_TELEGRAPH_TIME := 0.55
@@ -1872,6 +2119,8 @@ func _refresh_interact_prompt() -> void:
 		hud.set_interact_prompt(true, "Appuyer sur [E] pour parler au marchand")
 	elif _near_boon:
 		hud.set_interact_prompt(true, "Appuyer sur [E] pour récupérer la récompense")
+	elif _near_recruit:
+		hud.set_interact_prompt(true, "Appuyer sur [E] pour parler au Pokémon endormi")
 	elif not _near_obstacle.is_empty():
 		hud.set_interact_prompt(true, _near_obstacle["prompt"])
 	else:
@@ -2265,6 +2514,16 @@ func _do_advance(data: Dictionary) -> void:
 		if is_instance_valid(_boutique_screen):
 			_boutique_screen.queue_free()
 			_boutique_screen = null
+
+	# Recrue de boss non-prise : elle ne suit pas dans la zone suivante.
+	if is_instance_valid(_recruit_node):
+		_recruit_node.queue_free()
+	_recruit_node = null
+	_recruit_pid  = 0
+	_near_recruit = false
+	if is_instance_valid(_recruit_screen):
+		_recruit_screen.queue_free()
+		_recruit_screen = null
 
 	# La porte choisie fixe le biome ET le type de don de la zone suivante.
 	# (Plus de bonus appliqué à la porte : le don s'obtient au centre de la

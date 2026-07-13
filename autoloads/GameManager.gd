@@ -474,6 +474,27 @@ func record_defeat(pid: int, is_base_form: bool = true) -> bool:
 		return true
 	return false
 
+
+# ── Champions vaincus : badges (gloire) + éclats (ressource) + recrutement ──
+## Badges gagnés (un par champion battu au moins une fois) — pure gloire,
+## affichés dans le hub. `champion_shards` = ressource lâchée par les boss,
+## réservée à l'augmentation de capacité du système de build (cf. #37).
+var champion_badges:  Array[String] = []   # noms de champions battus
+var champion_shards:  int = 0
+
+## Enregistre une victoire de boss. Retourne true si c'est la PREMIÈRE fois
+## qu'on bat ce champion (→ badge accordé + recrutement proposé en run).
+func record_champion_win(champ_name: String) -> bool:
+	var first := champ_name not in champion_badges
+	if first:
+		champion_badges.append(champ_name)
+	return first
+
+
+func add_champion_shards(n: int) -> void:
+	champion_shards = maxi(0, champion_shards + n)
+
+
 ## Pokédollars (₽) — monnaie DE RUN : gagnée en libérant des salles,
 ## dépensée dans la boutique de fin de salle, remise à zéro à chaque départ
 ## de run. La monnaie PERSISTANTE du hub est `gold`, affichée "Baies".
@@ -567,6 +588,8 @@ func save_game() -> void:
 		"cs_holders":          cs_holders,
 		"owned_cs":            owned_cs,
 		"defeat_counts":       _stringify_keys(defeat_counts),
+		"champion_badges":     champion_badges,
+		"champion_shards":     champion_shards,
 		"master_volume":       master_volume,
 		"sfx_volume":          sfx_volume,
 		"audio_muted":         audio_muted,
@@ -610,6 +633,8 @@ func load_game() -> void:
 	cs_holders           = d.get("cs_holders", {})
 	owned_cs.assign(d.get("owned_cs", []))
 	defeat_counts        = _intify_keys(d.get("defeat_counts", {}))
+	champion_badges.assign(d.get("champion_badges", []))
+	champion_shards      = int(d.get("champion_shards", champion_shards))
 	master_volume        = float(d.get("master_volume", master_volume))
 	sfx_volume           = float(d.get("sfx_volume", sfx_volume))
 	audio_muted          = bool(d.get("audio_muted", audio_muted))
