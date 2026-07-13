@@ -82,6 +82,7 @@ func _build_item(def: Dictionary, x: int, y: int, w: int, h: int) -> void:
 
 func _buy(id: String, item_name: String, price: int) -> void:
 	if GameManager.spend_gold(price):
+		Sfx.play_file(Sfx.SE_BUY_ITEM)
 		GameManager.owned_items.append(id)
 		_gold_lbl.text = "◆ %d Baies" % GameManager.gold
 		_show_feedback("✓  %s acheté !" % item_name, true)

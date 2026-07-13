@@ -83,7 +83,7 @@ func _build_item_card(it: Dictionary, x: float, y: float, w: float, h: float) ->
 
 func _buy(api: String) -> void:
 	if GameManager.buy_item(api):
-		Sfx.play("coin", -4.0)
+		Sfx.play_file(Sfx.SE_BUY_ITEM)
 		_rebuild()
 
 

@@ -116,6 +116,7 @@ func _build() -> void:
 			GameManager.gold >= mcost)
 		mbtn.pressed.connect(func() -> void:
 			if GameManager.spend_gold(GameManager.BERRY_MAGNET_COST):
+				Sfx.play_file(Sfx.SE_BUY_ITEM)
 				GameManager.berry_magnet = true
 				_rebuild()
 		)
@@ -124,22 +125,23 @@ func _build() -> void:
 	# ── Charges de Dash (Maj en run) — 0 au départ, 3 max ─────────────
 	_lbl(panel, "Charges de Dash", 560, 95, 400, 26, 17, UiKit.CREAM)
 	_lbl(panel, "Esquive/burst (Maj) — tu commences sans dash", 560, 119, 400, 20, 12, Color(0.85, 0.78, 0.62))
-	var dash_names := ["0 dash\n(départ)", "1 charge", "2 charges", "3 charges\n(max)"]
-	for i in 4:
+	# "0 dash (départ)" n'est pas un achat — rien à afficher, juste du bruit.
+	var dash_names := ["1 charge", "2 charges", "3 charges\n(max)"]
+	for i in range(1, 4):
 		var d_owned   := i <= GameManager.dash_charges_bought
 		var d_current := i == GameManager.dash_charges_bought
 		var d_buyable := i == GameManager.dash_charges_bought + 1 and i <= 3
-		var d_cost    := GameManager.DASH_CHARGE_COSTS[i - 1] if i > 0 else 0
+		var d_cost    := GameManager.DASH_CHARGE_COSTS[i - 1]
 
 		var d_card := Panel.new()
-		d_card.position = Vector2(560 + i * 104, 148)
+		d_card.position = Vector2(560 + (i - 1) * 104, 148)
 		d_card.size     = Vector2(96, 88)
 		_style(d_card,
 			UiKit.TAN if d_owned else UiKit.TAN_DARK,
 			C_GOLD if d_current else C_BORDER, 8)
 		panel.add_child(d_card)
 
-		_lbl(d_card, dash_names[i], 4, 6, 88, 44, 11, C_TEXT if d_owned else C_DIM, true)
+		_lbl(d_card, dash_names[i - 1], 4, 6, 88, 44, 11, C_TEXT if d_owned else C_DIM, true)
 
 		if d_buyable:
 			var d_btn := _mk_buy_btn("%d Baies" % d_cost, Vector2(4, 54), Vector2(88, 28),
@@ -147,6 +149,7 @@ func _build() -> void:
 			var cap_d_cost := d_cost
 			d_btn.pressed.connect(func() -> void:
 				if GameManager.spend_gold(cap_d_cost):
+					Sfx.play_file(Sfx.SE_BUY_ITEM)
 					GameManager.dash_charges_bought += 1
 					_rebuild()
 			)
@@ -197,6 +200,7 @@ func _build() -> void:
 func _buy_move_slot(cost: int) -> void:
 	if not GameManager.spend_gold(cost):
 		return
+	Sfx.play_file(Sfx.SE_BUY_ITEM)
 	GameManager.move_slot_count += 1
 	_rebuild()
 
@@ -204,6 +208,7 @@ func _buy_move_slot(cost: int) -> void:
 func _buy_team_slot(cost: int) -> void:
 	if not GameManager.spend_gold(cost):
 		return
+	Sfx.play_file(Sfx.SE_BUY_ITEM)
 	GameManager.team_slot_count += 1
 	_rebuild()
 
@@ -224,7 +229,7 @@ func _mk_buy_btn(text: String, pos: Vector2, sz: Vector2, enabled: bool) -> Butt
 	var btn := UiKit.button(text, sz)   # bouton vert du kit (juice inclus)
 	btn.position = pos
 	btn.disabled = not enabled
-	btn.add_theme_font_size_override("font_size", 12)
+	btn.add_theme_font_size_override("font_size", UiKit.scaled_font(12))
 	return btn
 
 
@@ -232,7 +237,7 @@ func _lbl(parent: Node, text: String, x: float, y: float, w: float, h: float,
 		fs: int, color: Color, centered: bool = false) -> Label:
 	var l := Label.new()
 	l.text = text; l.position = Vector2(x, y); l.size = Vector2(w, h)
-	l.add_theme_font_size_override("font_size", fs)
+	l.add_theme_font_size_override("font_size", UiKit.scaled_font(fs))
 	l.add_theme_color_override("font_color", color)
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	if centered:

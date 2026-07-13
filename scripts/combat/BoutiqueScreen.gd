@@ -79,10 +79,12 @@ func setup(team: Array, offers: Array, kind: String = "vendor") -> void:
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	get_tree().paused = true
+	Sfx.play_file(Sfx.SE_MENU_OPEN, -6.0)
 
 
 func _exit_tree() -> void:
 	get_tree().paused = false
+	Sfx.play_file(Sfx.SE_MENU_CLOSE, -6.0)
 
 
 func refresh() -> void:

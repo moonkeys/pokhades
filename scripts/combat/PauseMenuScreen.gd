@@ -16,12 +16,14 @@ func _ready() -> void:
 	layer = 33
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	get_tree().paused = true
+	Sfx.play_file(Sfx.SE_MENU_OPEN, -6.0)
 	add_child(MenuNav.make(_on_cancel_pressed))
 	_build()
 
 
 func _exit_tree() -> void:
 	get_tree().paused = false
+	Sfx.play_file(Sfx.SE_MENU_CLOSE, -6.0)
 
 
 func _on_cancel_pressed() -> void:

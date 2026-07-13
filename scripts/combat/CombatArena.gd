@@ -919,6 +919,9 @@ func _spawn_room_enemies() -> void:
 		dlg.setup(str(comp["name"]), str(comp["type"]))
 		_spawn_champion_trainer(comp)
 
+		# Musique de combat de dresseur — en boucle tant que le boss tient
+		Sfx.play_music(Sfx.BGM_BOSS)
+
 		var title := "DRESSEUR FINAL" if _is_final_boss_room(room) else "CHAMPION"
 		hud.set_wave("☠☠ %s %s (%s) — son équipe de %d t'attend !"
 			% [title, str(comp["name"]).to_upper(), comp["type"], _waves_total])
@@ -1075,6 +1078,9 @@ func _on_room_cleared() -> void:
 	var gold := 30 + room * 20
 	if _is_boss_room(room):
 		gold *= 3   # butin de boss intermédiaire
+		# Boss vaincu : musique de victoire (jusqu'au changement de zone,
+		# cf. Sfx.stop_music dans _do_advance).
+		Sfx.play_music(Sfx.BGM_VICTORY)
 		# Toute son équipe vaincue : le dresseur s'enfuit vers la sortie
 		# (« il prend les portes ») — habillage visuel, le combat est déjà gagné.
 		if is_instance_valid(_current_trainer) and is_instance_valid(_map):
@@ -1547,7 +1553,7 @@ func _learn_boutique_move(member_index: int, option_index: int, replace_index: i
 
 	# Attaque apprise → cet achat est consommé pour ce Pokémon (une fois/visite)
 	_boutique_offers[member_index] = []
-	Sfx.play("coin", -4.0)
+	Sfx.play_file(Sfx.SE_MOVE_LEARNT)
 	hud.update_money(GameManager.run_money)
 	if is_instance_valid(_boutique_screen):
 		_boutique_screen.refresh()
@@ -1557,7 +1563,7 @@ func _buy_boutique_berries(price: int, amount: int) -> void:
 	if not GameManager.spend_run_money(price):
 		return
 	GameManager.add_gold(amount)
-	Sfx.play("coin", -4.0)
+	Sfx.play_file(Sfx.SE_BUY_ITEM)
 	hud.update_money(GameManager.run_money)
 	if is_instance_valid(_boutique_screen):
 		_boutique_screen.refresh()
@@ -1602,7 +1608,7 @@ func _buy_boutique_potion(member_index: int, item_id: String) -> void:
 	hud.update_team_hp(member_index, ratio)
 	if member_index == _active_index:
 		hud.update_hp(ratio)
-	Sfx.play("coin", -4.0)
+	Sfx.play_file(Sfx.SE_BUY_ITEM)
 	hud.update_money(GameManager.run_money)
 	if is_instance_valid(_boutique_screen):
 		_boutique_screen.refresh()
@@ -2181,6 +2187,7 @@ func _host_advance(data: Dictionary) -> void:
 
 
 func _do_advance(data: Dictionary) -> void:
+	Sfx.stop_music()   # la musique de victoire s'arrête au changement de zone
 	for p in _exit_portals:
 		if is_instance_valid(p): p.queue_free()
 	_exit_portals.clear()

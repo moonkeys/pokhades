@@ -854,6 +854,7 @@ func _check_evolution() -> void:
 
 func _start_evolution(new_id: int) -> void:
 	_evolving = true
+	Sfx.play_file(Sfx.ME_EVO_START)
 	var tween := create_tween().set_loops()
 	tween.tween_property(sprite, "modulate", Color(4.0, 4.0, 4.0), 0.12)
 	tween.tween_property(sprite, "modulate", Color(0.8, 0.8, 1.0), 0.12)
@@ -887,6 +888,7 @@ func _start_evolution(new_id: int) -> void:
 			_current_anim = ""
 			sprite.play("idle")
 			_evolving = false
+			Sfx.play_file(Sfx.ME_EVO_SUCCESS)
 			evolved.emit(new_data.name_fr)
 			net_broadcast_progress()   # diffuse la NOUVELLE espèce aux autres joueurs
 		)

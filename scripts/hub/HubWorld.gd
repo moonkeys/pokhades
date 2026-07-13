@@ -68,6 +68,7 @@ var _run_lbl:    Label      = null
 
 
 func _ready() -> void:
+	Sfx.stop_music()   # coupe la musique de victoire/boss au retour au hub
 	_terrain = get_node_or_null("HubMapBg")
 	_build_environment()
 	_build_backdrop()
@@ -566,10 +567,12 @@ func _interact(npc: HubNPC) -> void:
 
 	screen.layer = 10
 	add_child(screen)
+	Sfx.play_file(Sfx.SE_MENU_OPEN, -6.0)
 	_subscreen = screen
 
 	if screen.has_signal("closed"):
 		screen.closed.connect(func() -> void:
+			Sfx.play_file(Sfx.SE_MENU_CLOSE, -6.0)
 			screen.queue_free()
 			_subscreen = null
 			_blocked   = false

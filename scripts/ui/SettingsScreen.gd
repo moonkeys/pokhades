@@ -14,6 +14,7 @@ var _panel: Panel = null
 func _ready() -> void:
 	layer = 35
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	Sfx.play_file(Sfx.SE_MENU_OPEN, -6.0)
 	add_child(MenuNav.make(func() -> void: closed.emit()))
 	_build()
 
@@ -113,3 +114,7 @@ func _make_grabber_icon() -> Texture2D:
 				img.set_pixel(x, y, UiKit.CREAM if d <= 7.0 else UiKit.WOOD_EDGE)
 	_grabber_cache = ImageTexture.create_from_image(img)
 	return _grabber_cache
+
+
+func _exit_tree() -> void:
+	Sfx.play_file(Sfx.SE_MENU_CLOSE, -6.0)

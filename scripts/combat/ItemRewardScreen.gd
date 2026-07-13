@@ -10,6 +10,7 @@ signal member_chosen(team_index: int)
 
 func setup(item: Dictionary, team: Array) -> void:
 	layer = 24
+	Sfx.play_file(Sfx.SE_MENU_OPEN, -6.0)
 
 	var veil := ColorRect.new()
 	veil.color = Color(0.04, 0.05, 0.03, 0.5)
