@@ -177,6 +177,13 @@ func _register_switch_key() -> void:
 		ev3.keycode = KEY_E
 		InputMap.action_add_event("interact", ev3)
 
+	# Fiche d'équipe en temps réel (stats effectives, objets, attaques)
+	if not InputMap.has_action("team_stats"):
+		InputMap.add_action("team_stats")
+		var ev_tab := InputEventKey.new()
+		ev_tab.keycode = KEY_TAB
+		InputMap.action_add_event("team_stats", ev_tab)
+
 	# Touche dédiée aux CS (Coupe/Surf/Force) — distincte de [E] (coffres)
 	if not InputMap.has_action("cs_use"):
 		InputMap.add_action("cs_use")
@@ -188,7 +195,20 @@ func _register_switch_key() -> void:
 ## Échap ouvre le menu pause — sauf si un autre écran (Boutique, don, etc.)
 ## est déjà ouvert (ils gèrent Échap eux-mêmes via MenuNav) ou si la run
 ## est terminée (game over / victoire déjà en cours).
+var _stats_overlay: TeamStatsOverlay = null
+
 func _unhandled_input(event: InputEvent) -> void:
+	# Tab : fiche d'équipe en direct (le jeu CONTINUE derrière — pas de pause)
+	if event.is_action_pressed("team_stats"):
+		if is_instance_valid(_stats_overlay):
+			_stats_overlay.queue_free()
+			_stats_overlay = null
+		else:
+			_stats_overlay = TeamStatsOverlay.new()
+			add_child(_stats_overlay)
+			_stats_overlay.setup(_team)
+		get_viewport().set_input_as_handled()
+		return
 	if not event.is_action_pressed("ui_cancel"):
 		return
 	if is_instance_valid(_pause_screen):
