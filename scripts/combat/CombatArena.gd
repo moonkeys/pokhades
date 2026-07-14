@@ -2695,43 +2695,88 @@ func _spawn_cave_portals() -> void:
 	if _cave_active or not is_instance_valid(_map):
 		return
 	for cell: Vector2i in _map.get_cave_cells():
-		var area := Area3D.new()
-		# L'entrée est dessinée sur la face sud du volume de falaise (plein) :
-		# le déclencheur est décalé devant la paroi, là où le joueur peut se tenir.
-		area.position        = _map.cell_to_world3(cell) + Vector3(0, 0, 0.85)
-		area.collision_layer = 0
-		area.collision_mask  = 1
-		var cs := CollisionShape3D.new()
-		var sh := BoxShape3D.new()
-		sh.size  = Vector3(1.1, 1.6, 0.9)
-		cs.shape = sh
-		cs.position = Vector3(0, 0.8, 0)
-		area.add_child(cs)
-		var lbl := Label3D.new()
-		lbl.text      = "⛰ Grotte"
-		lbl.position  = Vector3(0, 2.4, 0)
-		lbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-		lbl.no_depth_test = true
-		lbl.font_size  = 44
-		lbl.pixel_size = 0.009
-		lbl.modulate = Color(0.95, 0.85, 0.5)
-		lbl.outline_modulate = Color(0.12, 0.08, 0.02)
-		lbl.outline_size = 12
-		area.add_child(lbl)
-		var entrance := cell
-		area.body_entered.connect(func(body: Node) -> void:
-			if _cave_active: return
-			if not (body.is_in_group("players") and body.get("is_active") == true): return
-			# Multijoueur : TOUT LE GROUPE entre ensemble (les maps/états
-			# doivent rester en lockstep) — le premier joueur au seuil
-			# demande à l'hôte, qui diffuse l'entrée à tous.
-			if _mp and not multiplayer.is_server():
-				_request_enter_cave.rpc_id(1, entrance)
-			else:
-				_host_enter_cave(entrance)
-		)
+		var area := _make_cave_trigger(
+			_map.cell_to_world3(cell) + Vector3(0, 0, 0.85),
+			cell, "⛰ Grotte", Color(0.95, 0.85, 0.5))
 		add_child(area)
 		_cave_portals.append(area)
+	if _current_theme() == MapGenerator.MapTheme.VILLAGE:
+		_spawn_village_boss_house()
+
+
+## Déclencheur d'entrée en arène de demi-boss (grotte OU maison-boss du
+## village) — même hitbox/flux d'entrée multijoueur, seuls la position, le
+## libellé et la couleur changent. Le caller add_child + append à _cave_portals.
+func _make_cave_trigger(area_pos: Vector3, entrance: Vector2i, label_text: String, label_col: Color) -> Area3D:
+	var area := Area3D.new()
+	area.position        = area_pos
+	area.collision_layer = 0
+	area.collision_mask  = 1
+	var cs := CollisionShape3D.new()
+	var sh := BoxShape3D.new()
+	sh.size  = Vector3(1.1, 1.6, 0.9)
+	cs.shape = sh
+	cs.position = Vector3(0, 0.8, 0)
+	area.add_child(cs)
+	var lbl := Label3D.new()
+	lbl.text      = label_text
+	lbl.position  = Vector3(0, 2.4, 0)
+	lbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	lbl.no_depth_test = true
+	lbl.font_size  = 44
+	lbl.pixel_size = 0.009
+	lbl.modulate = label_col
+	lbl.outline_modulate = Color(0.12, 0.08, 0.02)
+	lbl.outline_size = 12
+	area.add_child(lbl)
+	area.body_entered.connect(func(body: Node) -> void:
+		if _cave_active: return
+		if not (body.is_in_group("players") and body.get("is_active") == true): return
+		# Multijoueur : TOUT LE GROUPE entre ensemble (lockstep) — le premier
+		# joueur au seuil demande à l'hôte, qui diffuse l'entrée à tous.
+		if _mp and not multiplayer.is_server():
+			_request_enter_cave.rpc_id(1, entrance)
+		else:
+			_host_enter_cave(entrance)
+	)
+	return area
+
+
+## Village : au clear, ~1 zone sur 2 ouvre UNE maison (porte éclairée) avec un
+## mini-boss à l'intérieur — réutilise l'arène de demi-boss (même flux que les
+## grottes de montagne). Ajouté à _cave_portals pour hériter du gel/nettoyage.
+func _spawn_village_boss_house() -> void:
+	if _cave_active or not is_instance_valid(_map):
+		return
+	if not _map.has_method("get_village_houses"):
+		return
+	var houses: Array = _map.get_village_houses()
+	if houses.is_empty():
+		return
+	var room := RunManager.inst().rooms_cleared
+	var vrng := RandomNumberGenerator.new()
+	vrng.seed = (Net.zone_seed(room) if Net.in_run else randi()) ^ 0x00B055
+	if vrng.randf() > 0.5:
+		return   # certaines maisons seulement
+	var rect: Rect2i = houses[vrng.randi() % houses.size()]
+	# Porte en façade sud (face caméra), au centre de la largeur.
+	var door_cell := Vector2i(rect.position.x + rect.size.x / 2, rect.end.y)
+	var world := _map.cell_to_world3(door_cell) + Vector3(0, 0, 0.5)
+	var area := _make_cave_trigger(world, door_cell, "🚪 Mini-Boss", Color(1.0, 0.55, 0.45))
+	# Porte ouverte : encadrement sombre + halo, planté sur la façade.
+	var frame := MeshInstance3D.new()
+	var fq := QuadMesh.new()
+	fq.size = Vector2(1.0, 1.7)
+	frame.mesh = fq
+	frame.position = Vector3(0, 0.85, -0.35)
+	var fm := StandardMaterial3D.new()
+	fm.albedo_color = Color(0.06, 0.05, 0.06)
+	fm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	frame.material_override = fm
+	frame.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	area.add_child(frame)
+	add_child(area)
+	_cave_portals.append(area)
 
 
 @rpc("any_peer", "call_remote", "reliable")

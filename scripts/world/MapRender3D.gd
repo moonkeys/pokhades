@@ -104,36 +104,80 @@ func _build_house(rect: Rect2i) -> void:
 	w -= 0.4
 	d -= 0.4
 
+	var wall_col: Color = _HOUSE_WALLS[rng.randi() % _HOUSE_WALLS.size()]
+	var trim_col := Color(0.96, 0.93, 0.86)   # encadrements crème
+
 	var house := Node3D.new()
 	house.position = Vector3(cx, 0.0, cz)
 	add_child(house)
+
+	# Soubassement : plinthe de pierre un peu plus large, sombre.
+	var base := MeshInstance3D.new()
+	var bb := BoxMesh.new()
+	bb.size = Vector3(w + 0.18, 0.32, d + 0.18)
+	base.mesh = bb
+	base.position = Vector3(0, 0.16, 0)
+	base.material_override = _flat_mat(Color(0.42, 0.38, 0.34))
+	base.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	house.add_child(base)
 
 	# Murs
 	var wall := MeshInstance3D.new()
 	var wb := BoxMesh.new()
 	wb.size = Vector3(w, wall_h, d)
 	wall.mesh = wb
-	wall.position = Vector3(0, wall_h * 0.5, 0)
-	wall.material_override = _flat_mat(_HOUSE_WALLS[rng.randi() % _HOUSE_WALLS.size()])
+	wall.position = Vector3(0, wall_h * 0.5 + 0.2, 0)
+	wall.material_override = _flat_mat(wall_col)
 	wall.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	house.add_child(wall)
 
-	# Toit à deux pentes (prisme) — faîte le long de X.
-	var roof_h := rng.randf_range(0.9, 1.5)
+	# Bandeau sous toiture (corniche) — fine bordure claire en haut des murs.
+	var cornice := MeshInstance3D.new()
+	var cb := BoxMesh.new()
+	cb.size = Vector3(w + 0.14, 0.16, d + 0.14)
+	cornice.mesh = cb
+	cornice.position = Vector3(0, wall_h + 0.12, 0)
+	cornice.material_override = _flat_mat(trim_col.darkened(0.1))
+	house.add_child(cornice)
+
+	# Toit à deux pentes (prisme) — faîte le long de X, débord de toiture.
+	var roof_h := rng.randf_range(1.0, 1.6)
 	var roof := MeshInstance3D.new()
 	var pm := PrismMesh.new()
-	pm.size = Vector3(w + 0.5, roof_h, d + 0.5)
+	pm.size = Vector3(w + 0.6, roof_h, d + 0.6)
 	roof.mesh = pm
-	roof.position = Vector3(0, wall_h + roof_h * 0.5, 0)
+	roof.position = Vector3(0, wall_h + 0.2 + roof_h * 0.5, 0)
 	roof.material_override = _flat_mat(_HOUSE_ROOFS[rng.randi() % _HOUSE_ROOFS.size()])
 	roof.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	house.add_child(roof)
 
-	# Porte + deux fenêtres en façade sud (+Z, côté caméra).
+	# Cheminée (petit conduit + couronne sombre) sur un côté du toit.
+	var chim := MeshInstance3D.new()
+	var chb := BoxMesh.new()
+	chb.size = Vector3(0.4, roof_h + 0.6, 0.4)
+	chim.mesh = chb
+	chim.position = Vector3(w * 0.3, wall_h + 0.2 + roof_h * 0.6, d * 0.15)
+	chim.material_override = _flat_mat(Color(0.52, 0.34, 0.28))
+	chim.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	house.add_child(chim)
+	_house_quad(house, Vector3(w * 0.3, wall_h + 0.2 + roof_h * 1.1, d * 0.15 + 0.21), Vector2(0.46, 0.14), Color(0.14, 0.11, 0.10))
+
+	# Façade sud (+Z) : porte encadrée + deux fenêtres encadrées à volets.
 	var face_z := d * 0.5 + 0.02
-	_house_quad(house, Vector3(0, 0.55, face_z), Vector2(0.7, 1.1), Color(0.20, 0.12, 0.07))
-	_house_quad(house, Vector3(-w * 0.28, wall_h * 0.6, face_z), Vector2(0.5, 0.5), Color(0.35, 0.48, 0.55))
-	_house_quad(house, Vector3(w * 0.28, wall_h * 0.6, face_z), Vector2(0.5, 0.5), Color(0.35, 0.48, 0.55))
+	var door_base := 0.2
+	# Porte : encadrement crème + battant sombre.
+	_house_quad(house, Vector3(0, door_base + 0.62, face_z), Vector2(0.86, 1.30), trim_col)
+	_house_quad(house, Vector3(0, door_base + 0.60, face_z + 0.02), Vector2(0.66, 1.14), Color(0.34, 0.20, 0.12))
+	_house_quad(house, Vector3(0.18, door_base + 0.58, face_z + 0.03), Vector2(0.07, 0.07), Color(0.90, 0.80, 0.35))  # poignée
+	# Fenêtres.
+	for sx: float in [-1.0, 1.0]:
+		var wxp: float = sx * w * 0.28
+		var wyp: float = wall_h * 0.62 + 0.2
+		_house_quad(house, Vector3(wxp, wyp, face_z), Vector2(0.64, 0.64), trim_col)                    # cadre
+		_house_quad(house, Vector3(wxp, wyp, face_z + 0.02), Vector2(0.46, 0.46), Color(0.40, 0.54, 0.62))  # vitre
+		# Croisillon (deux fines barres claires).
+		_house_quad(house, Vector3(wxp, wyp, face_z + 0.03), Vector2(0.46, 0.05), trim_col)
+		_house_quad(house, Vector3(wxp, wyp, face_z + 0.03), Vector2(0.05, 0.46), trim_col)
 
 	# Collision pleine (emprise), layer 1 comme les autres obstacles.
 	var body := StaticBody3D.new()
