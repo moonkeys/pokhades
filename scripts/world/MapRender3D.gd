@@ -687,7 +687,6 @@ func _is_flower_3d(atlas: Vector2i) -> bool:
 const KIT_CLIFF_FULL    := "cliff_block_rock.glb"          # 1×1×1 — dessus herbe / flancs roche
 const KIT_CLIFF_HALF    := "cliff_blockHalf_rock.glb"      # 1×0.5×1 — palier de finition
 const KIT_CLIFF_QUARTER := "cliff_blockQuarter_rock.glb"   # 1×0.25×1 — palier de finition fin
-const KIT_CAVE_FACE     := "cliff_cave_rock.glb"           # plaque d'arche, géométrie côté +Z (sud)
 
 ## Chaque case de chaque formation (MapGenerator._cliff_formations, remplies
 ## par _place_cliff_rect / l'arène) reçoit un vrai empilement de blocs
@@ -733,16 +732,16 @@ func _build_cliff_formations() -> void:
 		_add_cave_entrance(cell)
 
 
-## Plaque d'arche sombre sur la face sud du mur, à la case d'entrée de
-## grotte — étirée sur ~2 étages pour une vraie porte, teinte presque noire
-## pour se lire comme un trou.
+## Arche de grotte (cave-kit `gate-rock.glb`, texturée) à la case d'entrée,
+## plaquée contre la face sud du mur (celle que voit la caméra). Remplace
+## l'ancienne plaque `cliff_cave_rock` (retour joueurs : grottes pas belles).
+## NOTE : l'échelle/orientation est un premier jet — à affiner à l'œil dans
+## l'éditeur (le module Kenney fait ~4 u de base, orienté ouverture +Z).
 func _add_cave_entrance(cell: Vector2i) -> void:
-	var plate := KitProps.instance(KIT_CAVE_FACE, {"dirt": Color(0.10, 0.08, 0.09)})
-	# La géométrie occupe z ∈ [0.33, 0.5] du modèle : plaquée contre la face
-	# sud (z = cell.y + 1) avec un léger débord anti z-fight.
-	plate.scale = Vector3(1.06, 1.9, 1.12)
-	plate.position = Vector3(cell.x + 0.5, 0.0, cell.y + 0.52)
-	add_child(plate)
+	var gate := KitProps.instance_textured(KitProps.CAVE_KIT_DIR, KitProps.CAVE_GATE_ROCK)
+	gate.scale = Vector3(0.5, 0.5, 0.5)
+	gate.position = Vector3(cell.x + 0.5, 0.0, cell.y + 0.5)
+	add_child(gate)
 
 
 ## Collision pleine sur toute la formation — plus simple/robuste qu'une

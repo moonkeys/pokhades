@@ -9,6 +9,24 @@ extends RefCounted
 
 const KIT_DIR := "res://assets/kenney_nature_kit/"
 
+## Cave-kit (Kenney Modular Cave Kit, CC0) — modules de grotte texturés via
+## un atlas `colormap.png` (une seule matière). Chargés PAR CHEMIN COMPLET et
+## SANS l'aplatissement toon de prepare_mesh (qui les rendrait unis) — cf.
+## instance_textured(). Remplace les vieilles arches `cliff_cave_rock`.
+const CAVE_KIT_DIR := "res://assets/kenney_modular-cave-kit_1.0/Models/GLB format/"
+const CAVE_GATE_ROCK := "gate-rock.glb"   # arche de grotte rocheuse
+
+
+## Instancie un GLB EXTERNE (hors nature-kit plat) en gardant ses matériaux
+## d'origine — pour les modèles à texture atlas (cave-kit) que le pipeline
+## toon dénaturerait. `dir` = dossier res:// complet, `file` = nom du .glb.
+static func instance_textured(dir: String, file: String) -> Node3D:
+	var scene: PackedScene = load(dir + file)
+	if scene == null:
+		push_error("KitProps.instance_textured: introuvable %s%s" % [dir, file])
+		return Node3D.new()
+	return scene.instantiate()
+
 const TREES_ROUND: Array[String] = [
 	"tree_default.glb", "tree_default_dark.glb", "tree_fat.glb", "tree_oak.glb", "tree_oak_dark.glb",
 ]

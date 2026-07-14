@@ -22,10 +22,6 @@ const C_WALL := Color(0.86, 0.80, 0.64)
 const C_ROOF := Color(0.55, 0.22, 0.20)
 const C_DOOR := Color(0.14, 0.10, 0.06)
 
-## Modèle de bouche de grotte (kit nature) — réutilisé pour le style
-## "tunnel" (biome montagne), cf. MapRender3D._add_cave_entrance.
-const KIT_CAVE_FACE := "cliff_cave_rock.glb"
-
 var _data:      Dictionary = {}
 var _triggered: bool       = false
 var _active:    bool       = false   # une porte FERMÉE ne déclenche rien
@@ -159,8 +155,10 @@ func _build_gate_building() -> void:
 ## Style "montagne" : bouche de grotte (même modèle que les caves) au lieu
 ## d'une maison — cf. MapRender3D._add_cave_entrance pour la référence.
 func _build_tunnel() -> void:
-	var plate := KitProps.instance(KIT_CAVE_FACE, {"dirt": Color(0.10, 0.08, 0.09)})
-	plate.scale    = Vector3(1.3, 2.1, 1.3)
+	# Arche de grotte texturée (cave-kit) — même modèle que les entrées de
+	# grotte, cf. MapRender3D._add_cave_entrance. Échelle à affiner à l'œil.
+	var plate := KitProps.instance_textured(KitProps.CAVE_KIT_DIR, KitProps.CAVE_GATE_ROCK)
+	plate.scale    = Vector3(0.6, 0.6, 0.6)
 	plate.position = Vector3(0, 0, WALL_D * 0.3)
 	add_child(plate)
 
