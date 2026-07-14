@@ -164,7 +164,11 @@ func _ready() -> void:
 func _apply_ambiance() -> void:
 	if not is_instance_valid(_ambiance):
 		return
-	_ambiance.apply_theme(_current_theme(), _map_cells, _cave_active, _map)
+	# En grotte, si on y est entré par la porte d'une maison de village, c'est
+	# un INTÉRIEUR : lumière chaude, pas la brume froide d'une caverne.
+	var house := _cave_active and is_instance_valid(_map) \
+		and str(_map.get("interior_style")) == "house"
+	_ambiance.apply_theme(_current_theme(), _map_cells, _cave_active, _map, house)
 
 
 func _register_switch_key() -> void:
@@ -3112,6 +3116,12 @@ func _load_cave() -> void:
 	var scene := load(CAVE_PATH) as PackedScene
 	_map      = scene.instantiate() as MapBase
 	_map.name = "CaveMap"
+	# Village : on entre par la PORTE d'une maison — l'intérieur doit être une
+	# maison, pas une caverne (retour joueurs). Déduit du biome de l'overworld,
+	# donc identique sur tous les pairs sans état à synchroniser. À poser AVANT
+	# add_child (le _ready de la map lance la génération/rendu).
+	if RunManager.inst().current_biome() == MapGenerator.MapTheme.VILLAGE:
+		_map.set("interior_style", "house")
 	add_child(_map)
 	move_child(_map, 0)
 	_refresh_map_bounds()

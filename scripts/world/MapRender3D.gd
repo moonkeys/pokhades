@@ -66,9 +66,14 @@ func build(map: Node2D) -> void:
 	if _map.theme == MapGenerator.MapTheme.VILLAGE:
 		_build_village_houses()
 	if _map.arena_mode:
-		_build_cave_kit_arena()
-		_build_cave_crystals()
-		_build_cave_decor()
+		# Village : on est entré par une PORTE → intérieur de MAISON, pas une
+		# grotte (cf. MapGenerator.interior_style / CombatArena._load_cave).
+		if str(_map.get("interior_style")) == "house":
+			_build_house_interior()
+		else:
+			_build_cave_kit_arena()
+			_build_cave_crystals()
+			_build_cave_decor()
 	_build_collisions()
 	_build_border_walls()
 
@@ -213,6 +218,95 @@ func _flat_mat(col: Color) -> StandardMaterial3D:
 	m.diffuse_mode  = BaseMaterial3D.DIFFUSE_TOON
 	m.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
 	return m
+
+
+## INTÉRIEUR DE MAISON (biome Village) — on entre par une porte, on ne doit pas
+## se retrouver dans une caverne. Plancher de lattes, murs plâtrés à plinthe,
+## tapis central et mobilier simple (table, caisses, tonneaux). Les
+## blocs-falaises de l'anneau restent derrière pour la collision, retintés en
+## mur intérieur.
+func _build_house_interior() -> void:
+	var sz: Vector2i = _map.get_map_cell_size()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(sz) + 8081
+
+	var wood_a := Color(0.55, 0.38, 0.24)
+	var wood_b := Color(0.48, 0.33, 0.21)
+
+	# Plancher : lattes alternées sur tout l'intérieur (l'anneau de murs occupe
+	# 2 cases). Un quad par latte, alterné pour lire le sens du parquet.
+	for cz in range(2, sz.y - 2):
+		var plank := MeshInstance3D.new()
+		var pm := BoxMesh.new()
+		pm.size = Vector3(float(sz.x - 4), 0.06, 0.92)
+		plank.mesh = pm
+		plank.position = Vector3(float(sz.x) * 0.5, 0.03, float(cz) + 0.5)
+		plank.material_override = _flat_mat(wood_a if cz % 2 == 0 else wood_b)
+		plank.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(plank)
+
+	# Murs intérieurs : plâtre clair + plinthe bois, sur les 4 côtés.
+	var plaster := _flat_mat(Color(0.88, 0.83, 0.72))
+	var skirt   := _flat_mat(Color(0.42, 0.30, 0.20))
+	var lo := 2.0
+	var hx := float(sz.x) - 2.0
+	var hz := float(sz.y) - 2.0
+	for side in [
+		{"pos": Vector3(float(sz.x) * 0.5, 0.0, lo), "size": Vector3(float(sz.x) - 4.0, 1.0, 0.25)},
+		{"pos": Vector3(float(sz.x) * 0.5, 0.0, hz), "size": Vector3(float(sz.x) - 4.0, 1.0, 0.25)},
+		{"pos": Vector3(lo, 0.0, float(sz.y) * 0.5), "size": Vector3(0.25, 1.0, float(sz.y) - 4.0)},
+		{"pos": Vector3(hx, 0.0, float(sz.y) * 0.5), "size": Vector3(0.25, 1.0, float(sz.y) - 4.0)},
+	]:
+		var sv: Vector3 = side["size"]
+		var pv: Vector3 = side["pos"]
+		# Pan de mur
+		var wall := MeshInstance3D.new()
+		var wm := BoxMesh.new()
+		wm.size = Vector3(sv.x, 3.2, sv.z)
+		wall.mesh = wm
+		wall.position = pv + Vector3(0, 1.6, 0)
+		wall.material_override = plaster
+		wall.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		add_child(wall)
+		# Plinthe
+		var sk := MeshInstance3D.new()
+		var skm := BoxMesh.new()
+		skm.size = Vector3(sv.x + 0.06, 0.28, sv.z + 0.06)
+		sk.mesh = skm
+		sk.position = pv + Vector3(0, 0.14, 0)
+		sk.material_override = skirt
+		add_child(sk)
+
+	# Tapis central
+	var rug := MeshInstance3D.new()
+	var rm := BoxMesh.new()
+	rm.size = Vector3(float(sz.x) * 0.42, 0.02, float(sz.y) * 0.42)
+	rug.mesh = rm
+	rug.position = Vector3(float(sz.x) * 0.5, 0.08, float(sz.y) * 0.5)
+	rug.material_override = _flat_mat(Color(0.58, 0.24, 0.24))
+	rug.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(rug)
+
+	# Mobilier : caisses/tonneaux le long des murs (bloquant déjà via l'anneau).
+	var placed := 0
+	var attempts := 0
+	while placed < 10 and attempts < 200:
+		attempts += 1
+		var cell := Vector2i(rng.randi_range(4, sz.x - 5), rng.randi_range(4, sz.y - 5))
+		if not _map.is_valid_spawn_cell(cell):
+			continue
+		var crate := MeshInstance3D.new()
+		var cm := BoxMesh.new()
+		var h := rng.randf_range(0.55, 0.9)
+		cm.size = Vector3(rng.randf_range(0.6, 0.9), h, rng.randf_range(0.6, 0.9))
+		crate.mesh = cm
+		crate.position = Vector3(cell.x + 0.5, h * 0.5 + 0.06, cell.y + 0.5)
+		crate.rotation.y = rng.randf() * TAU
+		crate.material_override = _flat_mat(
+			Color(0.62, 0.45, 0.28) if rng.randf() < 0.6 else Color(0.45, 0.35, 0.28))
+		crate.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		add_child(crate)
+		placed += 1
 
 
 ## Habillage de l'arène de grotte avec les modules texturés du cave-kit
@@ -1018,7 +1112,12 @@ func _build_cliff_formations() -> void:
 	# fond/collision derrière les panneaux cave-kit — retintés roche sombre
 	# pour supprimer tout vert (retour joueurs : pas de vert dans les grottes).
 	if _map.arena_mode:
-		colors = {"grass": Color(0.28, 0.26, 0.29), "dirt": Color(0.24, 0.22, 0.25)}
+		if str(_map.get("interior_style")) == "house":
+			# Intérieur de maison : l'anneau se lit comme un mur plâtré, pas
+			# comme de la roche.
+			colors = {"grass": Color(0.80, 0.75, 0.65), "dirt": Color(0.70, 0.65, 0.56)}
+		else:
+			colors = {"grass": Color(0.28, 0.26, 0.29), "dirt": Color(0.24, 0.22, 0.25)}
 	var full_entries: Array    = []   # [{"cell":Vector2i,"y":float}, ...]
 	var half_entries: Array    = []
 	var quarter_entries: Array = []

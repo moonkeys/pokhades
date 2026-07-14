@@ -58,6 +58,11 @@ const WATER_LAYER := 4
 @export_group("Arène (grotte)")
 ## Mode arène : petite salle fermée de falaises, pas de chemins ni de coffre gardé.
 @export var arena_mode: bool     = false
+## Habillage de l'arène de demi-boss : "cave" (grotte, modules cave-kit) ou
+## "house" (intérieur de maison — biome Village : on entre par une porte, on
+## ne doit pas se retrouver dans une caverne). Posé par CombatArena._load_cave
+## AVANT add_child (donc avant _ready/_generate). cf. MapRender3D.
+@export var interior_style: String = "cave"
 @export var arena_size: Vector2i = Vector2i(32, 22)
 
 @export_group("Tiles Thème — Forêt")

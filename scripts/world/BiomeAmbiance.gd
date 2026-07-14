@@ -41,10 +41,14 @@ static var _mist_tex:  GradientTexture2D = null
 ## rocheuse assombrie, sans nuages ni collines (on est "sous terre").
 ## `terrain` (optionnel) = la map courante, pour que la vie ambiante
 ## (papillons) suive le relief.
-func apply_theme(theme: int, map_cell_size: Vector2i, is_cave: bool = false, terrain: Node = null) -> void:
+## `interior_house` : l'arène est un INTÉRIEUR DE MAISON (biome Village) et non
+## une grotte — lumière chaude de lampe, pas la brume froide d'une caverne.
+func apply_theme(theme: int, map_cell_size: Vector2i, is_cave: bool = false,
+		terrain: Node = null, interior_house: bool = false) -> void:
 	_map_size = map_cell_size
 	_terrain  = terrain
-	var cfg := _theme_ambiance(theme, is_cave)
+	var cfg := _merged(_HOUSE_PALETTE) if (is_cave and interior_house) \
+		else _theme_ambiance(theme, is_cave)
 	_apply_environment(cfg)
 	_apply_sun(cfg)
 	_apply_mist(cfg)
@@ -230,6 +234,25 @@ const _VILLAGE_PALETTE := {
 	"cloud_alpha":  0.60,
 	"butterflies":  4,
 	"ground_tint":  Color(0.44, 0.60, 0.36),
+}
+
+const _HOUSE_PALETTE := {
+	# Intérieur de MAISON (Village) : lumière chaude de lampe, air clair — sans
+	# ça, une maison rendait exactement comme une caverne (froide et brumeuse).
+	"sky_top":      Color(0.30, 0.24, 0.20),
+	"sky_horizon":  Color(0.42, 0.34, 0.26),
+	"ambient_energy": 0.42,
+	"fog_color":    Color(0.50, 0.40, 0.30),
+	"fog_density":  0.004,
+	"fog_scatter":  0.0,
+	"glow_intensity": 0.20,
+	"sun_color":    Color(1.0, 0.88, 0.68),
+	"sun_energy":   0.62,
+	"hill_a":       Color(0.34, 0.26, 0.20),
+	"hill_b":       Color(0.28, 0.21, 0.16),
+	"cloud_alpha":  0.0,
+	"mist":         false,
+	"ground_tint":  Color(0.52, 0.36, 0.23),
 }
 
 const _CAVE_PALETTE := {
