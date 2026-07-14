@@ -3002,7 +3002,7 @@ func _do_pokeball(from: Vector3, tpos: Vector3, tpeer: int) -> void:
 	Sfx.play_file(PokeballFX.SE_THROW, -4.0)
 	var mine: bool = (not _mp) or Net.local_id() == tpeer
 	Projectile.launch_point(self, from, tpos, Color(0.95, 0.3, 0.3),
-		_on_pokeball_land.bind(tpos, mine), 11.0)
+		_on_pokeball_land.bind(tpos, mine), 11.0, true)   # true = vraie pokéball
 
 
 func _on_pokeball_land(tpos: Vector3, mine: bool) -> void:

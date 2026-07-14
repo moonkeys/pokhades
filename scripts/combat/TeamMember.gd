@@ -485,17 +485,24 @@ func begin_capture() -> void:
 func _end_capture() -> void:
 	captured = false
 	if is_instance_valid(_cap_ball):
+		# La ball s'ouvre : burst d'éclat + particules, comme un envoi.
+		PokeballFX.play_burst(get_parent(), global_position + Vector3(0, 0.9, 0))
 		_cap_ball.queue_free()
 		_cap_ball = null
+	# Le Pokémon ressort de la ball.
+	sprite.scale    = Vector3.ONE
+	sprite.modulate = Color.WHITE
 	capture_changed.emit(false, 0.0, is_active)
 
 
 func _capture_process(delta: float) -> void:
-	# Bulle qui tremble/pulse.
+	# La pokéball TREMBLE tant que le Pokémon est dedans (bascule gauche/droite
+	# + petit sursaut), comme une capture en cours.
 	if is_instance_valid(_cap_ball):
-		var p := sin(Time.get_ticks_msec() * 0.02) * 0.06
-		_cap_ball.scale = Vector3.ONE * (1.0 + p)
-		_cap_ball.position.x = sin(Time.get_ticks_msec() * 0.03) * 0.08
+		var t := float(Time.get_ticks_msec()) * 0.006
+		_cap_ball.rotation_degrees.z = sin(t) * 20.0
+		_cap_ball.position.x = sin(t * 1.3) * 0.07
+		_cap_ball.position.y = 0.9 + absf(sin(t * 2.0)) * 0.05
 
 	# Drain de PV.
 	_cap_dmg_accum += float(pokemon_instance.max_hp) * CAP_DRAIN_PER_SEC * delta
@@ -530,21 +537,29 @@ func _capture_process(delta: float) -> void:
 	capture_changed.emit(true, _cap_escape, is_active)
 
 
+## Vraie séquence de CAPTURE (planches Essentials) : le Pokémon est ASPIRÉ
+## dans la pokéball (il rétrécit et s'efface), la ball se referme et TREMBLE
+## tant qu'il est dedans (cf. _capture_process). L'évasion la fait éclater
+## (burst dans _end_capture). Remplace l'ancienne bulle rouge translucide.
 func _spawn_capture_ball() -> void:
-	_cap_ball = MeshInstance3D.new()
-	var sm := SphereMesh.new()
-	sm.radius = 0.85
-	sm.height = 1.7
-	_cap_ball.mesh = sm
-	_cap_ball.position = Vector3(0, 1.0, 0)
-	var m := StandardMaterial3D.new()
-	m.albedo_color  = Color(1.0, 0.32, 0.30, 0.34)
-	m.transparency  = BaseMaterial3D.TRANSPARENCY_ALPHA
-	m.shading_mode  = BaseMaterial3D.SHADING_MODE_UNSHADED
-	m.cull_mode     = BaseMaterial3D.CULL_DISABLED
-	_cap_ball.material_override = m
-	_cap_ball.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(_cap_ball)
+	# Aspiration : le sprite rétrécit vers le point de la ball puis s'efface.
+	var tw := sprite.create_tween().set_parallel(true)
+	tw.tween_property(sprite, "scale", Vector3.ONE * 0.15, 0.20).set_ease(Tween.EASE_IN)
+	tw.tween_property(sprite, "modulate:a", 0.0, 0.20)
+
+	var ball := Sprite3D.new()
+	ball.texture        = load(PokeballFX.TEX_BALL)
+	ball.hframes        = 8
+	ball.frame          = 0
+	ball.billboard      = BaseMaterial3D.BILLBOARD_ENABLED
+	ball.pixel_size     = 0.032
+	ball.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	ball.no_depth_test  = true
+	ball.shaded         = false
+	ball.position       = Vector3(0, 0.9, 0)
+	add_child(ball)
+	_cap_ball = ball
+	Sfx.play_file(PokeballFX.SE_DROP, -4.0)
 
 ## Applique le statut courant : dégâts périodiques, gestion du logo flottant.
 ## Retourne true si le Pokémon est bloqué (sommeil/gel) → pas d'action.

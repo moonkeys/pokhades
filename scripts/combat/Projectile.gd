@@ -37,8 +37,10 @@ static func launch(parent: Node, from: Vector3, target: Node3D, tint: Color,
 ## du lancer) et non la cible vivante — s'écarter permet de l'éviter. Le
 ## `on_hit` (à l'arrivée sur le point) décide de l'effet (capture si le joueur
 ## est encore là, sinon coup dans le vide).
+## `ball` : rend une VRAIE pokéball qui tournoie (sprite Essentials) au lieu de
+## l'orbe lumineuse — pour les lancers des dresseurs de village.
 static func launch_point(parent: Node, from: Vector3, point: Vector3, tint: Color,
-		on_hit: Callable, speed: float = 14.0) -> void:
+		on_hit: Callable, speed: float = 14.0, ball: bool = false) -> void:
 	if not is_instance_valid(parent):
 		return
 	var p := Projectile.new()
@@ -46,12 +48,19 @@ static func launch_point(parent: Node, from: Vector3, point: Vector3, tint: Colo
 	p._target_pos = point + Vector3(0, 0.8, 0)
 	p._on_hit = on_hit
 	p._speed  = speed
+	p._ball   = ball
 	p.position = from + Vector3(0, 0.9, 0)
 	p._build(tint)
 	parent.add_child(p)
 
 
+var _ball: bool = false
+
+
 func _build(tint: Color) -> void:
+	if _ball:
+		_build_pokeball()
+		return
 	# Orbe : deux disques doux superposés (cœur clair + halo teinté)
 	var halo := Sprite3D.new()
 	halo.texture    = CombatVFX._get_soft_texture()
@@ -68,6 +77,27 @@ func _build(tint: Color) -> void:
 	core.pixel_size = 0.005
 	core.position.z = 0.01
 	add_child(core)
+
+
+## VRAIE pokéball (planche Essentials, 8 frames) qui tournoie en vol — au lieu
+## d'un simple point rouge (retour joueurs).
+func _build_pokeball() -> void:
+	var s := Sprite3D.new()
+	s.texture        = load(PokeballFX.TEX_BALL)
+	s.hframes        = 8
+	s.frame          = 0
+	s.billboard      = BaseMaterial3D.BILLBOARD_ENABLED
+	s.pixel_size     = 0.030
+	s.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	s.no_depth_test  = true
+	s.shaded         = false
+	add_child(s)
+	# Rotation continue du strip (la ball tournoie pendant tout le vol)
+	var tw := s.create_tween().set_loops()
+	tw.tween_method(func(f: float) -> void:
+		if is_instance_valid(s):
+			s.frame = int(f) % 8
+	, 0.0, 8.0, 0.4)
 
 
 func _process(delta: float) -> void:
