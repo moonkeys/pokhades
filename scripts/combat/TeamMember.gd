@@ -414,6 +414,7 @@ func _capture_process(delta: float) -> void:
 		_cap_dmg_accum -= float(d)
 		pokemon_instance.current_hp = maxi(0, pokemon_instance.current_hp - d)
 		hp_changed.emit(pokemon_instance.hp_ratio())
+		net_broadcast_hp()   # les alliés voient les PV baisser en multijoueur
 		if pokemon_instance.is_fainted():
 			_end_capture()
 			_play_faint_anim()

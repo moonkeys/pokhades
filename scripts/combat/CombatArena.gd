@@ -2806,14 +2806,17 @@ func _spawn_village_trainers() -> void:
 			t.queue_free()
 	_village_trainers.clear()
 	_village_throw_cd = 3.0
-	if _mp or _cave_active or not is_instance_valid(_map):
+	if _cave_active or not is_instance_valid(_map):
 		return
 	if _current_theme() != MapGenerator.MapTheme.VILLAGE:
 		return
 	if _is_shop_room(RunManager.inst().rooms_cleared) or _is_boss_room(RunManager.inst().rooms_cleared):
 		return
+	# Placement DÉTERMINISTE (graine de zone partagée en MP) → mêmes dresseurs
+	# aux mêmes cases sur tous les pairs.
+	var room := RunManager.inst().rooms_cleared
 	var rng := RandomNumberGenerator.new()
-	rng.seed = hash(RunManager.inst().rooms_cleared) ^ 0x7A11
+	rng.seed = (Net.zone_seed(room) if Net.in_run else hash(room)) ^ 0x7A11
 	var count := rng.randi_range(2, 3)
 	var sz: Vector2i = _map.get_map_cell_size()
 	var placed := 0
@@ -2832,21 +2835,24 @@ func _spawn_village_trainers() -> void:
 		placed += 1
 
 
-## Cadence de lancer : toutes les ~4-7 s, un dresseur au hasard jette une
-## pokéball sur le membre actif. Touché → begin_capture() (QTE d'évasion).
+const CAPTURE_HIT_RADIUS := 1.7   # esquive : s'écarter de + de ~1.7 u évite la ball
+
+## Cadence de lancer : toutes les ~4-7 s, un dresseur vise un joueur. La
+## DÉCISION est prise par l'hôte (ou en solo) ; la pokéball vise un POINT
+## FIXE (position au lancer) → esquivable en se déplaçant. Touché (encore à
+## portée à l'impact) → begin_capture() sur le membre LOCAL ciblé.
 func _update_village_trainers(delta: float) -> void:
 	if _village_trainers.is_empty() or _cave_active or _advancing:
 		return
-	if _active_index >= _team.size() or not is_instance_valid(_team[_active_index]):
-		return
-	var target = _team[_active_index]
-	if target.captured or target.pokemon_instance.is_fainted():
-		return
+	if _mp and not multiplayer.is_server():
+		return   # seul l'hôte décide des lancers (déterminisme + autorité)
 	_village_throw_cd -= delta
 	if _village_throw_cd > 0.0:
 		return
 	_village_throw_cd = randf_range(4.0, 7.0)
-	# Dresseur valide le plus proche pour un lancer lisible.
+	var target: Node = _pick_capture_target()
+	if target == null:
+		return
 	var thrower: Node3D = null
 	for t in _village_trainers:
 		if is_instance_valid(t):
@@ -2855,14 +2861,71 @@ func _update_village_trainers(delta: float) -> void:
 				thrower = t
 	if thrower == null:
 		return
+	var from: Vector3 = thrower.global_position + Vector3(0, 1.2, 0)
+	var tpos: Vector3 = target.global_position
+	var tpeer: int    = _member_peer(target)
+	if _mp:
+		_net_pokeball.rpc(from, tpos, tpeer)
+	else:
+		_do_pokeball(from, tpos, tpeer)
+
+
+## Cible éligible (vivante, non capturée) : en solo le membre actif ; en MP
+## n'importe quel joueur (chaque P%d est contrôlé par son pair).
+func _pick_capture_target() -> Node:
+	var pool: Array = []
+	if _mp:
+		for m in _team:
+			if is_instance_valid(m) and not m.captured and not m.pokemon_instance.is_fainted():
+				pool.append(m)
+	elif _active_index < _team.size():
+		var m = _team[_active_index]
+		if is_instance_valid(m) and not m.captured and not m.pokemon_instance.is_fainted():
+			pool.append(m)
+	if pool.is_empty():
+		return null
+	return pool[randi() % pool.size()]
+
+
+func _member_peer(member) -> int:
+	if not _mp:
+		return Net.local_id()
+	return member.remote_peer if member.remote_peer != 0 else Net.local_id()
+
+
+func _local_active_member() -> Node:
+	if not _mp:
+		return _team[_active_index] if _active_index < _team.size() else null
+	for m in _team:
+		if is_instance_valid(m) and m.remote_peer == 0:
+			return m
+	return null
+
+
+## Lance la pokéball (visuel identique partout) ; seul le pair CIBLÉ résout la
+## capture sur SON membre local (QTE + PV locaux). call_local → l'hôte joue
+## aussi le visuel/la résolution s'il est la cible.
+@rpc("authority", "call_local", "reliable")
+func _net_pokeball(from: Vector3, tpos: Vector3, tpeer: int) -> void:
+	_do_pokeball(from, tpos, tpeer)
+
+
+func _do_pokeball(from: Vector3, tpos: Vector3, tpeer: int) -> void:
 	Sfx.play_file(PokeballFX.SE_THROW, -4.0)
-	Projectile.launch(self, thrower.global_position + Vector3(0, 1.2, 0), target,
-		Color(0.95, 0.3, 0.3), _capture_target.bind(target), 11.0)
+	var mine: bool = (not _mp) or Net.local_id() == tpeer
+	Projectile.launch_point(self, from, tpos, Color(0.95, 0.3, 0.3),
+		_on_pokeball_land.bind(tpos, mine), 11.0)
 
 
-func _capture_target(member) -> void:
-	if is_instance_valid(member):
-		member.begin_capture()
+func _on_pokeball_land(tpos: Vector3, mine: bool) -> void:
+	if mine:
+		var m = _local_active_member()
+		if is_instance_valid(m) and not m.captured and not m.pokemon_instance.is_fainted() \
+				and m.global_position.distance_to(tpos) < CAPTURE_HIT_RADIUS:
+			m.begin_capture()
+			return
+	# Esquivé / pas la cible : la ball rebondit dans le vide.
+	Sfx.play_file(PokeballFX.SE_DROP, -7.0)
 
 
 @rpc("any_peer", "call_remote", "reliable")

@@ -10,6 +10,8 @@ const LIFETIME  := 3.0
 const HIT_DIST  := 0.55
 
 var _target:  Node3D
+var _target_pos: Vector3 = Vector3.ZERO
+var _use_point:  bool    = false   # vise un POINT fixe (esquivable) au lieu d'une cible vivante
 var _on_hit:  Callable
 var _speed:   float = 14.0
 var _age:     float = 0.0
@@ -24,6 +26,24 @@ static func launch(parent: Node, from: Vector3, target: Node3D, tint: Color,
 		return
 	var p := Projectile.new()
 	p._target = target
+	p._on_hit = on_hit
+	p._speed  = speed
+	p.position = from + Vector3(0, 0.9, 0)
+	p._build(tint)
+	parent.add_child(p)
+
+
+## Variante ESQUIVABLE : vise un POINT fixe (ex : position du joueur au moment
+## du lancer) et non la cible vivante — s'écarter permet de l'éviter. Le
+## `on_hit` (à l'arrivée sur le point) décide de l'effet (capture si le joueur
+## est encore là, sinon coup dans le vide).
+static func launch_point(parent: Node, from: Vector3, point: Vector3, tint: Color,
+		on_hit: Callable, speed: float = 14.0) -> void:
+	if not is_instance_valid(parent):
+		return
+	var p := Projectile.new()
+	p._use_point  = true
+	p._target_pos = point + Vector3(0, 0.8, 0)
 	p._on_hit = on_hit
 	p._speed  = speed
 	p.position = from + Vector3(0, 0.9, 0)
@@ -52,10 +72,10 @@ func _build(tint: Color) -> void:
 
 func _process(delta: float) -> void:
 	_age += delta
-	if _age > LIFETIME or not is_instance_valid(_target):
+	if _age > LIFETIME or (not _use_point and not is_instance_valid(_target)):
 		queue_free()
 		return
-	var goal: Vector3 = _target.global_position + Vector3(0, 0.8, 0)
+	var goal: Vector3 = _target_pos if _use_point else _target.global_position + Vector3(0, 0.8, 0)
 	var to := goal - global_position
 	if to.length() <= maxf(HIT_DIST, _speed * delta):
 		if _on_hit.is_valid():
