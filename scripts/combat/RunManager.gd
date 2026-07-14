@@ -58,6 +58,10 @@ func is_final_boss_room(room: int) -> bool:
 var _biome_sequence: Array[int] = []
 var _seq_run_id: int = -1   # run_count pour lequel la séquence a été construite
 
+## Test de biome (menu Dracolosse) : si >= 0, TOUTE la run est forcée sur ce
+## biome (tous les actes). Remis à -1 par un lancement de run normal.
+var test_biome_override: int = -1
+
 
 func start_run(_start_idx: int = 0) -> void:
 	current_zone_idx = 0
@@ -103,6 +107,14 @@ func _build_biome_sequence() -> void:
 		rng.randomize()
 	_biome_sequence.clear()
 	_champion_sequence.clear()
+	# Test de biome (menu Dracolosse) : tous les actes sur le biome forcé, avec
+	# son champion assorti — pour juger le rendu d'un biome de bout en bout.
+	if test_biome_override >= 0:
+		for act in ACTS:
+			_biome_sequence.append(test_biome_override)
+			var tc: Array = (PokePools.BIOME_CHAMPIONS.get(test_biome_override, ["Blanche"]) as Array)
+			_champion_sequence.append(tc[rng.randi() % tc.size()] if not tc.is_empty() else "Blanche")
+		return
 	var prev := -1
 	for act in ACTS:
 		var pool := _pool_for_act(act).duplicate()

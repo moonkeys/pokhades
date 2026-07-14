@@ -613,9 +613,10 @@ func _open_run_menu() -> void:
 		_blocked   = false
 
 	var defs: Array = [
-		{"txt": "🗡  Partir seul",              "y": 260, "accent": true},
-		{"txt": "⚔  Multijoueur (jusqu'à 6)",  "y": 340, "accent": true},
-		{"txt": "✕  Annuler",                   "y": 420, "accent": false},
+		{"txt": "🗡  Partir seul",              "y": 230, "accent": true},
+		{"txt": "⚔  Multijoueur (jusqu'à 6)",  "y": 300, "accent": true},
+		{"txt": "🧪  Tester un biome",          "y": 370, "accent": false},
+		{"txt": "✕  Annuler",                   "y": 440, "accent": false},
 	]
 	for i in defs.size():
 		var d: Dictionary = defs[i]
@@ -643,7 +644,27 @@ func _open_run_menu() -> void:
 			match idx:
 				0: _start_run()
 				1: _open_multiplayer_lobby()
+				2: _open_biome_test()
 		)
+
+
+## Menu de test de biome (Dracolosse) — choisir un biome lance une run solo
+## forcée dessus (cf. RunManager.test_biome_override).
+func _open_biome_test() -> void:
+	_blocked = true
+	var screen := BiomeTestScreen.new()
+	add_child(screen)
+	_subscreen = screen
+	screen.biome_chosen.connect(func(theme: int) -> void:
+		_subscreen = null
+		screen.queue_free()
+		_start_run(theme)
+	, CONNECT_ONE_SHOT)
+	screen.closed.connect(func() -> void:
+		screen.queue_free()
+		_subscreen = null
+		_blocked   = false
+	, CONNECT_ONE_SHOT)
 
 
 func _open_multiplayer_lobby() -> void:
@@ -658,18 +679,22 @@ func _open_multiplayer_lobby() -> void:
 	, CONNECT_ONE_SHOT)
 
 
-func _start_run() -> void:
+## `force_biome` >= 0 : run de TEST forcée sur ce biome (menu Dracolosse) —
+## on saute le contrôle de poids pour ne rien bloquer. -1 : run normale.
+func _start_run(force_biome: int = -1) -> void:
 	if GameManager.hub_team.is_empty():
 		_show_coming_soon("Parle d'abord à Ko\npour composer ton équipe !")
 		return
-	# Système de poids/build (simple) : Pokémon + objets tenus + CT
-	# équipées ne doivent pas dépasser le plafond — sinon la run ne
-	# démarre pas (cap augmentable à la Boutique d'Améliorations).
-	var w   := GameManager.compute_team_weight()
-	var cap := GameManager.build_weight_cap
-	if w > cap:
-		_show_coming_soon("Poids d'équipe trop élevé !\n%d / %d — allège ta compo\nou augmente le plafond\n(Boutique d'Améliorations)." % [w, cap])
-		return
+	if force_biome < 0:
+		# Système de poids/build (simple) : Pokémon + objets tenus + CT
+		# équipées ne doivent pas dépasser le plafond — sinon la run ne
+		# démarre pas (cap augmentable à la Boutique d'Améliorations).
+		var w   := GameManager.compute_team_weight()
+		var cap := GameManager.build_weight_cap
+		if w > cap:
+			_show_coming_soon("Poids d'équipe trop élevé !\n%d / %d — allège ta compo\nou augmente le plafond\n(Boutique d'Améliorations)." % [w, cap])
+			return
+	RunManager.inst().test_biome_override = force_biome
 	GameManager.run_count += 1
 	get_tree().change_scene_to_file("res://scenes/combat/CombatArena.tscn")
 
