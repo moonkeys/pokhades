@@ -66,6 +66,7 @@ func build(map: Node2D) -> void:
 	if _map.arena_mode:
 		_build_cave_kit_arena()
 		_build_cave_crystals()
+		_build_cave_decor()
 	_build_collisions()
 	_build_border_walls()
 
@@ -108,6 +109,32 @@ func _place_cave_wall(x: float, z: float, rot_y: float) -> void:
 	w.position   = Vector3(x, 0.0, z)
 	w.rotation.y = rot_y
 	add_child(w)
+
+
+## Décor de grotte (remplace l'herbe/fleurs retirées) : grappes de champignons
+## (touche de vie/lumière) + quelques petits rochers gris, semés sur des cases
+## marchables. Les cristaux lumineux (_build_cave_crystals) complètent l'ambiance.
+func _build_cave_decor() -> void:
+	var sz: Vector2i = _map.get_map_cell_size()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(sz) + 321
+	var placed := 0
+	var attempts := 0
+	while placed < 16 and attempts < 320:
+		attempts += 1
+		var cell := Vector2i(rng.randi_range(4, sz.x - 5), rng.randi_range(4, sz.y - 5))
+		if not _map.is_valid_spawn_cell(cell):
+			continue
+		if rng.randf() < 0.6:
+			var f: String = KitProps.MUSHROOMS[rng.randi() % KitProps.MUSHROOMS.size()]
+			var m := KitProps.instance(f)
+			m.scale = Vector3.ONE * rng.randf_range(1.6, 2.8)
+			m.rotation.y = rng.randf() * TAU
+			m.position = Vector3(cell.x + 0.5, 0.0, cell.y + 0.5)
+			add_child(m)
+		else:
+			_add_kit_rock_small(cell)
+		placed += 1
 
 
 ## Grappes de cristaux lumineux (arène de grotte uniquement) — spikes
@@ -620,6 +647,8 @@ func _is_flat_decor(atlas: Vector2i) -> bool:
 # de croix de quads, juste avec de vrais volumes à la place.
 
 func _build_grass() -> void:
+	if _map.arena_mode:
+		return   # grotte : pas d'herbe (cf. _build_cave_decor pour les props)
 	# Haute herbe (tile_tg) : TOUFFES BUISSONNEUSES pixel-art (cf. GrassPatch,
 	# style de la référence utilisateur — brins arqués, variante à cœur creux),
 	# c'est la zone de FURTIVITÉ (joueur éclairci, ennemis invisibles).
@@ -671,6 +700,8 @@ const _PIXEL_GRASS_TINTS := {
 const _PIXEL_GRASS_MAX := 5000   # plafond d'instances (perf)
 
 func _build_pixel_grass() -> void:
+	if _map.arena_mode:
+		return   # grotte : sol rocheux, pas de tapis d'herbe
 	var sz: Vector2i = _map.get_map_cell_size()
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash(sz) * 31 + 7
@@ -725,6 +756,8 @@ func _grass_tints_for_theme() -> Dictionary:
 ## de teintes dans un même MultiMesh). Le kit n'a pas de fleur blanche
 ## dédiée : on réutilise la forme "jaune" en reteintant son matériau pétale.
 func _build_flowers() -> void:
+	if _map.arena_mode:
+		return   # grotte : pas de fleurs
 	_build_kit_flora_layer(_map.tile_fleur_rouge, ["flower_redA.glb", "flower_redB.glb", "flower_redC.glb"], 2.1)
 	_build_kit_flora_layer(_map.tile_fleur_violette, ["flower_purpleA.glb", "flower_purpleB.glb", "flower_purpleC.glb"], 2.1)
 	_build_kit_flora_layer(_map.tile_fleur_blanche,
@@ -815,6 +848,11 @@ const KIT_CLIFF_QUARTER := "cliff_blockQuarter_rock.glb"   # 1×0.25×1 — pali
 ## avait son ouverture orientée côté caché, invisible en jeu.
 func _build_cliff_formations() -> void:
 	var colors := _cliff_colors_for_theme()
+	# Grotte : les blocs (dessus "herbe" vert par thème ROCKY) servent de
+	# fond/collision derrière les panneaux cave-kit — retintés roche sombre
+	# pour supprimer tout vert (retour joueurs : pas de vert dans les grottes).
+	if _map.arena_mode:
+		colors = {"grass": Color(0.28, 0.26, 0.29), "dirt": Color(0.24, 0.22, 0.25)}
 	var full_entries: Array    = []   # [{"cell":Vector2i,"y":float}, ...]
 	var half_entries: Array    = []
 	var quarter_entries: Array = []
