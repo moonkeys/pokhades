@@ -18,6 +18,30 @@ var pokemon_instance: PokemonInstance
 var is_champion: bool = false   # élite de salle : plus grand, anneau rouge, meilleur butin
 var is_boss:     bool = false   # boss de palier : encore plus grand, anneau doré
 var is_demi_boss: bool = false  # demi-boss de grotte : aura rouge, débloque une espèce
+
+# ── ARCHÉTYPES DE DÉPLACEMENT ────────────────────────────────────────
+# Avant, TOUS les ennemis avaient le même comportement : foncer sur le joueur
+# et s'arrêter à portée — des vagues denses d'ennemis identiques qui
+# s'agglutinent. Chaque ennemi adopte désormais une tactique :
+#   CHASER     : fonce et frappe (défaut, le gros des troupes)
+#   KITER      : tireur — garde ses distances, recule si on l'approche
+#   CHARGER    : télégraphe long puis RUÉE rapide (esquivable)
+#   SKIRMISHER : frappe puis se replie brièvement (harcèlement)
+# Boss/champions restent CHASER : lisibles et prévisibles.
+enum Behavior { CHASER, KITER, CHARGER, SKIRMISHER }
+var behavior: int = Behavior.CHASER
+
+const KITE_MIN := 5.0            # le tireur recule en deçà de cette distance
+const SKIRMISH_RETREAT_TIME := 0.9
+const SKIRMISH_RETREAT_DIST := 4.5
+const CHARGE_RANGE := 11.0       # distance d'où le chargeur peut s'élancer
+const CHARGE_SPEED := 15.0
+const CHARGE_TIME  := 0.35
+
+var _retreat_timer:  float = 0.0
+var _charge_timer:   float = 0.0
+var _charge_dir:     Vector3 = Vector3.ZERO
+var _charge_pending: bool = false
 var _attack_timer: float = 0.0
 var _current_anim: String = "idle"
 var _action_lock:  float = 0.0   # verrou d'anim attaque/dégâts (cf. _update_anim)
@@ -110,6 +134,20 @@ func setup(instance: PokemonInstance, champion: bool = false, boss: bool = false
 	is_champion = champion or boss or demi_boss
 	is_boss = boss
 	is_demi_boss = demi_boss
+
+	# Archétype : les tireurs kitent ; les boss/champions restent des CHASER
+	# lisibles ; le reste se répartit chasseur / chargeur / harceleur (tiré par
+	# ESPÈCE → un Racaillou se joue toujours pareil, c'est apprenable).
+	if _ranged_move != null:
+		behavior = Behavior.KITER
+	elif is_champion:
+		behavior = Behavior.CHASER
+	else:
+		match abs(hash(instance.data.id)) % 5:
+			0: behavior = Behavior.CHARGER
+			1: behavior = Behavior.SKIRMISHER
+			_: behavior = Behavior.CHASER
+
 	if is_champion:
 		var ring_col := Color(1.0, 0.25, 0.15, 0.55)
 		if boss:      ring_col = Color(1.0, 0.78, 0.15, 0.65)
@@ -308,26 +346,108 @@ func _physics_process(delta: float) -> void:
 			_finish_windup()
 		return
 
+	# RUÉE du chargeur : il glisse vite en ligne droite ; percuter la cible
+	# déclenche le coup. Comme le recul, l'IA ne pilote pas pendant ce temps.
+	if _charge_timer > 0.0:
+		_charge_timer -= delta
+		velocity = _charge_dir * CHARGE_SPEED * pokemon_instance.status_speed_mult()
+		_update_anim(Vector2(velocity.x, velocity.z))
+		move_and_slide()
+		position.y = _map.get_height_at_world(global_position) if is_instance_valid(_map) else 0.0
+		var hit := _find_target()
+		if is_instance_valid(hit) \
+				and global_position.distance_to(hit.global_position) <= ATTACK_RANGE * 0.9:
+			_charge_timer = 0.0
+			_do_attack(hit)
+		return
+
 	var target := _find_target()
 	if not is_instance_valid(target):
 		return
 
 	var dist := global_position.distance_to(target.global_position)
 
+	match behavior:
+		Behavior.KITER:      _move_kiter(target, dist, delta)
+		Behavior.CHARGER:    _move_charger(target, dist, delta)
+		Behavior.SKIRMISHER: _move_skirmisher(target, dist, delta)
+		_:                   _move_chaser(target, dist, delta)
+
+
+## Avance vers `pos` (via l'A* de la map si la vue est bouchée).
+func _steer_to(pos: Vector3, delta: float, speed_mult: float = 1.0) -> void:
+	var steer_pos := _get_steer_target(pos, delta)
+	var dir := (steer_pos - global_position)
+	dir.y = 0.0
+	dir = dir.normalized()
+	velocity = dir * SPEED * speed_mult * pokemon_instance.status_speed_mult()
+	_update_anim(Vector2(velocity.x, velocity.z))
+	move_and_slide()
+	position.y = _map.get_height_at_world(global_position) if is_instance_valid(_map) else 0.0
+
+
+## S'éloigne en ligne droite de `pos` (pas d'A* : on fuit, on ne contourne pas).
+func _flee_from(pos: Vector3, speed_mult: float = 1.0) -> void:
+	var away := global_position - pos
+	away.y = 0.0
+	away = away.normalized() if away.length() > 0.01 else Vector3(1, 0, 0)
+	velocity = away * SPEED * speed_mult * pokemon_instance.status_speed_mult()
+	_update_anim(Vector2(velocity.x, velocity.z))
+	move_and_slide()
+	position.y = _map.get_height_at_world(global_position) if is_instance_valid(_map) else 0.0
+
+
+func _hold_and_attack(target: CharacterBody3D) -> void:
+	velocity = Vector3.ZERO
+	_update_anim(Vector2.ZERO)
+	if _windup <= 0.0 and _attack_timer <= 0.0:
+		_start_windup(target)
+
+
+func _move_chaser(target: CharacterBody3D, dist: float, delta: float) -> void:
 	if dist > _attack_range():
-		var steer_pos := _get_steer_target(target.global_position, delta)
-		var dir := (steer_pos - global_position)
-		dir.y = 0.0
-		dir = dir.normalized()
-		velocity = dir * SPEED * pokemon_instance.status_speed_mult()
-		_update_anim(Vector2(velocity.x, velocity.z))
-		move_and_slide()
-		position.y = _map.get_height_at_world(global_position) if is_instance_valid(_map) else 0.0
+		_steer_to(target.global_position, delta)
 	else:
-		velocity = Vector3.ZERO
-		_update_anim(Vector2.ZERO)
-		if _windup <= 0.0 and _attack_timer <= 0.0:
-			_start_windup(target)
+		_hold_and_attack(target)
+
+
+## Tireur : maintient une bande de distance — recule si on le colle, avance
+## s'il est trop loin, tire quand il est bien placé.
+func _move_kiter(target: CharacterBody3D, dist: float, delta: float) -> void:
+	if dist < KITE_MIN:
+		_flee_from(target.global_position, 0.95)
+	elif dist > _attack_range():
+		_steer_to(target.global_position, delta)
+	else:
+		_hold_and_attack(target)
+
+
+## Chargeur : au corps à corps il frappe normalement ; à moyenne distance il
+## TÉLÉGRAPHE longuement (gros anneau) puis s'élance — c'est esquivable.
+func _move_charger(target: CharacterBody3D, dist: float, delta: float) -> void:
+	if dist <= ATTACK_RANGE:
+		_hold_and_attack(target)
+	elif dist < CHARGE_RANGE and _windup <= 0.0 and _attack_timer <= 0.0:
+		_charge_pending = true
+		_start_windup(target, 2.2)   # anticipation longue = lisible
+	else:
+		_steer_to(target.global_position, delta, 0.85)
+
+
+## Harceleur : vif, frappe puis se replie un instant avant de revenir.
+func _move_skirmisher(target: CharacterBody3D, dist: float, delta: float) -> void:
+	if _retreat_timer > 0.0:
+		_retreat_timer -= delta
+		if dist < SKIRMISH_RETREAT_DIST:
+			_flee_from(target.global_position, 1.1)
+		else:
+			velocity = Vector3.ZERO
+			_update_anim(Vector2.ZERO)
+		return
+	if dist > ATTACK_RANGE:
+		_steer_to(target.global_position, delta, 1.15)
+	else:
+		_hold_and_attack(target)
 
 
 var _status_icon: Label3D = null
@@ -484,9 +604,10 @@ var _windup_target: CharacterBody3D = null
 var _windup_ring: MeshInstance3D = null
 
 
-func _start_windup(target: CharacterBody3D) -> void:
+## `mult` allonge l'anticipation (le chargeur télégraphe 2× plus longtemps).
+func _start_windup(target: CharacterBody3D, mult: float = 1.0) -> void:
 	_windup_target = target
-	_windup = WINDUP_TIME * (1.6 if is_boss else (1.25 if is_champion else 1.0))
+	_windup = WINDUP_TIME * (1.6 if is_boss else (1.25 if is_champion else 1.0)) * mult
 
 	# Contraction + montée de blanc pendant toute l'anticipation
 	var tw := create_tween()
@@ -526,15 +647,34 @@ func _finish_windup() -> void:
 
 	var target := _windup_target
 	_windup_target = null
+
+	# Chargeur : la ruée part MÊME DE LOIN (c'est tout son principe) — donc
+	# avant le test de portée ci-dessous.
+	if _charge_pending:
+		_charge_pending = false
+		if is_instance_valid(target):
+			var d := target.global_position - global_position
+			d.y = 0.0
+			if d.length() > 0.01:
+				_charge_dir   = d.normalized()
+				_charge_timer = CHARGE_TIME
+				_attack_timer = ATTACK_COOLDOWN
+		return
+
 	# La cible s'est échappée pendant l'anticipation → le coup RATE
 	# (petit lunge dans le vide pour que l'esquive se lise à l'écran).
+	# BUG CORRIGÉ : on comparait à ATTACK_RANGE (2.8) en dur, alors qu'un
+	# TIREUR engage depuis RANGED_RANGE (6.5) — son coup était donc TOUJOURS
+	# compté comme raté : les attaquants spéciaux ne touchaient jamais.
 	if not is_instance_valid(target) \
-			or global_position.distance_to(target.global_position) > ATTACK_RANGE * 1.35:
+			or global_position.distance_to(target.global_position) > _attack_range() * 1.35:
 		_attack_timer = ATTACK_COOLDOWN * 0.6   # raté = récupération plus courte
 		if is_instance_valid(target):
 			_play_attack_lunge(target.global_position)
 		return
 	_do_attack(target)
+	if behavior == Behavior.SKIRMISHER:
+		_retreat_timer = SKIRMISH_RETREAT_TIME   # frappe → repli
 
 
 # Move spécial du set (le cas échéant) — l'ennemi devient un TIREUR :
