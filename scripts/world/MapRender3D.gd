@@ -64,9 +64,50 @@ func build(map: Node2D) -> void:
 	_build_flowers()
 	_build_berry_trees()
 	if _map.arena_mode:
+		_build_cave_kit_arena()
 		_build_cave_crystals()
 	_build_collisions()
 	_build_border_walls()
+
+
+## Habillage de l'arène de grotte avec les modules texturés du cave-kit
+## (Kenney Modular Cave Kit) — grille native de 4 unités : dalles de sol sur
+## tout l'intérieur + panneaux muraux sur le pourtour intérieur, face tournée
+## vers le centre. Les blocs-falaises existants sont CONSERVÉS derrière (ils
+## portent la collision + bouchent les rares interstices de coin, la grille
+## de 4 u ne tombant pas juste sur les 32×22 tuiles de l'arène). Remplace le
+## rendu "cubes d'herbe rocheuse" peu convaincant (retour joueurs : grottes
+## pas belles). NOTE : échelle native (1 module = 4 u), transforms à vérifier
+## à l'œil dans l'éditeur.
+func _build_cave_kit_arena() -> void:
+	var sz: Vector2i = _map.get_map_cell_size()
+
+	# Sol : dalles 4×4 pas de 4, posées juste au-dessus du sol baké (arène
+	# plate à y=0). Le débord des bords se glisse sous les murs.
+	for cx in range(4, sz.x, 4):
+		for cz in range(4, sz.y, 4):
+			var floor_t := KitProps.instance_textured(KitProps.CAVE_KIT_DIR, KitProps.CAVE_FLOOR)
+			floor_t.position = Vector3(float(cx), 0.03, float(cz))
+			add_child(floor_t)
+
+	# Murs : pourtour intérieur (l'anneau de blocs occupe 2 cases). Face du
+	# panneau (native +Z) tournée vers l'intérieur, corps vers l'extérieur.
+	var lo := 2                 # bord intérieur de l'anneau
+	var hi_x := sz.x - 2
+	var hi_z := sz.y - 2
+	for cx in range(4, hi_x, 4):
+		_place_cave_wall(float(cx), float(lo),   0.0)      # mur nord  → face +Z
+		_place_cave_wall(float(cx), float(hi_z), PI)       # mur sud   → face -Z
+	for cz in range(4, hi_z, 4):
+		_place_cave_wall(float(lo),   float(cz), PI * 0.5)  # mur ouest → face +X
+		_place_cave_wall(float(hi_x), float(cz), -PI * 0.5) # mur est   → face -X
+
+
+func _place_cave_wall(x: float, z: float, rot_y: float) -> void:
+	var w := KitProps.instance_textured(KitProps.CAVE_KIT_DIR, KitProps.CAVE_WALL)
+	w.position   = Vector3(x, 0.0, z)
+	w.rotation.y = rot_y
+	add_child(w)
 
 
 ## Grappes de cristaux lumineux (arène de grotte uniquement) — spikes

@@ -14,7 +14,9 @@ const KIT_DIR := "res://assets/kenney_nature_kit/"
 ## SANS l'aplatissement toon de prepare_mesh (qui les rendrait unis) — cf.
 ## instance_textured(). Remplace les vieilles arches `cliff_cave_rock`.
 const CAVE_KIT_DIR := "res://assets/kenney_modular-cave-kit_1.0/Models/GLB format/"
-const CAVE_GATE_ROCK := "gate-rock.glb"   # arche de grotte rocheuse
+const CAVE_GATE_ROCK := "gate-rock.glb"   # arche de grotte rocheuse (4×4 u)
+const CAVE_FLOOR := "template-floor.glb"  # dalle plate 4×4 u, centrée, y=0
+const CAVE_WALL  := "template-wall.glb"   # panneau 4 large × 4 haut, face +Z
 
 
 ## Instancie un GLB EXTERNE (hors nature-kit plat) en gardant ses matériaux
