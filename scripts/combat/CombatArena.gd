@@ -76,6 +76,15 @@ const CAVE_BOSS_COUNT := 2
 
 var _cave_active:     bool    = false
 var _cave_portals:    Array   = []          # déclencheurs grotte / portail retour
+
+# ── Dresseurs de village (Phase 3) : déambulent et lancent des pokéballs sur
+# le joueur actif → capture (QTE). Solo pour l'instant. ────────────────
+var _village_trainers: Array = []
+var _village_throw_cd: float = 0.0
+const VILLAGE_TRAINER_SPRITES: Array = [
+	"trainer_BUGCATCHER.png", "trainer_CAMPER.png", "trainer_LASS.png",
+	"trainer_COOLTRAINER_M.png", "trainer_COOLTRAINER_F.png",
+]
 var _saved_map:       MapBase = null        # map rocailleuse détachée
 var _saved_nodes:     Array   = []          # ennemis + coffres + barrière détachés
 var _saved_alive:     int     = 0
@@ -254,6 +263,7 @@ func _process(delta: float) -> void:
 	_update_surf_state()
 	_update_surf_mount()
 	_update_lava_burn()
+	_update_village_trainers(delta)
 
 	# Multijoueur (hôte) : diffusion groupée des positions d'ennemis — un
 	# seul RPC non-fiable pour toute la meute, à NET_POS_HZ.
@@ -577,6 +587,7 @@ func _start_zone() -> void:
 	# (retour joueurs) — mais fermées (pas de halo, pas de trigger) tant que
 	# la salle n'est pas nettoyée (cf. _open_exit_doors dans _on_room_cleared).
 	_spawn_exit_doors_closed()
+	_spawn_village_trainers()
 	hud.set_wave(_zone_label())
 	hud.set_kills(0, 0)
 	await get_tree().create_timer(1.2).timeout
@@ -673,6 +684,12 @@ func _wire_team_member(member, idx: int) -> void:
 	member.dash_changed.connect(func(charges: int, max_c: int) -> void:
 		if idx == _active_index:
 			hud.update_dash(charges, max_c)
+	)
+	member.capture_changed.connect(func(capturing: bool, escape: float, active: bool) -> void:
+		# QTE affiché seulement pour le membre actuellement contrôlé.
+		hud.capture_qte(capturing, escape, active and idx == _active_index)
+		if capturing and escape == 0.0:
+			hud.notify("🚨  %s est capturé !" % member.pokemon_instance.data.name_fr.capitalize(), Color(1.0, 0.5, 0.4))
 	)
 
 
@@ -2779,6 +2796,75 @@ func _spawn_village_boss_house() -> void:
 	_cave_portals.append(area)
 
 
+## Dresseurs de village (Phase 3) — déambulent (TrainerNPC) et lancent
+## périodiquement une pokéball sur le joueur actif (cf. _update_village_
+## trainers). Solo uniquement pour l'instant (pas de sync MP). Libérés à
+## chaque nouvelle zone / gelés dans _save_overworld comme le reste.
+func _spawn_village_trainers() -> void:
+	for t in _village_trainers:
+		if is_instance_valid(t):
+			t.queue_free()
+	_village_trainers.clear()
+	_village_throw_cd = 3.0
+	if _mp or _cave_active or not is_instance_valid(_map):
+		return
+	if _current_theme() != MapGenerator.MapTheme.VILLAGE:
+		return
+	if _is_shop_room(RunManager.inst().rooms_cleared) or _is_boss_room(RunManager.inst().rooms_cleared):
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(RunManager.inst().rooms_cleared) ^ 0x7A11
+	var count := rng.randi_range(2, 3)
+	var sz: Vector2i = _map.get_map_cell_size()
+	var placed := 0
+	var attempts := 0
+	while placed < count and attempts < 120:
+		attempts += 1
+		var cell := Vector2i(rng.randi_range(6, sz.x - 7), rng.randi_range(6, sz.y - 7))
+		if not _map.is_valid_spawn_cell(cell):
+			continue
+		var t := TrainerNPC.new()
+		t.position = _map.cell_to_world3(cell)
+		add_child(t)
+		t.setup("res://Pokemon Essentials v21.1 2023-07-30/Graphics/Characters/%s"
+			% VILLAGE_TRAINER_SPRITES[rng.randi() % VILLAGE_TRAINER_SPRITES.size()])
+		_village_trainers.append(t)
+		placed += 1
+
+
+## Cadence de lancer : toutes les ~4-7 s, un dresseur au hasard jette une
+## pokéball sur le membre actif. Touché → begin_capture() (QTE d'évasion).
+func _update_village_trainers(delta: float) -> void:
+	if _village_trainers.is_empty() or _cave_active or _advancing:
+		return
+	if _active_index >= _team.size() or not is_instance_valid(_team[_active_index]):
+		return
+	var target = _team[_active_index]
+	if target.captured or target.pokemon_instance.is_fainted():
+		return
+	_village_throw_cd -= delta
+	if _village_throw_cd > 0.0:
+		return
+	_village_throw_cd = randf_range(4.0, 7.0)
+	# Dresseur valide le plus proche pour un lancer lisible.
+	var thrower: Node3D = null
+	for t in _village_trainers:
+		if is_instance_valid(t):
+			if thrower == null or t.global_position.distance_to(target.global_position) \
+					< thrower.global_position.distance_to(target.global_position):
+				thrower = t
+	if thrower == null:
+		return
+	Sfx.play_file(PokeballFX.SE_THROW, -4.0)
+	Projectile.launch(self, thrower.global_position + Vector3(0, 1.2, 0), target,
+		Color(0.95, 0.3, 0.3), _capture_target.bind(target), 11.0)
+
+
+func _capture_target(member) -> void:
+	if is_instance_valid(member):
+		member.begin_capture()
+
+
 @rpc("any_peer", "call_remote", "reliable")
 func _request_enter_cave(entrance: Vector2i) -> void:
 	if multiplayer.is_server():
@@ -2860,6 +2946,12 @@ func _save_overworld() -> void:
 	for p in _cave_portals:
 		if is_instance_valid(p): p.queue_free()
 	_cave_portals.clear()
+
+	# Dresseurs de village : gelés avec le reste de l'overworld.
+	for t in _village_trainers:
+		if is_instance_valid(t) and t.get_parent() == self:
+			remove_child(t)
+			_saved_nodes.append(t)
 
 	_saved_map = _map
 	remove_child(_saved_map)

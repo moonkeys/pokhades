@@ -726,6 +726,58 @@ func announce_zone(zone_name: String) -> void:
 	tw.chain().tween_callback(root.queue_free)
 
 
+# ── QTE de capture (dresseurs de village) — barre centrale ────────────
+# Affichée quand le membre ACTIF est capturé : marteler ← → pour remplir la
+# barre d'évasion avant que les PV ne tombent. Masquée sinon.
+var _capture_qte: Control = null
+var _capture_fill: ColorRect = null
+
+func capture_qte(capturing: bool, escape: float, active: bool) -> void:
+	# On n'affiche le QTE que pour NOTRE Pokémon actif (les alliés piégés se
+	# libèrent en passant dessus — pas de QTE à distance).
+	if not capturing or not active:
+		if is_instance_valid(_capture_qte):
+			_capture_qte.queue_free()
+			_capture_qte = null
+			_capture_fill = null
+		return
+	if not is_instance_valid(_capture_qte):
+		var root := Control.new()
+		root.set_anchors_preset(Control.PRESET_FULL_RECT)
+		root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(root)
+		_capture_qte = root
+
+		var panel := Panel.new()
+		panel.size = Vector2(420, 92)
+		panel.position = Vector2(get_viewport().get_visible_rect().size.x * 0.5 - 210, 96)
+		panel.add_theme_stylebox_override("panel", UiKit.style(C_PANEL_2, C_BORDER, 12, 3))
+		root.add_child(panel)
+
+		var lbl := Label.new()
+		lbl.text = "Capturé !  Martèle  ◄  ►  pour t'échapper !"
+		lbl.position = Vector2(0, 12)
+		lbl.size = Vector2(420, 28)
+		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		lbl.add_theme_font_size_override("font_size", UiKit.scaled_font(15))
+		lbl.add_theme_color_override("font_color", C_GOLD)
+		panel.add_child(lbl)
+
+		var bar_bg := ColorRect.new()
+		bar_bg.color = Color(0.10, 0.07, 0.05)
+		bar_bg.position = Vector2(24, 52)
+		bar_bg.size = Vector2(372, 24)
+		panel.add_child(bar_bg)
+
+		_capture_fill = ColorRect.new()
+		_capture_fill.color = C_HP_HIGH
+		_capture_fill.position = Vector2(26, 54)
+		_capture_fill.size = Vector2(0, 20)
+		panel.add_child(_capture_fill)
+	if is_instance_valid(_capture_fill):
+		_capture_fill.size.x = 368.0 * clampf(escape, 0.0, 1.0)
+
+
 # ── Notifications BAS-DROITE (évolution, K.O., capture…) — style UiKit ──
 # Pile séparée des toasts haut-droite (level up/unlock) : elle porte les
 # événements d'ÉQUIPE et monte depuis le coin bas-droit, au-dessus de rien

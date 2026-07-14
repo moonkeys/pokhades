@@ -323,6 +323,13 @@ func _physics_process(delta: float) -> void:
 		_remote_process(delta)
 		return
 
+	# Capturé par un dresseur (village) : figé, PV qui baissent ; le membre
+	# ACTIF s'échappe en martelant ← → (les alliés IA ne peuvent pas seuls —
+	# il faut passer sur eux pour les libérer). Prioritaire sur tout le reste.
+	if captured:
+		_capture_process(delta)
+		return
+
 	_attack_timer = max(0.0, _attack_timer - delta)
 	_attack_flash = max(0.0, _attack_flash - delta * 4.0)
 	_action_lock  = max(0.0, _action_lock - delta)
@@ -359,6 +366,94 @@ func _physics_process(delta: float) -> void:
 
 var _status_icon: Label3D = null
 var _status_shown: String = ""
+
+# ── Capture (dresseurs de village) ────────────────────────────────────
+signal capture_changed(capturing: bool, escape: float, active: bool)
+
+var captured: bool = false
+var _cap_escape: float = 0.0        # 0..1 — barre d'évasion
+var _cap_last_dir: int = 0          # dernière flèche (alternance ← →)
+var _cap_dmg_accum: float = 0.0
+var _cap_ball: Node3D = null
+const CAP_DRAIN_PER_SEC := 0.06     # fraction PV max drainée / s
+const CAP_ESCAPE_GAIN   := 0.13     # gain par alternance de flèche
+const CAP_ESCAPE_DECAY  := 0.22     # décroissance / s si on n'appuie pas
+
+
+## Un dresseur nous a touché avec une pokéball → capture.
+func begin_capture() -> void:
+	if captured or _evolving or pokemon_instance == null or pokemon_instance.is_fainted():
+		return
+	captured = true
+	_cap_escape = 0.0
+	_cap_last_dir = 0
+	_cap_dmg_accum = 0.0
+	_spawn_capture_ball()
+	capture_changed.emit(true, 0.0, is_active)
+
+
+func _end_capture() -> void:
+	captured = false
+	if is_instance_valid(_cap_ball):
+		_cap_ball.queue_free()
+		_cap_ball = null
+	capture_changed.emit(false, 0.0, is_active)
+
+
+func _capture_process(delta: float) -> void:
+	# Bulle qui tremble/pulse.
+	if is_instance_valid(_cap_ball):
+		var p := sin(Time.get_ticks_msec() * 0.02) * 0.06
+		_cap_ball.scale = Vector3.ONE * (1.0 + p)
+		_cap_ball.position.x = sin(Time.get_ticks_msec() * 0.03) * 0.08
+
+	# Drain de PV.
+	_cap_dmg_accum += float(pokemon_instance.max_hp) * CAP_DRAIN_PER_SEC * delta
+	if _cap_dmg_accum >= 1.0:
+		var d := int(_cap_dmg_accum)
+		_cap_dmg_accum -= float(d)
+		pokemon_instance.current_hp = maxi(0, pokemon_instance.current_hp - d)
+		hp_changed.emit(pokemon_instance.hp_ratio())
+		if pokemon_instance.is_fainted():
+			_end_capture()
+			_play_faint_anim()
+			return
+
+	# Évasion : seul le membre ACTIF peut marteler ← → (alliés IA = piégés).
+	_cap_escape = maxf(0.0, _cap_escape - CAP_ESCAPE_DECAY * delta)
+	if is_active:
+		var dir := 0
+		if Input.is_action_just_pressed("ui_left"):
+			dir = -1
+		elif Input.is_action_just_pressed("ui_right"):
+			dir = 1
+		if dir != 0 and dir != _cap_last_dir:
+			_cap_last_dir = dir
+			_cap_escape = minf(1.0, _cap_escape + CAP_ESCAPE_GAIN)
+		if _cap_escape >= 1.0:
+			_end_capture()
+			sprite.modulate = Color(2.2, 2.2, 2.2)
+			get_tree().create_timer(0.15).timeout.connect(func() -> void:
+				if is_instance_valid(self): sprite.modulate = Color.WHITE)
+			return
+	capture_changed.emit(true, _cap_escape, is_active)
+
+
+func _spawn_capture_ball() -> void:
+	_cap_ball = MeshInstance3D.new()
+	var sm := SphereMesh.new()
+	sm.radius = 0.85
+	sm.height = 1.7
+	_cap_ball.mesh = sm
+	_cap_ball.position = Vector3(0, 1.0, 0)
+	var m := StandardMaterial3D.new()
+	m.albedo_color  = Color(1.0, 0.32, 0.30, 0.34)
+	m.transparency  = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.shading_mode  = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.cull_mode     = BaseMaterial3D.CULL_DISABLED
+	_cap_ball.material_override = m
+	_cap_ball.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(_cap_ball)
 
 ## Applique le statut courant : dégâts périodiques, gestion du logo flottant.
 ## Retourne true si le Pokémon est bloqué (sommeil/gel) → pas d'action.
