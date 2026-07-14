@@ -1,0 +1,10 @@
+[gd_scene format=4 uid="uid://clakemap00001"]
+
+; Scène d'APERÇU ÉDITEUR du biome Lac (5). Instancie BiomeMap et fige le thème
+; sur LAKE. MapBase._ready() régénère automatiquement en éditeur (grand lac,
+; île, pont, ambiance 3D) ; bouton "⟳ Regénérer la map" pour varier la graine.
+[ext_resource type="PackedScene" uid="uid://ey0blx655rs7" path="res://scenes/world/BiomeMap.tscn" id="1"]
+
+[node name="LakeMap" instance=ExtResource("1")]
+random_theme = false
+theme = 5
