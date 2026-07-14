@@ -1203,6 +1203,10 @@ func _on_room_cleared() -> void:
 		_spawn_exit_portals()   # filet de sécurité si jamais rien n'a été posé
 	else:
 		_open_exit_doors()
+	# Village : les dresseurs quittent la zone une fois celle-ci nettoyée
+	# (retour joueurs). À faire AVANT _spawn_cave_portals, qui pose la porte de
+	# maison et lit le nombre de clés récoltées sur eux.
+	_clear_village_trainers()
 	_spawn_cave_portals()
 
 
@@ -2795,25 +2799,67 @@ func _spawn_village_boss_house() -> void:
 	var room := RunManager.inst().rooms_cleared
 	var vrng := RandomNumberGenerator.new()
 	vrng.seed = (Net.zone_seed(room) if Net.in_run else randi()) ^ 0x00B055
-	if vrng.randf() > 0.5:
-		return   # certaines maisons seulement
 	var rect: Rect2i = houses[vrng.randi() % houses.size()]
-	# Porte en façade sud (face caméra), au centre de la largeur.
-	var door_cell := Vector2i(rect.position.x + rect.size.x / 2, rect.end.y)
-	var world := _map.cell_to_world3(door_cell) + Vector3(0, 0, 0.5)
-	var area := _make_cave_trigger(world, door_cell, "🚪 Mini-Boss", Color(1.0, 0.55, 0.45))
-	# Porte ouverte : encadrement sombre + halo, planté sur la façade.
+
+	# BUG CORRIGÉ : la porte était posée au CENTRE de la case suivant la maison
+	# (+1 u), donc ~0,85 u DEVANT la façade — elle flottait dans la rue au lieu
+	# d'être sur un mur. On la calcule maintenant depuis la géométrie réelle du
+	# bâtiment (cf. MapRender3D._build_house : profondeur = size.y - 0.4).
+	var cx: float     = float(rect.position.x) + float(rect.size.x) * 0.5
+	var face_z: float = float(rect.position.y) + float(rect.size.y) - 0.2   # façade sud
+	var door_cell := Vector2i(int(cx), rect.end.y)
+	var has_key := _village_keys > 0
+
+	var area := Area3D.new()
+	area.position        = Vector3(cx, 0.0, face_z + 0.9)   # devant la porte
+	area.collision_layer = 0
+	area.collision_mask  = 1
+	var cs := CollisionShape3D.new()
+	var sh := BoxShape3D.new()
+	sh.size  = Vector3(1.6, 1.6, 1.2)
+	cs.shape = sh
+	cs.position = Vector3(0, 0.8, 0)
+	area.add_child(cs)
+
+	var lbl := Label3D.new()
+	lbl.text = "🚪 Maison — ouvrir (1 clé)" if has_key else "🔒 Maison verrouillée — il te faut une clé"
+	lbl.position  = Vector3(0, 2.6, 0)
+	lbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	lbl.no_depth_test = true
+	lbl.font_size  = 40
+	lbl.pixel_size = 0.009
+	lbl.modulate = Color(0.95, 0.82, 0.35) if has_key else Color(0.75, 0.72, 0.70)
+	lbl.outline_modulate = Color(0.12, 0.08, 0.02)
+	lbl.outline_size = 12
+	area.add_child(lbl)
+
+	# Battant sombre PLAQUÉ SUR LA FAÇADE (et non dans la rue).
 	var frame := MeshInstance3D.new()
 	var fq := QuadMesh.new()
 	fq.size = Vector2(1.0, 1.7)
 	frame.mesh = fq
-	frame.position = Vector3(0, 0.85, -0.35)
+	frame.position = Vector3(0, 0.85, -0.87)   # ramène le battant sur le mur
 	var fm := StandardMaterial3D.new()
 	fm.albedo_color = Color(0.06, 0.05, 0.06)
 	fm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	frame.material_override = fm
 	frame.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	area.add_child(frame)
+
+	var entrance := door_cell
+	area.body_entered.connect(func(body: Node) -> void:
+		if _cave_active: return
+		if not (body.is_in_group("players") and body.get("is_active") == true): return
+		if _village_keys <= 0:
+			hud.notify("🔒  Porte verrouillée — assomme un dresseur pour sa clé",
+				Color(0.85, 0.75, 0.55))
+			return
+		_village_keys -= 1
+		if _mp and not multiplayer.is_server():
+			_request_enter_cave.rpc_id(1, entrance)
+		else:
+			_host_enter_cave(entrance)
+	)
 	add_child(area)
 	_cave_portals.append(area)
 
@@ -2828,6 +2874,7 @@ func _spawn_village_trainers() -> void:
 			t.queue_free()
 	_village_trainers.clear()
 	_village_throw_cd = 3.0
+	_village_keys = 0     # les clés ne survivent pas au changement de zone
 	if _cave_active or not is_instance_valid(_map):
 		return
 	if _current_theme() != MapGenerator.MapTheme.VILLAGE:
@@ -2853,8 +2900,27 @@ func _spawn_village_trainers() -> void:
 		add_child(t)
 		t.setup("res://Pokemon Essentials v21.1 2023-07-30/Graphics/Characters/%s"
 			% VILLAGE_TRAINER_SPRITES[rng.randi() % VILLAGE_TRAINER_SPRITES.size()])
+		t.make_hittable()                       # on peut l'ASSOMMER (pas le tuer)
+		t.knocked_out.connect(_on_trainer_knocked_out)
 		_village_trainers.append(t)
 		placed += 1
+
+
+## Un dresseur assommé lâche une CLÉ — c'est elle qui ouvre une maison
+## (cf. _spawn_village_boss_house). Remis à zéro à chaque zone.
+var _village_keys: int = 0
+
+func _on_trainer_knocked_out() -> void:
+	_village_keys += 1
+	hud.notify("🔑  Clé récupérée sur le dresseur !", Color(0.95, 0.82, 0.35))
+
+
+## Les dresseurs quittent la zone une fois celle-ci nettoyée (retour joueurs).
+func _clear_village_trainers() -> void:
+	for t in _village_trainers:
+		if is_instance_valid(t):
+			t.queue_free()
+	_village_trainers.clear()
 
 
 const CAPTURE_HIT_RADIUS := 1.7   # esquive : s'écarter de + de ~1.7 u évite la ball
@@ -2877,7 +2943,7 @@ func _update_village_trainers(delta: float) -> void:
 		return
 	var thrower: Node3D = null
 	for t in _village_trainers:
-		if is_instance_valid(t):
+		if is_instance_valid(t) and not t.stunned:   # un dresseur à terre ne lance plus
 			if thrower == null or t.global_position.distance_to(target.global_position) \
 					< thrower.global_position.distance_to(target.global_position):
 				thrower = t

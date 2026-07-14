@@ -922,6 +922,18 @@ func _attack() -> void:
 				lunge_pos += prop.global_position
 				hit_count += 1
 
+	# Dresseurs de village : on peut les ASSOMMER (jamais les tuer) — à terre,
+	# ils cessent de lancer des pokéballs et lâchent une clé.
+	for tr in get_tree().get_nodes_in_group("village_trainers"):
+		if not is_instance_valid(tr):
+			continue
+		if global_position.distance_to(tr.global_position) <= reach:
+			var tdmg := maxi(1, int(float(move_power) * 0.5) + 4)
+			tr.take_hit(tdmg)
+			CombatVFX.spawn_damage_number(get_parent(), tr.global_position, tdmg, "normal")
+			lunge_pos += tr.global_position
+			hit_count += 1
+
 	if not _evolving:
 		if hit_count > 0:
 			_play_attack_lunge(lunge_pos / hit_count, anim_prefixes)

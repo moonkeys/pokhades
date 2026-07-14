@@ -36,8 +36,60 @@ func setup(sprite_path: String) -> void:
 	_sprite.play("idle")
 
 
+# ── Dresseur de VILLAGE : assommable (jamais tué) ─────────────────────
+# On peut le frapper avec ses attaques pour l'ASSOMMER — il s'écroule, cesse
+# de lancer des pokéballs et lâche une CLÉ (qui ouvre une maison). Il ne meurt
+# pas : c'est un humain, pas un Pokémon.
+signal knocked_out
+
+const KO_HP := 60
+
+var hittable: bool = false
+var stunned:  bool = false
+var _hp: int = KO_HP
+
+
+## Active le mode "assommable" (dresseurs de village uniquement).
+func make_hittable() -> void:
+	hittable = true
+	add_to_group("village_trainers")
+
+
+## Encaisse un coup du joueur. À 0 PV → assommé (au sol), lâche une clé.
+func take_hit(dmg: int) -> void:
+	if not hittable or stunned:
+		return
+	_hp -= maxi(1, dmg)
+	if is_instance_valid(_sprite):
+		_sprite.modulate = Color(2.0, 1.4, 1.4)
+		get_tree().create_timer(0.1).timeout.connect(func() -> void:
+			if is_instance_valid(_sprite) and not stunned:
+				_sprite.modulate = Color.WHITE)
+	if _hp > 0:
+		return
+
+	stunned = true
+	_walking = false
+	remove_from_group("village_trainers")   # plus de cible
+	if is_instance_valid(_sprite):
+		_sprite.modulate = Color(0.65, 0.65, 0.70)
+		# S'écroule : bascule à plat + petits tournoiements d'étourdissement.
+		var tw := create_tween()
+		tw.tween_property(_sprite, "rotation_degrees:z", 82.0, 0.35) \
+			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		var star := Label3D.new()
+		star.text = "💫"
+		star.position = Vector3(0, 1.9, 0)
+		star.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		star.no_depth_test = true
+		star.font_size = 40
+		star.pixel_size = 0.01
+		add_child(star)
+	knocked_out.emit()
+
+
 func _process(delta: float) -> void:
-	if _fleeing or _sprite == null or _sprite.sprite_frames == null:
+	if stunned or _fleeing or _sprite == null or _sprite.sprite_frames == null:
 		return
 	if _walking:
 		var to := _wander_target - global_position
