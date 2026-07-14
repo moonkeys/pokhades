@@ -179,10 +179,10 @@ func _bake_ground_plane() -> void:
 
 	_bake_layer(img, src, _map._ground, false, sz)
 	_bake_layer(img, src, _map._water, true, sz)
-	# Transitions douces entre types de sol (herbe/chemin/eau) — retour
-	# joueurs : bords de tuiles trop nets. Appliqué APRÈS sol+eau mais AVANT
-	# les décors, qui doivent rester nets par-dessus.
-	_soften_terrain_edges(img, sz)
+	# Transitions ORGANIQUES entre types de sol (herbe/chemin/eau) — retour
+	# joueurs : bords de tuiles "coupés au couteau". Appliqué APRÈS sol+eau
+	# mais AVANT les décors, qui doivent rester nets par-dessus.
+	_blend_terrain_edges(img, src, sz)
 	_bake_tall_grass_flat(img, src, sz)
 	_bake_flat_decors(img, src, sz)
 
@@ -393,52 +393,112 @@ func _place_water_edge(pos: Vector3, rot_y_deg: float, mat: StandardMaterial3D) 
 	add_child(mi)
 
 
-## Adoucit les frontières entre types de sol (herbe/chemin/eau) — sans ça
-## chaque case a un bord de tuile parfaitement net, ce qui donne l'effet
-## "rectangles collés" (retour joueurs). Technique bon marché : une version
-## floutée de l'image (rétrécie puis ré-agrandie, filtrage bilinéaire — pas
-## de flou pixel par pixel coûteux) est mélangée à l'originale, MAIS
-## uniquement sur les cases dont un voisin direct a un type de terrain
-## différent — l'intérieur des grandes zones homogènes reste net.
-func _soften_terrain_edges(img: Image, sz: Vector2i) -> void:
-	var w := sz.x * TILE_PX
-	var h := sz.y * TILE_PX
-	var blurred := img.duplicate()
-	# Flou plus marqué (retour joueurs : encore trop net) — rétrécir plus
-	# fort avant de ré-agrandir donne un flou plus large sans coût de calcul
-	# supplémentaire (toujours 2 resize bilinéaires, indépendant du rayon).
-	var small := Vector2i(maxi(1, w / 8), maxi(1, h / 8))
-	blurred.resize(small.x, small.y, Image.INTERPOLATE_BILINEAR)
-	blurred.resize(w, h, Image.INTERPOLATE_BILINEAR)
+## Transitions ORGANIQUES herbe↔chemin et herbe↔eau : au lieu de flouter la
+## texture (qui donnait un bord net juste adouci), on RECOMPOSE chaque pixel
+## des cases de bordure en choisissant entre la tuile d'herbe et la tuile de
+## l'autre matériau, via un seuil BRUITÉ sur un champ de présence lissé
+## (bilinéaire entre centres de cases). Résultat : la frontière serpente/se
+## déchiquette au lieu de suivre les arêtes carrées de la grille. Utilise les
+## tuiles existantes (aucun asset requis). L'intérieur des zones homogènes
+## n'est pas touché — seule la bande de bordure (rayon 2) est recomposée.
+const _EDGE_NOISE_FREQ := 0.09   # taille des ondulations de bordure
+const _EDGE_NOISE_AMP  := 0.42   # amplitude du déchiquetage (0 = bord net)
 
+func _blend_terrain_edges(img: Image, src: Image, sz: Vector2i) -> void:
 	var grid: Array = _map._grid
-	for r in range(2, sz.y - 2):
+	var noise := FastNoiseLite.new()
+	noise.frequency = _EDGE_NOISE_FREQ
+	noise.seed = hash(sz) ^ 0x1234
+	var grass_atlas: Vector2i = _map._ground_tile
+
+	for r in range(1, sz.y - 1):
 		var row: PackedByteArray = grid[r]
-		for c in range(2, sz.x - 2):
+		for c in range(1, sz.x - 1):
 			var t: int = row[c]
 			if t == MapGenerator.Terrain.TREE:
 				continue
-			# Bande de transition élargie à un rayon de 2 cases (8-voisinage
-			# + diagonales) — une seule case de bordure floutée passait
-			# quasi inaperçue une fois la texture réappliquée par-dessus.
-			var boundary := false
-			for dy in range(-2, 3):
-				if boundary: break
-				for dx in range(-2, 3):
-					if dx == 0 and dy == 0: continue
-					var nt: int = grid[r + dy][c + dx]
-					if nt != MapGenerator.Terrain.TREE and nt != t:
-						boundary = true
-						break
-			if not boundary:
+			# Matériau "autre" présent dans le voisinage (rayon 2) : eau
+			# prioritaire (rives), sinon chemin. Rien → case interne, on saute.
+			var other := _dominant_other(grid, sz, c, r)
+			if other == -1:
 				continue
+			var other_atlas: Vector2i = _atlas_for_terrain(other, c, r)
+
 			var x0 := c * TILE_PX
 			var y0 := r * TILE_PX
 			for py in TILE_PX:
 				for px in TILE_PX:
-					var sharp: Color = img.get_pixel(x0 + px, y0 + py)
-					var soft:  Color = blurred.get_pixel(x0 + px, y0 + py)
-					img.set_pixel(x0 + px, y0 + py, sharp.lerp(soft, 0.75))
+					# Coordonnée en espace-cases du pixel, recentrée sur les
+					# centres de cases pour le champ bilinéaire.
+					var fx := float(c) + (float(px) + 0.5) / float(TILE_PX) - 0.5
+					var fy := float(r) + (float(py) + 0.5) / float(TILE_PX) - 0.5
+					var field := _terrain_field(grid, sz, fx, fy, other)
+					var n := noise.get_noise_2d(float(x0 + px), float(y0 + py))
+					var w := field + n * _EDGE_NOISE_AMP
+					var atlas := other_atlas if w > 0.5 else grass_atlas
+					var col: Color = src.get_pixel(
+						atlas.x * TILE_PX + px, atlas.y * TILE_PX + py)
+					img.set_pixel(x0 + px, y0 + py, col)
+
+
+## Matériau non-herbe dominant autour de (c,r) dans un rayon de 2 cases —
+## WATER prioritaire (rives), sinon PATH, sinon -1 (case interne à ignorer).
+func _dominant_other(grid: Array, sz: Vector2i, c: int, r: int) -> int:
+	var has_water := false
+	var has_path  := false
+	var self_t: int = grid[r][c]
+	for dy in range(-2, 3):
+		var ry := r + dy
+		if ry < 0 or ry >= sz.y: continue
+		for dx in range(-2, 3):
+			var rx := c + dx
+			if rx < 0 or rx >= sz.x: continue
+			var nt: int = grid[ry][rx]
+			if nt == MapGenerator.Terrain.WATER: has_water = true
+			elif nt == MapGenerator.Terrain.PATH: has_path = true
+	# Il faut une VRAIE frontière : la case courante + un voisin diffèrent.
+	if has_water and self_t != MapGenerator.Terrain.WATER:
+		return MapGenerator.Terrain.WATER
+	if has_path and self_t != MapGenerator.Terrain.PATH:
+		return MapGenerator.Terrain.PATH
+	# Case de chemin/eau elle-même en bordure d'herbe → traite aussi ce sens.
+	if self_t == MapGenerator.Terrain.PATH:
+		return MapGenerator.Terrain.PATH
+	if self_t == MapGenerator.Terrain.WATER:
+		return MapGenerator.Terrain.WATER
+	return -1
+
+
+## Champ de présence (0..1) du matériau `kind`, interpolé bilinéairement
+## entre les 4 centres de cases entourant (fx,fy) — donne un dégradé continu
+## à travers la frontière, base du seuil bruité.
+func _terrain_field(grid: Array, sz: Vector2i, fx: float, fy: float, kind: int) -> float:
+	var x0 := int(floor(fx))
+	var y0 := int(floor(fy))
+	var tx := fx - float(x0)
+	var ty := fy - float(y0)
+	var m00 := _is_kind(grid, sz, x0,     y0,     kind)
+	var m10 := _is_kind(grid, sz, x0 + 1, y0,     kind)
+	var m01 := _is_kind(grid, sz, x0,     y0 + 1, kind)
+	var m11 := _is_kind(grid, sz, x0 + 1, y0 + 1, kind)
+	return lerpf(lerpf(m00, m10, tx), lerpf(m01, m11, tx), ty)
+
+
+func _is_kind(grid: Array, sz: Vector2i, x: int, y: int, kind: int) -> float:
+	if x < 0 or x >= sz.x or y < 0 or y >= sz.y:
+		return 0.0
+	return 1.0 if grid[y][x] == kind else 0.0
+
+
+## Atlas de tuile pour un terrain donné (chemin = variante déterministe par
+## case, pour rester cohérent avec _apply_to_tilemap).
+func _atlas_for_terrain(kind: int, c: int, r: int) -> Vector2i:
+	if kind == MapGenerator.Terrain.WATER:
+		return _map._water_tile
+	var pt: Array = _map._path_tiles
+	if pt.is_empty():
+		return _map._ground_tile
+	return pt[hash(Vector2i(c, r)) % pt.size()]
 
 
 func _bake_layer(img: Image, src: Image, layer: TileMapLayer, blend: bool, sz: Vector2i) -> void:
