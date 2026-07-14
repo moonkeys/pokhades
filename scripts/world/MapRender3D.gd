@@ -193,10 +193,9 @@ func _bake_ground_plane() -> void:
 	# Sol SATURÉ/assombri via shader (cf. GrassPatch.ground_material) — la
 	# texture bakée sortait trop claire et délavée par rapport aux sprites.
 	# Mode "peint" (retour joueurs : décor trop "dalle plate") — validé sur
-	# la Prairie, étendu à la Forêt pour comparaison avant généralisation.
-	var paint := 1.0 if _map.theme in [MapGenerator.MapTheme.MEADOW, MapGenerator.MapTheme.FOREST] else 0.0
+	# Prairie/Forêt, désormais étendu à TOUS les biomes.
 	mesh_inst.material_override = GrassPatch.ground_material(
-		ImageTexture.create_from_image(img), 1.45, 0.88, 1.0, Color.WHITE, 0.0, paint)
+		ImageTexture.create_from_image(img), 1.45, 0.88, 1.0, Color.WHITE, 0.0, 1.0)
 	mesh_inst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON   # les collines portent maintenant une ombre
 	add_child(mesh_inst)
 
@@ -401,14 +400,24 @@ func _place_water_edge(pos: Vector3, rot_y_deg: float, mat: StandardMaterial3D) 
 ## déchiquette au lieu de suivre les arêtes carrées de la grille. Utilise les
 ## tuiles existantes (aucun asset requis). L'intérieur des zones homogènes
 ## n'est pas touché — seule la bande de bordure (rayon 2) est recomposée.
-const _EDGE_NOISE_FREQ := 0.09   # taille des ondulations de bordure
-const _EDGE_NOISE_AMP  := 0.42   # amplitude du déchiquetage (0 = bord net)
+# Deux octaves : une GRANDE longueur d'onde (méandres larges — casse les
+# longs segments qui restaient droits) + une fine (jitter/déchiquetage local).
+const _EDGE_NOISE_FREQ_LOW  := 0.035  # méandres larges
+const _EDGE_NOISE_FREQ_HI   := 0.16   # jitter fin
+const _EDGE_AMP_LOW  := 0.38
+const _EDGE_AMP_HI   := 0.22
+# Largeur de la bande où les COULEURS se fondent (dans l'espace du champ) —
+# au-delà d'un simple choix binaire net, un petit dégradé herbe↔sol.
+const _EDGE_COLOR_BAND := 0.20
 
 func _blend_terrain_edges(img: Image, src: Image, sz: Vector2i) -> void:
 	var grid: Array = _map._grid
-	var noise := FastNoiseLite.new()
-	noise.frequency = _EDGE_NOISE_FREQ
-	noise.seed = hash(sz) ^ 0x1234
+	var noise_lo := FastNoiseLite.new()
+	noise_lo.frequency = _EDGE_NOISE_FREQ_LOW
+	noise_lo.seed = hash(sz) ^ 0x1234
+	var noise_hi := FastNoiseLite.new()
+	noise_hi.frequency = _EDGE_NOISE_FREQ_HI
+	noise_hi.seed = hash(sz) ^ 0x7ABC
 	var grass_atlas: Vector2i = _map._ground_tile
 
 	for r in range(1, sz.y - 1):
@@ -433,12 +442,17 @@ func _blend_terrain_edges(img: Image, src: Image, sz: Vector2i) -> void:
 					var fx := float(c) + (float(px) + 0.5) / float(TILE_PX) - 0.5
 					var fy := float(r) + (float(py) + 0.5) / float(TILE_PX) - 0.5
 					var field := _terrain_field(grid, sz, fx, fy, other)
-					var n := noise.get_noise_2d(float(x0 + px), float(y0 + py))
-					var w := field + n * _EDGE_NOISE_AMP
-					var atlas := other_atlas if w > 0.5 else grass_atlas
-					var col: Color = src.get_pixel(
-						atlas.x * TILE_PX + px, atlas.y * TILE_PX + py)
-					img.set_pixel(x0 + px, y0 + py, col)
+					var n := noise_lo.get_noise_2d(float(x0 + px), float(y0 + py)) * _EDGE_AMP_LOW \
+						+ noise_hi.get_noise_2d(float(x0 + px), float(y0 + py)) * _EDGE_AMP_HI
+					var w := field + n
+					# Bande de mélange de COULEUR autour du seuil (pas un choix
+					# binaire) : petit dégradé herbe↔sol qui adoucit la jointure.
+					var blend := smoothstep(0.5 - _EDGE_COLOR_BAND, 0.5 + _EDGE_COLOR_BAND, w)
+					var col_grass: Color = src.get_pixel(
+						grass_atlas.x * TILE_PX + px, grass_atlas.y * TILE_PX + py)
+					var col_other: Color = src.get_pixel(
+						other_atlas.x * TILE_PX + px, other_atlas.y * TILE_PX + py)
+					img.set_pixel(x0 + px, y0 + py, col_grass.lerp(col_other, blend))
 
 
 ## Matériau non-herbe dominant autour de (c,r) dans un rayon de 2 cases —

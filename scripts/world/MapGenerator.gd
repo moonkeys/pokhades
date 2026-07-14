@@ -286,10 +286,8 @@ func _generate() -> void:
 	_gen_tree_noise()
 	_carve_border()
 	_carve_paths()
-	# Les chemins courbes (FOREST) sont déjà lisses ; le lissage par automate
-	# éroderait leurs portions fines. Réservé aux chemins BFS des autres biomes.
-	if theme != MapTheme.FOREST:
-		_smooth_path_mask()
+	# Plus de lissage par automate : les splines sont déjà lisses (il éroderait
+	# leurs portions fines). _smooth_path_mask n'est plus appelé nulle part.
 	if theme == MapTheme.LAKE:
 		_carve_lake()   # après les chemins : le grand lac central prime
 	# Après les chemins : rogne la silhouette sans jamais couper une route
@@ -737,24 +735,11 @@ func _carve_shape_mask() -> void:
 ## ─────────────────────────────────────────────────────────────────
 
 func _carve_paths() -> void:
-	var W := map_size.x
-	# FOREST : chemins COURBES (splines Catmull-Rom) qui serpentent, à largeur
-	# variable et bords irréguliers — cf. _build_path_curve/_carve_curved_path.
-	# Les autres biomes gardent le squelette BFS pour l'instant (essai forêt).
-	if theme == MapTheme.FOREST:
-		for ex: Vector2i in [exit_A, exit_B, exit_C]:
-			_carve_curved_path(_build_path_curve(Vector2(entry_tile), Vector2(ex)))
-		return
+	# Chemins COURBES (splines Catmull-Rom) qui serpentent, à largeur variable
+	# et bords irréguliers — cf. _build_path_curve/_carve_curved_path. Étendu
+	# du seul essai Forêt à TOUS les biomes (style "aucun côté rectiligne").
 	for ex: Vector2i in [exit_A, exit_B, exit_C]:
-		# Waypoint décalé latéralement — donne des chemins en L ou S
-		var mid_x: int = clampi(
-			(entry_tile.x + ex.x) / 2 + _rng.randi_range(-W / 4, W / 4),
-			6, W - 6
-		)
-		var mid_y: int = (entry_tile.y + ex.y) / 2
-		var wp    := Vector2i(mid_x, mid_y)
-		_carve_single_path(entry_tile, wp)
-		_carve_single_path(wp, ex)
+		_carve_curved_path(_build_path_curve(Vector2(entry_tile), Vector2(ex)))
 
 
 ## Spline lisse entre `from` et `to` (coordonnées de cases), via des waypoints
@@ -808,85 +793,6 @@ func _carve_curved_path(curve: Curve2D) -> void:
 				var edge := edge_noise.get_noise_2d(cell.x * 3.0, cell.y * 3.0) * 0.9
 				if p.distance_to(Vector2(cell) + Vector2(0.5, 0.5)) < width + edge:
 					_grid[cell.y][cell.x] = Terrain.PATH
-
-
-func _carve_single_path(from: Vector2i, to: Vector2i) -> void:
-	var W := map_size.x
-	var H := map_size.y
-	var came_from: Dictionary = { from: from }
-	var queue: Array[Vector2i] = [from]
-	var dirs := [Vector2i(1,0), Vector2i(-1,0), Vector2i(0,1), Vector2i(0,-1)]
-	var found := false
-
-	while not queue.is_empty():
-		var cur: Vector2i = queue.pop_front()
-		if cur == to:
-			found = true
-			break
-		for d: Vector2i in dirs:
-			var n := cur + d
-			if n.x < 0 or n.x >= W or n.y < 0 or n.y >= H: continue
-			if n in came_from: continue
-			came_from[n] = cur
-			queue.append(n)
-
-	if not found:
-		push_warning("MapGenerator: pas de chemin %s → %s" % [from, to])
-		return
-
-	var path: Array[Vector2i] = []
-	var cur := to
-	while cur != from:
-		path.append(cur)
-		cur = came_from[cur]
-	path.append(from)
-
-	# Tampon CIRCULAIRE (pas carré) autour de chaque case du squelette BFS —
-	# un chemin en "escalier" (BFS 4-directions) stampé au carré donnait des
-	# corridors à angles droits façon couloirs ; le disque arrondit déjà les
-	# virages avant même le lissage ci-dessous (retour joueurs : chemins trop
-	# rectilignes).
-	var half := path_width / 2
-	var rad2 := float(half) * float(half) + 0.6
-	for tile: Vector2i in path:
-		for dy in range(-half, half + 1):
-			for dx in range(-half, half + 1):
-				if float(dx * dx + dy * dy) > rad2: continue
-				var cell := tile + Vector2i(dx, dy)
-				if cell.x < 2 or cell.x >= W - 2 or cell.y < 2 or cell.y >= H - 2: continue
-				_grid[cell.y][cell.x] = Terrain.PATH
-
-
-## Automate cellulaire (règle majoritaire) sur le masque PATH — arrondit les
-## coins concaves/convexes laissés par le tampon circulaire (virages en
-## escalier du squelette BFS 4-directions). Purement visuel : PATH ne bloque
-## jamais le pathfinding (seule l'eau le fait, cf. _compute_reachable), donc
-## aucun risque de casser l'accessibilité d'un portail.
-func _smooth_path_mask() -> void:
-	var W := map_size.x
-	var H := map_size.y
-	# 4 passes (au lieu de 2) — retour joueurs : encore trop anguleux avec
-	# seulement 2 passes, surtout aux intersections de plusieurs chemins.
-	for _pass_i in 4:
-		var adds:    Array[Vector2i] = []
-		var removes: Array[Vector2i] = []
-		for r in range(3, H - 3):
-			for c in range(3, W - 3):
-				var is_path: bool = _grid[r][c] == Terrain.PATH
-				var n := 0
-				for dy in range(-1, 2):
-					for dx in range(-1, 2):
-						if dx == 0 and dy == 0: continue
-						if _grid[r + dy][c + dx] == Terrain.PATH:
-							n += 1
-				if not is_path and n >= 5:
-					adds.append(Vector2i(c, r))
-				elif is_path and n <= 3:
-					removes.append(Vector2i(c, r))
-		for cell: Vector2i in adds:
-			_grid[cell.y][cell.x] = Terrain.PATH
-		for cell: Vector2i in removes:
-			_grid[cell.y][cell.x] = Terrain.GRASS
 
 
 ## ─────────────────────────────────────────────────────────────────
