@@ -162,6 +162,14 @@ var _village_houses: Array = []
 func get_village_houses() -> Array:
 	return _village_houses
 
+
+## La case (c,r) est-elle sur l'emprise d'une maison ? (village)
+func _cell_in_house(c: int, r: int) -> bool:
+	for rect: Rect2i in _village_houses:
+		if rect.has_point(Vector2i(c, r)):
+			return true
+	return false
+
 ## Cases du pont du biome Lac (planches posées par MapRender3D au-dessus de
 ## l'eau) — cases marchables reliant la rive sud à l'île centrale.
 var _bridge_cells: Array = []   # Array[Vector2i]
@@ -1005,7 +1013,10 @@ func _apply_to_tilemap() -> void:
 	var H := map_size.y
 	for r in H:
 		for c in W:
-			if _grid[r][c] == Terrain.TREE and _can_stamp_tree(c, r):
+			# Emprises de maisons (village) : cases marquées TREE pour bloquer
+			# spawn/herbe/décor, mais SANS y stamper d'arbre (le bâtiment les
+			# recouvre) — sinon des arbres poussent dans les maisons.
+			if _grid[r][c] == Terrain.TREE and not _cell_in_house(c, r) and _can_stamp_tree(c, r):
 				_stamp_tree(c, r)
 				for dy in 3:
 					for dx in 3:
