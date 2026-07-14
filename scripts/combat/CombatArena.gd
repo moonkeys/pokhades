@@ -2510,7 +2510,12 @@ func _spawn_exit_portals() -> void:
 func _spawn_exit_doors_closed() -> void:
 	var room  := RunManager.inst().rooms_cleared
 	var count := 1 if RunManager.inst().is_shop_room(room + 1) else 2
-	var style := "tunnel" if RunManager.inst().current_biome() == MapGenerator.MapTheme.ROCKY else "house"
+	var biome := RunManager.inst().current_biome()
+	var style := "house"
+	if biome == MapGenerator.MapTheme.ROCKY:
+		style = "tunnel"          # Montagne : bouche de grotte
+	elif biome == MapGenerator.MapTheme.VILLAGE:
+		style = "toll"            # Village : barrière de péage qui se lève au clear
 	var exits_data := RunManager.inst().get_exits(count)
 	for e: Dictionary in exits_data:
 		e["active"] = false

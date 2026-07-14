@@ -31,6 +31,13 @@ var _glow:     MeshInstance3D     = null
 var _glow_mat: StandardMaterial3D = null
 var _door:     MeshInstance3D     = null   # battant (sombre = fermé)
 var _is_tunnel: bool = false
+var _is_toll:   bool = false
+var _toll_arm:  Node3D = null   # bras de barrière (baissé = fermé, levé = ouvert)
+
+const C_TOLL_POST := Color(0.86, 0.84, 0.80)
+const C_TOLL_ARM  := Color(0.82, 0.20, 0.16)
+const C_TOLL_STRIPE := Color(0.95, 0.94, 0.90)
+const TOLL_ARM_LEN := 2.6
 
 
 ## `data.active` (défaut true) : porte ouverte (halo + trigger) ou fermée
@@ -57,6 +64,9 @@ func setup(data: Dictionary) -> void:
 	if style == "tunnel":
 		_is_tunnel = true
 		_build_tunnel()
+	elif style == "toll":
+		_is_toll = true
+		_build_toll_gate()
 	else:
 		_build_gate_building()
 
@@ -106,7 +116,12 @@ func open() -> void:
 	collision_mask = 1
 	if is_instance_valid(_glow):
 		_glow.visible = true
-	if is_instance_valid(_door):
+	if _is_toll and is_instance_valid(_toll_arm):
+		# La barrière se LÈVE : rotation du bras de l'horizontale vers ~78°.
+		var tw := create_tween()
+		tw.tween_property(_toll_arm, "rotation:z", deg_to_rad(78.0), 0.6) \
+			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	elif is_instance_valid(_door):
 		if _is_tunnel:
 			_door.visible = false
 		else:
@@ -178,6 +193,59 @@ func _build_tunnel() -> void:
 	seal.visible = not _active
 	add_child(seal)
 	_door = seal
+
+
+## Style "village" : PÉAGE — deux poteaux + un bras de barrière rayé rouge/
+## blanc, BAISSÉ (horizontal, en travers du passage) tant que la zone n'est
+## pas nettoyée, puis LEVÉ par open() (cf. animation du tween). Purement
+## visuel : la hitbox de déclenchement est posée par setup().
+func _build_toll_gate() -> void:
+	var post_mat := StandardMaterial3D.new()
+	post_mat.albedo_color = C_TOLL_POST
+	post_mat.roughness    = 0.85
+	# Deux poteaux de part et d'autre du passage.
+	for sx in [-1.0, 1.0]:
+		var post := MeshInstance3D.new()
+		var pb := BoxMesh.new()
+		pb.size = Vector3(0.34, 1.7, 0.34)
+		post.mesh = pb
+		post.position = Vector3(sx * 1.25, 0.85, 0)
+		post.material_override = post_mat
+		post.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		add_child(post)
+
+	# Bras pivotant, ancré au poteau gauche. Le pivot est un Node3D ; le bras
+	# (box) est décalé de +X d'une demi-longueur pour partir du pivot.
+	_toll_arm = Node3D.new()
+	_toll_arm.position = Vector3(-1.25, 1.45, 0)
+	# Fermé = horizontal (rotation.z = 0) ; ouvert = levé (open() → ~78°).
+	_toll_arm.rotation.z = deg_to_rad(78.0) if _active else 0.0
+	add_child(_toll_arm)
+
+	var arm := MeshInstance3D.new()
+	var ab := BoxMesh.new()
+	ab.size = Vector3(TOLL_ARM_LEN, 0.18, 0.18)
+	arm.mesh = ab
+	arm.position = Vector3(TOLL_ARM_LEN * 0.5, 0, 0)
+	var arm_mat := StandardMaterial3D.new()
+	arm_mat.albedo_color = C_TOLL_ARM
+	arm_mat.roughness    = 0.8
+	arm.material_override = arm_mat
+	arm.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_toll_arm.add_child(arm)
+
+	# Rayures blanches réparties le long du bras.
+	var stripe_mat := StandardMaterial3D.new()
+	stripe_mat.albedo_color = C_TOLL_STRIPE
+	for i in 3:
+		var st := MeshInstance3D.new()
+		var sb := BoxMesh.new()
+		sb.size = Vector3(0.34, 0.20, 0.20)
+		st.mesh = sb
+		st.position = Vector3(0.55 + i * 0.75, 0, 0)
+		st.material_override = stripe_mat
+		st.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_toll_arm.add_child(st)
 
 
 ## Un pan de toit — box fine inclinée depuis le faîte central vers un bord
