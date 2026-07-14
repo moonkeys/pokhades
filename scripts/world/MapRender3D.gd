@@ -1032,6 +1032,11 @@ func _build_props() -> void:
 			var tl := cell - toff
 			_mark_block(handled, tl, 3, 3)
 			var tree_origin: Vector2i = _map._objects.get_cell_atlas_coords(tl)
+			# Volcan : arbres MORTS nus (procéduraux) au lieu des meshes
+			# feuillus du pack — le kit Kenney n'a pas d'arbre sans feuilles.
+			if _map.theme == MapGenerator.MapTheme.VOLCANO:
+				_add_dead_tree(tl)
+				continue
 			var tree_cfg := _kit_tree_config(tree_origin)
 			if not (tree_cfg["pool"] as Array).is_empty():
 				_add_kit_tree(tl, tree_cfg["pool"], tree_cfg["tints"])
@@ -1138,6 +1143,66 @@ func _kit_tree_config(origin: Vector2i) -> Dictionary:
 			"woodBark":   Color(0.36, 0.30, 0.26),   # écorce détrempée
 		}}
 	return {"pool": [], "tints": {}}
+
+
+## Arbre MORT nu procédural (biome Volcan) : tronc conique + 3-6 branches
+## anguleuses sans feuilles, bois carbonisé sombre. Le pack Kenney n'a pas
+## d'arbre sans feuilles — on le construit à la main pour un vrai squelette
+## calciné. Ancrage identique au billboard 3×3 (centre x, rangée du bas z) ;
+## la collision vient de la tuile _objects, indépendante du visuel.
+const _DEAD_WOOD := Color(0.13, 0.10, 0.09)
+
+func _add_dead_tree(top_left: Vector2i) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(top_left) + 991
+
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color  = _DEAD_WOOD.lerp(Color(0.22, 0.13, 0.10), rng.randf())
+	mat.roughness     = 1.0
+	mat.diffuse_mode  = BaseMaterial3D.DIFFUSE_TOON
+	mat.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+
+	var tree := Node3D.new()
+	tree.position = Vector3(top_left.x + 1.5, 0.0, top_left.y + 2.5)
+	tree.rotation.y = rng.randf() * TAU
+
+	var trunk_h := rng.randf_range(2.6, 3.8)
+	var trunk := MeshInstance3D.new()
+	var tcyl := CylinderMesh.new()
+	tcyl.bottom_radius = rng.randf_range(0.20, 0.28)
+	tcyl.top_radius    = 0.07
+	tcyl.height        = trunk_h
+	tcyl.radial_segments = 6
+	trunk.mesh = tcyl
+	trunk.material_override = mat
+	trunk.position = Vector3(0, trunk_h * 0.5, 0)
+	trunk.rotation = Vector3(rng.randf_range(-0.06, 0.06), 0, rng.randf_range(-0.06, 0.06))
+	tree.add_child(trunk)
+
+	# Branches nues : cylindres fins, dressés et inclinés vers l'extérieur.
+	var n := rng.randi_range(3, 6)
+	for i in n:
+		var br := MeshInstance3D.new()
+		var bcyl := CylinderMesh.new()
+		var blen := rng.randf_range(0.8, 1.6)
+		bcyl.bottom_radius = rng.randf_range(0.05, 0.09)
+		bcyl.top_radius    = 0.02
+		bcyl.height        = blen
+		bcyl.radial_segments = 5
+		br.mesh = bcyl
+		br.material_override = mat
+		# Point d'attache le long du tronc (moitié haute) + inclinaison.
+		var ay := trunk_h * rng.randf_range(0.45, 0.95)
+		var yaw := rng.randf() * TAU
+		var tilt := rng.randf_range(0.5, 1.1)   # ~30-63° depuis la verticale
+		br.position = Vector3(0, ay, 0)
+		br.rotation = Vector3(sin(yaw) * tilt, yaw, cos(yaw) * tilt)
+		# Le cylindre pousse le long de son axe Y local : on le décale pour
+		# que sa base parte du tronc, pas son centre.
+		br.translate_object_local(Vector3(0, blen * 0.5, 0))
+		tree.add_child(br)
+
+	add_child(tree)
 
 
 ## Même ancrage que le billboard 3×3 (centre en x, rangée du bas en z) —
