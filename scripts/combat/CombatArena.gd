@@ -954,13 +954,15 @@ func _spawn_room_enemies() -> void:
 
 	# 5 à 9 VAGUES par salle de combat (retour joueurs) — tirage SEEDÉ (dérivé
 	# de la graine de zone en multi → même nb de vagues chez tous les pairs).
-	# L'effectif par vague grandit avec la salle/l'acte (1→3), plafonné, pour
-	# que le rythme « vague après vague » reste tenable.
+	# RYTHME (passe d'équilibrage) : la densité MONTE avec l'acte au lieu d'un
+	# plafond figé — actes 1-2 plus calmes (cap effectif/vague = 2+act, total
+	# = 16+act·4), actes 3-4 nettement plus denses (jusqu'à 5/vague, 28 total).
+	# Corrige la stagnation de difficulté dès l'acte 2 signalée dans le code.
 	var wrng := RandomNumberGenerator.new()
 	wrng.seed = (Net.zone_seed(room) if Net.in_run else randi()) ^ 0x5A5A
 	var wave_count := wrng.randi_range(5, 9)
-	var per_wave   := clampi(1 + int(room / 3) + act, 1, 3)
-	var count := mini(wave_count * per_wave, 24)
+	var per_wave   := clampi(1 + int(room / 3) + act, 1, 2 + act)
+	var count := mini(wave_count * per_wave, 16 + act * 4)
 
 	_wave_queue.clear()
 	_wave_num    = 0
