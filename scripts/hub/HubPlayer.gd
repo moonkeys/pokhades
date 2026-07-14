@@ -17,6 +17,7 @@ var _has_dirs: bool   = false
 # Dash (esquive/burst) — même logique qu'en combat ; le nombre de charges
 # vient des achats du hub (GameManager.dash_charges_bought, 0 au départ).
 var _dash_charges:  int     = GameManager.dash_charges_bought
+var _dash_known_max: int    = GameManager.dash_charges_bought   # détecte un achat mid-session
 var _dash_recharge: float   = 0.0
 var _dash_timer:    float   = 0.0
 var _dash_dir:      Vector3 = Vector3.ZERO
@@ -47,13 +48,9 @@ func setup_remote(peer: int, pid: int) -> void:
 
 
 func _ready() -> void:
-	# Action "dash" (Maj) — enregistrée paresseusement comme en combat, pour
-	# que le Hub fonctionne même sans être passé par une arène auparavant.
-	if not InputMap.has_action("dash"):
-		InputMap.add_action("dash")
-		var ev_dash := InputEventKey.new()
-		ev_dash.keycode = KEY_SHIFT
-		InputMap.action_add_event("dash", ev_dash)
+	# Touches : déclarées UNE fois dans Controls.CATALOG, appliquées au
+	# démarrage par GameManager (filet de sécurité si on entre par le Hub).
+	Controls.apply()
 
 	# Les copies distantes n'ont pas de collision propre (suivent juste la
 	# position diffusée par leur propriétaire, cf. _remote_process) — sinon
@@ -116,6 +113,14 @@ func move_tick(delta: float, blocked: bool) -> void:
 	if remote_peer != 0:
 		_remote_process(delta)
 		return
+
+	# Un achat (ou MODE TEST) débloque une charge INSTANTANÉMENT — sinon
+	# _dash_charges ne rattrape le nouveau max qu'au fil de la recharge
+	# lente (2.5s/charge), donnant l'impression fausse de n'avoir qu'1 dash
+	# juste après avoir tout débloqué.
+	if GameManager.dash_charges_bought > _dash_known_max:
+		_dash_charges += GameManager.dash_charges_bought - _dash_known_max
+		_dash_known_max = GameManager.dash_charges_bought
 
 	# Recharge du dash même à l'arrêt / en dialogue (comme en combat)
 	if _dash_charges < GameManager.dash_charges_bought:

@@ -171,38 +171,12 @@ func _apply_ambiance() -> void:
 	_ambiance.apply_theme(_current_theme(), _map_cells, _cave_active, _map, house)
 
 
+## BUG CORRIGÉ : "switch_pokemon" ET "team_stats" étaient tous deux bindés sur
+## TAB — une touche ne peut pas faire deux choses. Les touches sont désormais
+## déclarées UNE seule fois dans Controls.CATALOG (Tab = changer de Pokémon,
+## [C] = fiche d'équipe) et sont remappables (cf. ControlsScreen).
 func _register_switch_key() -> void:
-	if not InputMap.has_action("switch_pokemon"):
-		InputMap.add_action("switch_pokemon")
-		var ev := InputEventKey.new()
-		ev.keycode = KEY_TAB
-		InputMap.action_add_event("switch_pokemon", ev)
-
-	if not InputMap.has_action("toggle_follow"):
-		InputMap.add_action("toggle_follow")
-		var ev2 := InputEventKey.new()
-		ev2.keycode = KEY_F
-		InputMap.action_add_event("toggle_follow", ev2)
-
-	if not InputMap.has_action("interact"):
-		InputMap.add_action("interact")
-		var ev3 := InputEventKey.new()
-		ev3.keycode = KEY_E
-		InputMap.action_add_event("interact", ev3)
-
-	# Fiche d'équipe en temps réel (stats effectives, objets, attaques)
-	if not InputMap.has_action("team_stats"):
-		InputMap.add_action("team_stats")
-		var ev_tab := InputEventKey.new()
-		ev_tab.keycode = KEY_TAB
-		InputMap.action_add_event("team_stats", ev_tab)
-
-	# Touche dédiée aux CS (Coupe/Surf/Force) — distincte de [E] (coffres)
-	if not InputMap.has_action("cs_use"):
-		InputMap.add_action("cs_use")
-		var ev4 := InputEventKey.new()
-		ev4.keycode = KEY_A
-		InputMap.action_add_event("cs_use", ev4)
+	Controls.apply()
 
 
 ## Échap ouvre le menu pause — sauf si un autre écran (Boutique, don, etc.)

@@ -256,13 +256,9 @@ func _disable_shadows(node: Node) -> void:
 		_disable_shadows(child)
 
 
+## Touches : source unique de vérité dans Controls.CATALOG.
 func _register_key() -> void:
-	if not InputMap.has_action("hub_interact"):
-		InputMap.add_action("hub_interact")
-		var ev := InputEventKey.new()
-		ev.keycode = KEY_E
-		InputMap.action_add_event("hub_interact", ev)
-	# (Le dash — Maj — est enregistré par HubPlayer, cf. son _ready.)
+	Controls.apply()
 
 
 # ── Construction ──────────────────────────────────────────────────────

@@ -615,9 +615,14 @@ func get_effective_start(pid: int, base_level: int) -> Dictionary:
 ## le comportement voulu, cf. commentaires plus haut).
 const SAVE_PATH := "user://save.json"
 
+## Remaps clavier du joueur : action_id → keycode. Vide = tout par défaut.
+## Source unique de vérité des touches : cf. Controls (scripts/ui/Controls.gd).
+var key_bindings: Dictionary = {}
+
 func _ready() -> void:
 	load_game()
 	apply_audio_settings()
+	Controls.apply()   # construit l'InputMap (défauts + remaps sauvegardés)
 
 
 func save_game() -> void:
@@ -644,6 +649,7 @@ func save_game() -> void:
 		"champion_badges":     champion_badges,
 		"champion_shards":     champion_shards,
 		"build_weight_cap":    build_weight_cap,
+		"key_bindings":        key_bindings,
 		"master_volume":       master_volume,
 		"sfx_volume":          sfx_volume,
 		"audio_muted":         audio_muted,
@@ -690,6 +696,7 @@ func load_game() -> void:
 	champion_badges.assign(d.get("champion_badges", []))
 	champion_shards      = int(d.get("champion_shards", champion_shards))
 	build_weight_cap     = int(d.get("build_weight_cap", build_weight_cap))
+	key_bindings         = d.get("key_bindings", {})
 	master_volume        = float(d.get("master_volume", master_volume))
 	sfx_volume           = float(d.get("sfx_volume", sfx_volume))
 	audio_muted          = bool(d.get("audio_muted", audio_muted))

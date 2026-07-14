@@ -251,27 +251,11 @@ func _build_range_ring() -> void:
 	add_child(_min_ring)
 
 
+## Les touches (capacités 1-4, dash…) sont déclarées UNE seule fois dans
+## Controls.CATALOG et appliquées au démarrage par GameManager — plus de
+## déclaration locale (c'est ce qui avait causé le conflit Tab).
 func _register_move_keys() -> void:
-	# Deux jeux de touches par capacité : Q/Z/S/D (main gauche, AZERTY) et
-	# 1/2/3/4 — les flèches gardent le déplacement.
-	var keys      := [KEY_1, KEY_2, KEY_3, KEY_4]
-	var keys_alt  := [KEY_Q, KEY_Z, KEY_S, KEY_D]
-	for i in 4:
-		var action := "use_move_%d" % (i + 1)
-		if not InputMap.has_action(action):
-			InputMap.add_action(action)
-			var ev := InputEventKey.new()
-			ev.keycode = keys[i]
-			InputMap.action_add_event(action, ev)
-			var ev_alt := InputEventKey.new()
-			ev_alt.keycode = keys_alt[i]
-			InputMap.action_add_event(action, ev_alt)
-
-	if not InputMap.has_action("dash"):
-		InputMap.add_action("dash")
-		var ev_dash := InputEventKey.new()
-		ev_dash.keycode = KEY_SHIFT
-		InputMap.action_add_event("dash", ev_dash)
+	Controls.apply()
 
 
 func _add_placeholder(color: Color) -> void:

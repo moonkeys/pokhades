@@ -20,7 +20,7 @@ func _ready() -> void:
 
 
 func _build() -> void:
-	_panel = UiKit.main_panel(Vector2(340, 130), Vector2(600, 380))
+	_panel = UiKit.main_panel(Vector2(340, 110), Vector2(600, 440))
 	add_child(_panel)
 	UiKit.pop_in(_panel)
 	UiKit.banner(_panel, "PARAMÈTRES")
@@ -49,14 +49,29 @@ func _build() -> void:
 		_rebuild()
 	)
 
+	# Contrôles : voir toutes les touches, à quoi elles servent, et les remapper.
+	var ctrl_btn := UiKit.button("⌨  Contrôles / touches", Vector2(300, 52), false)
+	ctrl_btn.position = Vector2(150, 310)
+	_panel.add_child(ctrl_btn)
+	ctrl_btn.pressed.connect(_open_controls)
+
 	var back := UiKit.button("✓  Fermer", Vector2(220, 48), false)
-	back.position = Vector2(190, 314)
+	back.position = Vector2(190, 374)
 	_panel.add_child(back)
 	back.pressed.connect(func() -> void:
 		GameManager.save_game()
 		closed.emit()
 	)
 	MenuNav.focus_first(_panel)
+
+
+func _open_controls() -> void:
+	var cs := ControlsScreen.new()
+	add_child(cs)
+	cs.closed.connect(func() -> void:
+		cs.queue_free()
+		MenuNav.focus_first(_panel)
+	, CONNECT_ONE_SHOT)
 
 
 func _rebuild() -> void:
