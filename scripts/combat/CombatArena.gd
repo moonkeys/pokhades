@@ -573,7 +573,10 @@ func _start_zone() -> void:
 	_killed     = 0
 	_room_total = 0
 	_spawn_team()
-	hud.announce_zone(_zone_label())   # le nom de la zone en grand, fondu + glow
+	# Nom de zone en GRAND uniquement à l'entrée d'un NOUVEAU biome — l'afficher
+	# à chaque salle était redondant (retour joueurs).
+	if RunManager.inst().is_biome_entry(RunManager.inst().rooms_cleared):
+		hud.announce_zone(_zone_label())
 	# Salle-boutique : pas de combat — le vendeur Perrserker et ses PNJ, puis
 	# on repart par un portail de sortie (cf. _enter_boutique).
 	if _is_shop_room(RunManager.inst().rooms_cleared):
@@ -2700,7 +2703,7 @@ func _transition_to_next_zone() -> void:
 
 		hud.set_wave(_zone_label())
 		hud.set_kills(0, 0)
-		hud.announce_zone(_zone_label())   # le nom de la zone en grand, fondu + glow
+		# Pas de ré-annonce en grand au retour de grotte : on connaît déjà la zone.
 
 		# Fondu depuis le noir
 		var tw2 := create_tween()

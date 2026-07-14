@@ -130,11 +130,20 @@ func _rebuild() -> void:
 		_first_build = false
 		UiKit.pop_in(_panel)
 
-	# Navigation flèches : si la reconstruction vient d'un changement
-	# d'onglet, on rend le focus à cet onglet (le parcours continue).
-	if _focus_tab >= 0 and _focus_tab < _tabs.size():
-		(_tabs[_focus_tab] as Button).grab_focus.call_deferred()
-		_focus_tab = -1
+	# Navigation flèches : on rend le focus à l'onglet COURANT après chaque
+	# reconstruction.
+	#
+	# BUG CORRIGÉ (bloquant, surtout en multi) : le `else` appelait
+	# MenuNav.focus_first(), qui donnait le focus au PREMIER bouton focalisable
+	# — c'est-à-dire l'onglet du 1er Pokémon. Or les onglets sélectionnent au
+	# `focus_entered` : on retombait donc systématiquement sur le 1er Pokémon.
+	# Conséquence : impossible de remplacer une attaque sur un autre Pokémon —
+	# cliquer "Apprendre" (qui reconstruit pour choisir quoi remplacer)
+	# ramenait aussitôt à l'onglet du premier.
+	var ft := _focus_tab if _focus_tab >= 0 else _sel_member
+	_focus_tab = -1
+	if ft >= 0 and ft < _tabs.size():
+		(_tabs[ft] as Button).grab_focus.call_deferred()
 	else:
 		MenuNav.focus_first(_panel)
 

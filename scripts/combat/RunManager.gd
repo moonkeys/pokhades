@@ -152,6 +152,20 @@ func biome_at(depth: int) -> int:
 	return _biome_sequence[act_of(depth)]
 
 
+## `room` est-elle la PREMIÈRE zone d'un NOUVEAU biome ? Un biome = un acte,
+## donc c'est la 1re salle de l'acte, et seulement si le biome change vraiment
+## (le mode test force le même biome partout). Sert à n'annoncer le nom en
+## grand qu'à l'entrée du biome — à chaque salle c'était redondant.
+func is_biome_entry(room: int) -> bool:
+	if room % ROOMS_PER_ACT != 0:
+		return false
+	_ensure_sequence()
+	var act := act_of(room)
+	if act <= 0:
+		return true
+	return _biome_sequence[act] != _biome_sequence[act - 1]
+
+
 const BIOME_NAMES := {
 	MapGenerator.MapTheme.FOREST: "Forêt",
 	MapGenerator.MapTheme.SWAMP:  "Marécage",
