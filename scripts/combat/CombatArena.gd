@@ -429,12 +429,10 @@ func _preload_all() -> void:
 			team_ids.append(int(eff["id"]))
 	var priority_seen: Dictionary = {}
 
-	# Phase 1 (bloquante) : équipe + salle 0 (rodents + bugs + faune du biome
-	# courant) → zone démarre dès que c'est prêt
+	# Phase 1 (bloquante) : équipe + salle 0 — le vivier est 100 % la faune du
+	# biome courant (cf. _pool_for_room), donc c'est ELLE qu'on précharge.
 	var first_room: Array = []
-	first_room.append_array(POOL_RODENTS)
-	first_room.append_array(POOL_BUGS)
-	first_room.append_array(POOL_BIOME.get(_current_theme(), []))
+	first_room.append_array(POOL_BIOME.get(_current_theme(), POOL_RODENTS))
 	var priority_ids: Array = team_ids.duplicate()
 	for eid: int in first_room:
 		if not priority_seen.has(eid):
@@ -458,10 +456,10 @@ func _preload_all() -> void:
 	# Phase 2 (arrière-plan) : pools des salles suivantes + faunes des AUTRES
 	# biomes (le thème change à chaque transition de zone — ils doivent être
 	# en cache avant que le joueur franchisse un portail)
+	# (Les anciens pools communs — rongeurs/insectes/éclaireurs/élémentaires —
+	# ne servent plus au combat : le vivier est 100 % biome. Inutile de les
+	# précharger.)
 	var background: Array = []
-	background.append_array(POOL_FLYERS)
-	background.append_array(POOL_ELEM)
-	background.append_array(POOL_SEMI_BOSS)
 	background.append_array(PokePools.all_champion_ids())   # compos du Dresseur Final
 	background.append_array(POOL_CAVE_ELITE)
 	background.append_array(POOL_CAVE_DEMIBOSS)
@@ -1126,19 +1124,21 @@ func _zone_label() -> String:
 	return "%s — %s" % [names.get(_current_theme(), "Zone"), RunManager.inst().get_zone_name()]
 
 
+## Vivier d'ennemis de la salle : 100 % la faune du BIOME courant — plus aucun
+## pool "de base" commun (retour joueurs : on retrouvait Rattata & Chenipan
+## dans toutes les zones). Palier intra-acte : les salles d'ouverture ne
+## tirent que dans les 6 espèces COMMUNES (tête de liste), la liste complète
+## s'ouvre ensuite ; les formes évoluent avec l'acte (plus bas).
 func _pool_for_room(room: int) -> Array[int]:
 	var pool: Array[int] = []
-	pool.append_array(POOL_RODENTS)
-	pool.append_array(POOL_BUGS)
-	if room >= 2: pool.append_array(POOL_FLYERS)
-	if room >= 3: pool.append_array(POOL_ELEM)
-	if room >= 4: pool.append_array(POOL_SEMI_BOSS)
-	# Faune du biome courant, en double pondération — la population locale
-	# domine la composition sans exclure les espèces communes.
 	var biome: Array = POOL_BIOME.get(_current_theme(), [])
-	for i in 2:
-		for eid: int in biome:
-			pool.append(eid)
+	if biome.is_empty():
+		biome = POOL_RODENTS   # filet de sécurité : biome sans casting défini
+	var room_in_act := room % RunManager.ROOMS_PER_ACT
+	var n: int = biome.size() if room_in_act >= 2 \
+		else mini(PokePools.BIOME_TIER_SPLIT, biome.size())
+	for i in n:
+		pool.append(int(biome[i]))
 
 	# Les seuils ci-dessus étaient tous franchis dès la salle 4 (bien avant
 	# la fin de l'acte 1, cf. RunManager.ROOMS_PER_ACT) : la composition ne

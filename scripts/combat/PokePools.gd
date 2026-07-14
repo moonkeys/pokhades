@@ -9,8 +9,11 @@ extends RefCounted
 ## et la salle-Boutique. Modifier une liste ici suffit — aucun autre
 ## fichier à toucher.
 
-# ── Pools ennemis de base (toutes zones, par palier de salle) ────────────
-# Rongeurs (Normal) — salles 1+
+# ── Anciens pools COMMUNS — plus utilisés en combat ──────────────────────
+# Le vivier est désormais 100 % la faune du biome (cf. BIOME plus bas) : on ne
+# retrouve plus Rattata & Chenipan dans toutes les zones. RODENTS ne sert plus
+# que de filet de sécurité si un biome n'a pas de casting défini.
+# Rongeurs (Normal)
 const RODENTS:   Array[int] = [399, 19, 263, 161, 819]
 # Insectes — salles 1+
 const BUGS:      Array[int] = [10, 13, 265, 824, 851]
@@ -122,18 +125,57 @@ static func all_champion_ids() -> Array[int]:
 				out.append(int(pid))
 	return out
 
-# ── Faune par biome (MapGenerator.MapTheme → ids) — mélangée au pool de
-# base en double pondération : la population locale domine sans exclure
-# les espèces communes. ──────────────────────────────────────────────────
+# ── Faune par biome (MapGenerator.MapTheme → ids) ────────────────────────
+# LE VIVIER EST 100 % LOCAL : plus aucun pool "de base" commun (Rattata &
+# Chenipan partout) — retour joueurs : « je veux vraiment des Pokémon
+# adversaires particuliers pour chaque biome ». Chaque biome a 12 espèces,
+# ORDONNÉES des plus communes/faibles aux plus rares : les 6 premières
+# peuplent les salles d'ouverture d'un acte, la liste complète s'ouvre
+# ensuite (cf. CombatArena._pool_for_room), et les formes évoluent avec
+# l'acte. Modifier une ligne ici suffit à re-caster un biome.
+const BIOME_TIER_SPLIT := 6   # nb d'espèces "communes" en tête de liste
+
 const BIOME: Dictionary = {
-	MapGenerator.MapTheme.FOREST: [46, 69, 273, 285, 204, 540],   # Paras, Chétiflor, Grainipiot, Balignon, Pomdepik, Larveyette
-	MapGenerator.MapTheme.SWAMP:  [194, 88, 23, 41, 270, 283],    # Axoloto, Tadmorv, Abo, Nosferapti, Nénupiot, Arakdo
-	MapGenerator.MapTheme.MEADOW: [187, 415, 669, 179, 659],      # Granivol, Apitrini, Flabébé, Wattouat, Sapereau
-	MapGenerator.MapTheme.ROCKY:  [74, 66, 296, 304, 524, 744],   # Racaillou, Machoc, Makuhita, Galekid, Nodulithe, Rocabot
-	MapGenerator.MapTheme.AUTUMN: [585, 216, 46, 163, 204],       # Vivaldaim, Teddiursa, Paras, Hoothoot, Pomdepik
-	MapGenerator.MapTheme.LAKE:   [118, 129, 194, 54, 60, 79],    # Poissirène, Magicarpe, Axoloto, Psykokwak, Ptitard, Ramoloss
-	MapGenerator.MapTheme.VOLCANO: [77, 58, 218, 322, 324, 126],  # Ponyta, Caninos, Limagma, Chamallot, Chartor, Magmar
-	MapGenerator.MapTheme.VILLAGE: [19, 52, 58, 506, 263, 16],    # Rattata, Miaouss, Caninos, Ponchiot, Zigzaton, Roucool
+	# Prairie — Normal / Plante / Vol : la faune la plus douce (acte 1).
+	MapGenerator.MapTheme.MEADOW: [
+		187, 16, 165, 298, 179, 659,        # Granivol, Roucool, Coxy, Azurill, Wattouat, Sapereau
+		415, 669, 191, 522, 831, 43,        # Apitrini, Flabébé, Tournegrin, Zébibron, Moumouton, Mystherbe
+	],
+	# Forêt — Insecte / Plante, dense et grouillante.
+	MapGenerator.MapTheme.FOREST: [
+		10, 13, 265, 46, 69, 273,           # Chenipan, Aspicot, Chenipotte, Paras, Chétiflor, Grainipiot
+		285, 204, 540, 401, 543, 214,       # Balignon, Pomdepik, Larveyette, Crikzik, Venipatte, Scarhino
+	],
+	# Bois d'automne — Normal / Plante / Sol, teintes fauves.
+	MapGenerator.MapTheme.AUTUMN: [
+		163, 265, 46, 204, 216, 585,        # Hoothoot, Chenipotte, Paras, Pomdepik, Teddiursa, Vivaldaim
+		511, 190, 234, 214, 273, 43,        # Feuillajou, Capumain, Cerfrousse, Scarhino, Grainipiot, Mystherbe
+	],
+	# Lac — Eau exclusivement.
+	MapGenerator.MapTheme.LAKE: [
+		129, 118, 60, 54, 194, 90,          # Magicarpe, Poissirène, Ptitard, Psykokwak, Axoloto, Kokiyas
+		79, 116, 170, 341, 349, 458,        # Ramoloss, Hypotrempe, Loupio, Écrapince, Barpau, Babimanta
+	],
+	# Marécage — Poison / Eau / Sol, vaseux et toxique.
+	MapGenerator.MapTheme.SWAMP: [
+		23, 41, 194, 270, 543, 316,         # Abo, Nosferapti, Axoloto, Nénupiot, Venipatte, Gloupti
+		88, 283, 453, 690, 109, 60,         # Tadmorv, Arakdo, Cradopaud, Vénalgue, Smogo, Ptitard
+	],
+	# Montagne — Roche / Sol / Combat, dur et lent.
+	MapGenerator.MapTheme.ROCKY: [
+		74, 27, 50, 296, 524, 744,          # Racaillou, Sabelette, Taupiqueur, Makuhita, Nodulithe, Rocabot
+		66, 304, 231, 95, 111, 246,         # Machoc, Galekid, Phanpy, Onix, Rhinocorne, Embrylex
+	],
+	# Volcan — Feu / Sol / Roche, brûlant.
+	MapGenerator.MapTheme.VOLCANO: [
+		218, 37, 58, 77, 322, 240,          # Limagma, Goupix, Caninos, Ponyta, Chamallot, Magby
+		324, 126, 4, 607, 631, 111,         # Chartor, Magmar, Salamèche, Funécire, Aflamanoir, Rhinocorne
+	],
+	# Village — faune urbaine / domestique, qui traîne autour des maisons.
+	MapGenerator.MapTheme.VILLAGE: [
+		19, 263, 16, 52, 509, 506,          # Rattata, Zigzaton, Roucool, Miaouss, Chacripan, Ponchiot
+		58, 431, 572, 293, 209, 83,         # Caninos, Chaglam, Chinchidou, Chuchmur, Snubbull, Canarticho
+	],
 }
 
 # ── PNJ de la salle-Boutique ─────────────────────────────────────────────
