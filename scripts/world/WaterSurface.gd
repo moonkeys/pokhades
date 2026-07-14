@@ -26,6 +26,7 @@ uniform vec4 deep_color    : source_color = vec4(0.13, 0.32, 0.42, 0.86);
 uniform vec4 foam_color    : source_color = vec4(0.93, 0.97, 0.95, 1.0);
 uniform float wave_amp  = 0.07;
 uniform float wave_freq = 1.6;
+uniform float emission_strength = 0.0;   // > 0 : surface émissive (LAVE)
 
 varying float v_shore;   // 0 = rive, 1 = large (COLOR.r du maillage)
 varying float v_wave;    // hauteur de houle locale (-1..1)
@@ -80,6 +81,9 @@ void fragment() {
 	ALPHA  = max(mix(shallow_color.a, deep_color.a, depth_t), foam * 0.9);
 	ROUGHNESS = 0.2;
 	SPECULAR  = 0.5;
+	// LAVE : la surface rayonne (les bandes de "houle" claires deviennent des
+	// veines incandescentes) — accentué par le glow du WorldEnvironment volcan.
+	EMISSION = col * emission_strength;
 }
 """
 
@@ -94,7 +98,7 @@ static func get_shader() -> Shader:
 ## Construit la surface pour `cells` (Array de Vector2i, une case = 1×1 u).
 ## Le nœud retourné est à y=0 — l'appelant le positionne (ex : y = 0.06).
 static func build(cells: Array, shallow: Color, deep: Color,
-		foam: Color = Color(0.93, 0.97, 0.95)) -> MeshInstance3D:
+		foam: Color = Color(0.93, 0.97, 0.95), emission: float = 0.0) -> MeshInstance3D:
 	var cell_set: Dictionary = {}
 	for c: Vector2i in cells:
 		cell_set[c] = true
@@ -132,6 +136,7 @@ static func build(cells: Array, shallow: Color, deep: Color,
 	mat.set_shader_parameter("shallow_color", shallow)
 	mat.set_shader_parameter("deep_color", deep)
 	mat.set_shader_parameter("foam_color", foam)
+	mat.set_shader_parameter("emission_strength", emission)
 	mi.material_override = mat
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	return mi

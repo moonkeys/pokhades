@@ -84,7 +84,7 @@ func _pool_for_act(act: int) -> Array[int]:
 		0: return [MapGenerator.MapTheme.MEADOW]
 		1: return [MapGenerator.MapTheme.FOREST, MapGenerator.MapTheme.AUTUMN, MapGenerator.MapTheme.LAKE]
 		2: return [MapGenerator.MapTheme.SWAMP, MapGenerator.MapTheme.LAKE, MapGenerator.MapTheme.AUTUMN]
-		_: return [MapGenerator.MapTheme.ROCKY, MapGenerator.MapTheme.SWAMP]
+		_: return [MapGenerator.MapTheme.ROCKY, MapGenerator.MapTheme.SWAMP, MapGenerator.MapTheme.VOLCANO]
 
 
 ## UN biome par acte (jamais deux actes identiques d'affilée) + le CHAMPION
@@ -147,6 +147,7 @@ const BIOME_NAMES := {
 	MapGenerator.MapTheme.ROCKY:  "Montagne",
 	MapGenerator.MapTheme.AUTUMN: "Bois d'automne",
 	MapGenerator.MapTheme.LAKE:   "Lac",
+	MapGenerator.MapTheme.VOLCANO: "Volcan",
 }
 
 func biome_name(theme: int) -> String:

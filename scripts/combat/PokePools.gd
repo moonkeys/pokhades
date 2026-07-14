@@ -59,7 +59,49 @@ const BIOME_CHAMPIONS := {
 	MapGenerator.MapTheme.SWAMP:  ["Koga"],
 	MapGenerator.MapTheme.LAKE:   ["Ondine"],
 	MapGenerator.MapTheme.ROCKY:  ["Pierre", "Giovanni"],
+	MapGenerator.MapTheme.VOLCANO: ["Auguste"],   # Blaine, type Feu
 }
+
+# ── Apparence du champion — planches Characters/trainer_*.png (Pokémon
+# Essentials, convention RPG Maker 4×4). Repris des VRAIS chefs d'arène
+# quand un sprite dédié existe ; "Blanche" (type Normal, sans équivalent
+# canon) reçoit un look de dresseuse d'élite générique. ──────────────────
+const TRAINER_SPRITE_DIR := "res://Pokemon Essentials v21.1 2023-07-30/Graphics/Characters/"
+const CHAMPION_SPRITE: Dictionary = {
+	"Pierre":    "trainer_LEADER_Brock.png",
+	"Ondine":    "trainer_LEADER_Misty.png",
+	"Major Bob": "trainer_LEADER_Surge.png",
+	"Erika":     "trainer_LEADER_Erika.png",
+	"Koga":      "trainer_LEADER_Koga.png",
+	"Morgane":   "trainer_LEADER_Sabrina.png",
+	"Auguste":   "trainer_LEADER_Blaine.png",
+	"Giovanni":  "trainer_LEADER_Giovanni.png",
+	"Blanche":   "trainer_COOLTRAINER_F.png",
+}
+
+## Réplique d'intro du champion — affichée dans la boîte de dialogue à
+## l'entrée de sa salle, avant que ses Pokémon n'apparaissent.
+const CHAMPION_INTRO_LINE: Dictionary = {
+	"Pierre":    "J'utilise des Pokémon Roche, alors ma défense est parfaite ! Essaie un peu de la percer !",
+	"Ondine":    "Héhé… tu croyais affronter une simple débutante ? Mes Pokémon d'Eau vont te submerger !",
+	"Major Bob": "Un vrai combat, ça se gagne à l'électricité ! Prépare-toi à un choc !",
+	"Erika":     "Oh… je te prie de m'excuser. Mes Pokémon Plante ont un parfum si envoûtant qu'on s'endort presque.",
+	"Koga":      "Fwahaha ! Tu ne verras même pas mes Pokémon Poison venir te frapper dans l'ombre !",
+	"Morgane":   "Je vois déjà l'issue de ce combat… et elle n'est pas en ta faveur.",
+	"Auguste":   "Le feu de la passion brûle en moi ! Voyons si tu peux résister à sa chaleur !",
+	"Giovanni":  "Je suis le chef de la Team Rocket… et je ne perds JAMAIS sur mon propre terrain.",
+	"Blanche":   "Peu importe le type, la force et la stratégie suffisent. Montre-moi ce que tu vaux !",
+}
+
+
+## Chemin complet du sprite du champion `champ_name` ({} si introuvable).
+static func champion_sprite_path(champ_name: String) -> String:
+	var file: String = CHAMPION_SPRITE.get(champ_name, "")
+	return TRAINER_SPRITE_DIR + file if file != "" else ""
+
+
+static func champion_intro_line(champ_name: String) -> String:
+	return CHAMPION_INTRO_LINE.get(champ_name, "Prépare-toi au combat !")
 
 ## Compo de champion par nom ("Blanche" → Dictionary), {} si introuvable.
 static func team_by_name(champ_name: String) -> Dictionary:
@@ -89,6 +131,7 @@ const BIOME: Dictionary = {
 	MapGenerator.MapTheme.ROCKY:  [74, 66, 296, 304, 524, 744],   # Racaillou, Machoc, Makuhita, Galekid, Nodulithe, Rocabot
 	MapGenerator.MapTheme.AUTUMN: [585, 216, 46, 163, 204],       # Vivaldaim, Teddiursa, Paras, Hoothoot, Pomdepik
 	MapGenerator.MapTheme.LAKE:   [118, 129, 194, 54, 60, 79],    # Poissirène, Magicarpe, Axoloto, Psykokwak, Ptitard, Ramoloss
+	MapGenerator.MapTheme.VOLCANO: [77, 58, 218, 322, 324, 126],  # Ponyta, Caninos, Limagma, Chamallot, Chartor, Magmar
 }
 
 # ── PNJ de la salle-Boutique ─────────────────────────────────────────────
@@ -104,4 +147,5 @@ const BERRIES_BY_THEME: Dictionary = {
 	MapGenerator.MapTheme.SWAMP:  ["AGUAVBERRY", "RAWSTBERRY", "CHESTOBERRY"],
 	MapGenerator.MapTheme.AUTUMN: ["SITRUSBERRY", "FIGYBERRY", "NANABBERRY"],
 	MapGenerator.MapTheme.LAKE:   ["ORANBERRY", "ASPEARBERRY", "MAGOBERRY"],
+	MapGenerator.MapTheme.VOLCANO: ["RAWSTBERRY", "CHERIBERRY", "LEPPABERRY"],   # anti-brûlure
 }

@@ -64,6 +64,7 @@ func _theme_ambiance(theme: int, is_cave: bool) -> Dictionary:
 		MapGenerator.MapTheme.ROCKY:  return _merged(_ROCKY_PALETTE)
 		MapGenerator.MapTheme.AUTUMN: return _merged(_AUTUMN_PALETTE)
 		MapGenerator.MapTheme.LAKE:   return _merged(_LAKE_PALETTE)
+		MapGenerator.MapTheme.VOLCANO: return _merged(_VOLCANO_PALETTE)
 		_:                            return _merged(_MEADOW_PALETTE)
 
 
@@ -188,6 +189,31 @@ const _MEADOW_PALETTE := {
 	"cloud_alpha":  0.62,
 	"butterflies":  6,
 	"ground_tint":  Color(0.42, 0.64, 0.32),
+}
+
+const _VOLCANO_PALETTE := {
+	# Volcan : ciel de cendre rougeoyant, brume orange dense, lumière chaude
+	# rasante, braises flottantes (fireflies détournées en orange). Le glow
+	# accentué fait ressortir la lave émissive (cf. MapRender3D). Collines/
+	# ground très sombres (basalte/cendre).
+	"sky_top":      Color(0.20, 0.10, 0.12),
+	"sky_horizon":  Color(0.55, 0.22, 0.12),
+	"ambient_energy": 0.26,
+	"fog_color":    Color(0.55, 0.24, 0.14),
+	"fog_density":  0.014,
+	"glow_intensity": 0.32,
+	"glow_bloom":   0.12,
+	"sun_color":    Color(1.0, 0.62, 0.40),
+	"sun_energy":   0.60,
+	"hill_a":       Color(0.26, 0.17, 0.16),
+	"hill_b":       Color(0.18, 0.12, 0.12),
+	"cloud_alpha":  0.35,
+	"cloud_tint":   Color(0.5, 0.32, 0.28),
+	"mist":         true,
+	"mist_color":   Color(0.55, 0.30, 0.18, 0.06),   # fumerolles
+	"fireflies":    Color(1.0, 0.55, 0.18),          # braises
+	"midground_cliffs": true,
+	"ground_tint":  Color(0.30, 0.18, 0.16),
 }
 
 const _CAVE_PALETTE := {

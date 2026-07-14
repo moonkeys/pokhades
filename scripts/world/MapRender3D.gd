@@ -193,8 +193,8 @@ func _build_cave_crystals() -> void:
 ## BerryPickup). Rocailleux exclu (pas de végétation). Placés après les
 ## collisions d'obstacles pour ne pas gêner le pathfinding des cases libres.
 func _build_berry_trees() -> void:
-	if _map.theme == MapGenerator.MapTheme.ROCKY:
-		return
+	if _map.theme == MapGenerator.MapTheme.ROCKY or _map.theme == MapGenerator.MapTheme.VOLCANO:
+		return   # rocailleux / volcan : pas de végétation à baies
 	var sz: Vector2i = _map.get_map_cell_size()
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash(sz) * 7 + 13
@@ -261,9 +261,15 @@ func _bake_ground_plane() -> void:
 	# Sol SATURÉ/assombri via shader (cf. GrassPatch.ground_material) — la
 	# texture bakée sortait trop claire et délavée par rapport aux sprites.
 	# Mode "peint" (retour joueurs : décor trop "dalle plate") — validé sur
-	# Prairie/Forêt, désormais étendu à TOUS les biomes.
+	# Prairie/Forêt, désormais étendu à TOUS les biomes. Volcan : sol de cendre
+	# recoloré sombre (tint + strength) — la tuile de base resterait trop claire.
+	var g_tint := Color.WHITE
+	var g_ts   := 0.0
+	if _map.theme == MapGenerator.MapTheme.VOLCANO:
+		g_tint = Color(0.34, 0.20, 0.18)
+		g_ts   = 0.80
 	mesh_inst.material_override = GrassPatch.ground_material(
-		ImageTexture.create_from_image(img), 1.45, 0.88, 1.0, Color.WHITE, 0.0, 1.0)
+		ImageTexture.create_from_image(img), 1.45, 0.88, 1.0, g_tint, g_ts, 1.0)
 	mesh_inst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON   # les collines portent maintenant une ombre
 	add_child(mesh_inst)
 
@@ -382,8 +388,10 @@ func _build_water_surface() -> void:
 	if cells.is_empty():
 		return
 	var colors := _water_colors_for_theme()
+	# Volcan : la "surface d'eau" est de la LAVE — émissive (glow) et haute.
+	var emission := 1.6 if _map.theme == MapGenerator.MapTheme.VOLCANO else 0.0
 	var mi := WaterSurface.build(cells, colors["shallow"], colors["deep"],
-		colors.get("foam", Color(0.93, 0.97, 0.95)))
+		colors.get("foam", Color(0.93, 0.97, 0.95)), emission)
 	mi.position = Vector3(0, WATER_SURFACE_Y, 0)
 	add_child(mi)
 
@@ -408,6 +416,12 @@ func _water_colors_for_theme() -> Dictionary:
 			# Grand lac : eau claire et bleue, écume blanche franche
 			return {"shallow": Color(0.34, 0.72, 0.86, 0.66), "deep": Color(0.10, 0.34, 0.56, 0.88),
 				"foam": Color(0.95, 0.98, 1.00)}
+		MapGenerator.MapTheme.VOLCANO:
+			# LAVE : rouge-orange incandescent, "écume" = croûte jaune vif sur
+			# les veines. Opaque (on ne voit pas au travers). Émission ajoutée
+			# dans _build_water_surface.
+			return {"shallow": Color(1.0, 0.55, 0.12, 0.98), "deep": Color(0.75, 0.16, 0.05, 1.0),
+				"foam": Color(1.0, 0.90, 0.35)}
 		_:  # FOREST
 			return {"shallow": Color(0.28, 0.58, 0.60, 0.70), "deep": Color(0.12, 0.32, 0.40, 0.86)}
 
@@ -428,6 +442,10 @@ const _WATER_EDGE_DIRS := [
 
 func _build_water_edges() -> void:
 	if not is_instance_valid(_map._water):
+		return
+	# Volcan : pas de frange d'herbe verte autour de la lave (le bord est déjà
+	# fondu en cendre sombre par _blend_terrain_edges).
+	if _map.theme == MapGenerator.MapTheme.VOLCANO:
 		return
 	var tex: Texture2D = load(WATER_EDGE_FILE)
 	if tex == null:
@@ -576,6 +594,10 @@ func _is_kind(grid: Array, sz: Vector2i, x: int, y: int, kind: int) -> float:
 ## case, pour rester cohérent avec _apply_to_tilemap).
 func _atlas_for_terrain(kind: int, c: int, r: int) -> Vector2i:
 	if kind == MapGenerator.Terrain.WATER:
+		# Volcan : le "bord d'eau" est une rive de LAVE — on fond vers le sol
+		# de cendre (pas la tuile d'eau bleue) ; la lave 3D émissive recouvre.
+		if _map.theme == MapGenerator.MapTheme.VOLCANO:
+			return _map._ground_tile
 		return _map._water_tile
 	var pt: Array = _map._path_tiles
 	if pt.is_empty():
@@ -647,8 +669,8 @@ func _is_flat_decor(atlas: Vector2i) -> bool:
 # de croix de quads, juste avec de vrais volumes à la place.
 
 func _build_grass() -> void:
-	if _map.arena_mode:
-		return   # grotte : pas d'herbe (cf. _build_cave_decor pour les props)
+	if _map.arena_mode or _map.theme == MapGenerator.MapTheme.VOLCANO:
+		return   # grotte / volcan (cendre nue) : pas d'herbe
 	# Haute herbe (tile_tg) : TOUFFES BUISSONNEUSES pixel-art (cf. GrassPatch,
 	# style de la référence utilisateur — brins arqués, variante à cœur creux),
 	# c'est la zone de FURTIVITÉ (joueur éclairci, ennemis invisibles).
@@ -700,8 +722,8 @@ const _PIXEL_GRASS_TINTS := {
 const _PIXEL_GRASS_MAX := 5000   # plafond d'instances (perf)
 
 func _build_pixel_grass() -> void:
-	if _map.arena_mode:
-		return   # grotte : sol rocheux, pas de tapis d'herbe
+	if _map.arena_mode or _map.theme == MapGenerator.MapTheme.VOLCANO:
+		return   # grotte / volcan : sol nu, pas de tapis d'herbe
 	var sz: Vector2i = _map.get_map_cell_size()
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash(sz) * 31 + 7
@@ -756,8 +778,8 @@ func _grass_tints_for_theme() -> Dictionary:
 ## de teintes dans un même MultiMesh). Le kit n'a pas de fleur blanche
 ## dédiée : on réutilise la forme "jaune" en reteintant son matériau pétale.
 func _build_flowers() -> void:
-	if _map.arena_mode:
-		return   # grotte : pas de fleurs
+	if _map.arena_mode or _map.theme == MapGenerator.MapTheme.VOLCANO:
+		return   # grotte / volcan : pas de fleurs
 	_build_kit_flora_layer(_map.tile_fleur_rouge, ["flower_redA.glb", "flower_redB.glb", "flower_redC.glb"], 2.1)
 	_build_kit_flora_layer(_map.tile_fleur_violette, ["flower_purpleA.glb", "flower_purpleB.glb", "flower_purpleC.glb"], 2.1)
 	_build_kit_flora_layer(_map.tile_fleur_blanche,
@@ -945,6 +967,9 @@ func _cliff_colors_for_theme() -> Dictionary:
 			return {"grass": Color(0.44, 0.48, 0.34), "dirt": Color(0.58, 0.50, 0.42)}
 		MapGenerator.MapTheme.AUTUMN:
 			return {"grass": Color(0.72, 0.56, 0.24), "dirt": Color(0.52, 0.42, 0.32)}
+		MapGenerator.MapTheme.VOLCANO:
+			# Basalte sombre teinté de braise — pas de vert.
+			return {"grass": Color(0.30, 0.20, 0.18), "dirt": Color(0.26, 0.18, 0.16)}
 		_:  # FOREST
 			return {"grass": Color(0.30, 0.50, 0.26), "dirt": Color(0.46, 0.42, 0.36)}
 

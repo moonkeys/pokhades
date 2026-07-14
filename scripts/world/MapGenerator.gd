@@ -4,7 +4,7 @@ extends MapBase  # MUST extend MapBase — CombatArena.gd cast: get_node("Map") 
 
 enum Terrain { GRASS = 0, PATH = 1, WATER = 2, TREE = 3 }
 enum GatingType { NONE = 0, SURF = 1, COUPE = 2, FORCE = 3 }
-enum MapTheme { FOREST = 0, SWAMP = 1, MEADOW = 2, ROCKY = 3, AUTUMN = 4, LAKE = 5 }
+enum MapTheme { FOREST = 0, SWAMP = 1, MEADOW = 2, ROCKY = 3, AUTUMN = 4, LAKE = 5, VOLCANO = 6 }
 ## Forme de la zone jouable — casse la silhouette rectangulaire par défaut.
 ## RECT reste possible (tirage pondéré) pour ne pas perdre les grandes maps
 ## ouvertes ; CIRCLE/L_SHAPE rognent les coins en forêt dense (cf.
@@ -398,7 +398,7 @@ func _apply_theme() -> void:
 		if not Engine.is_editor_hint():
 			theme = RunManager.inst().current_biome()
 		else:
-			theme = [MapTheme.FOREST, MapTheme.SWAMP, MapTheme.MEADOW, MapTheme.ROCKY, MapTheme.AUTUMN, MapTheme.LAKE][_rng.randi() % 6]
+			theme = [MapTheme.FOREST, MapTheme.SWAMP, MapTheme.MEADOW, MapTheme.ROCKY, MapTheme.AUTUMN, MapTheme.LAKE, MapTheme.VOLCANO][_rng.randi() % 7]
 	var cfg := _theme_config(theme)
 	_ground_tile    = cfg["ground_tile"]
 	_water_tile     = cfg["water_tile"]
@@ -529,6 +529,25 @@ func _theme_config(t: MapTheme) -> Dictionary:
 				"flower_density":  0.05,
 				"path_width":      3,
 				"gating":          GatingType.SURF,
+				"water_mode":      "deep",
+			}
+		MapTheme.VOLCANO:
+			return {
+				# Volcan : sol de cendre sombre, coulées de LAVE (rendues orange
+				# émissif à la place de l'eau, cf. MapRender3D), arbres brûlés,
+				# terrain chaotique. La lave bloque (deep) — brûlure au contact
+				# gérée côté combat. Pas de Surf sur la lave (gating FORCE).
+				"ground_tile": tile_sol_boueux,
+				"water_tile":   tile_water,
+				"path_tiles":   [tile_chemin_terre],
+				"tree_origins": [tile_arbre_mort_orig],   # arbres morts/brûlés
+				"tree_density":    0.22,
+				"water_threshold": 0.50,   # coulées de lave bien présentes
+				"min_water_pools": 3,
+				"tg_threshold":    0.65,   # quasi pas de haute herbe
+				"flower_density":  0.0,
+				"path_width":      3,
+				"gating":          GatingType.FORCE,
 				"water_mode":      "deep",
 			}
 	return {}
