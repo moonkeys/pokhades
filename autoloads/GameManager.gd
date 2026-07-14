@@ -330,15 +330,26 @@ const DASH_CHARGE_COSTS: Array[int] = [60, 120, 200]  # coût des charges de Das
 # ── Système de poids de build (version simple, validée en plan) ────────
 # Chaque Pokémon/objet tenu/CT équipée a un poids FIXE ; la somme ne doit
 # pas dépasser `build_weight_cap` pour lancer une run (cf. HubWorld._start_
-# run). Le plafond s'augmente à la Boutique d'Améliorations. Retour joueurs :
-# encourager une compo équilibrée plutôt que 6 pseudo-légendaires + items.
+# run). Retour joueurs : encourager une compo équilibrée plutôt que 6
+# pseudo-légendaires + items.
+#
+# ÉCONOMIE : le plafond se paie en ÉCLATS DE CHAMPION (lâchés uniquement par
+# les boss, cf. CombatArena._reward_boss) et NON en baies — c'est la seule
+# dépense de cette ressource, qui n'en avait aucune jusqu'ici. Revenu ≈ 13
+# éclats par run complète → il faut ~2 runs abouties pour monter au max.
 var build_weight_cap: int = 24
 const WEIGHT_CAP_STEP  := 4     # gain par palier
 const WEIGHT_CAP_MAX   := 40
-const WEIGHT_CAP_COSTS: Array[int] = [150, 250, 400, 600]  # 24→28→32→36→40
+const WEIGHT_CAP_COSTS: Array[int] = [2, 4, 7, 12]   # en ÉCLATS — 24→28→32→36→40
+
+func spend_champion_shards(n: int) -> bool:
+	if n <= 0 or champion_shards < n:
+		return false
+	champion_shards -= n
+	return true
 
 func buy_weight_cap(cost: int) -> bool:
-	if build_weight_cap >= WEIGHT_CAP_MAX or not spend_gold(cost):
+	if build_weight_cap >= WEIGHT_CAP_MAX or not spend_champion_shards(cost):
 		return false
 	build_weight_cap = mini(build_weight_cap + WEIGHT_CAP_STEP, WEIGHT_CAP_MAX)
 	return true

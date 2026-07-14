@@ -18,10 +18,14 @@ signal buy_potion(member_index: int, item_id: String)
 signal boon_stat(stat_id: String)
 signal closed
 
+## Conversion ₽ → Baies. Taux VOLONTAIREMENT ingrat (≈0.25 baie/₽ au lieu de
+## 0.43) : c'était le principal robinet d'inflation des baies, et convertir sa
+## bourse en monnaie méta ne doit jamais être plus rentable que d'acheter de
+## quoi survivre à la run.
 const BERRY_PACKS: Array[Dictionary] = [
-	{"amount": 20,  "price": 60},
-	{"amount": 50,  "price": 130},
-	{"amount": 120, "price": 280},
+	{"amount": 20,  "price": 100},
+	{"amount": 50,  "price": 220},
+	{"amount": 120, "price": 480},
 ]
 
 const STAT_BOONS: Array[Dictionary] = [

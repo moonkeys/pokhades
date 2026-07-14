@@ -194,7 +194,8 @@ func _build() -> void:
 	# cf. GameManager.compute_team_weight — Pokémon + objets tenus + CT
 	# équipées ne doivent pas dépasser ce plafond pour lancer une run.
 	_lbl(panel, "Plafond de poids de build", 40, 578, 460, 26, 17, UiKit.CREAM)
-	_lbl(panel, "Autorise une équipe plus lourde (Pokémon évolués, objets, CT)",
+	_lbl(panel, "Se paie en ✦ Éclats de Champion (lâchés par les boss) — tu en as %d"
+		% GameManager.champion_shards,
 		40, 602, 460, 20, 12, Color(0.85, 0.78, 0.62))
 
 	var cap_card := Panel.new()
@@ -210,8 +211,8 @@ func _build() -> void:
 	else:
 		var tier := (GameManager.build_weight_cap - 24) / GameManager.WEIGHT_CAP_STEP
 		var wcost: int = GameManager.WEIGHT_CAP_COSTS[tier]
-		var wbtn := _mk_buy_btn("%d Baies" % wcost, Vector2(178, 12), Vector2(112, 32),
-			GameManager.gold >= wcost)
+		var wbtn := _mk_buy_btn("✦ %d Éclats" % wcost, Vector2(178, 12), Vector2(112, 32),
+			GameManager.champion_shards >= wcost)
 		wbtn.pressed.connect(func() -> void:
 			if GameManager.buy_weight_cap(wcost):
 				Sfx.play_file(Sfx.SE_BUY_ITEM)

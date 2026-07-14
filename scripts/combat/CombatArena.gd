@@ -1169,14 +1169,16 @@ func _on_room_cleared() -> void:
 		_run_victory()
 		return
 
-	# Courbe adoucie (retour joueurs : "trop riche dès le biome 3") — la
-	# salle 15 rapportait 330 ₽, elle en rapporte maintenant 145.
-	var gold := 25 + room * 8
+	# ÉCONOMIE (passe d'équilibrage) : revenu ₽ resserré et aplati — retour
+	# joueurs "trop facile d'acheter potions/objets". On passe de 25+room·8
+	# (≈5000 ₽/run, ~1800 ₽ à la dernière boutique) à 20+room·5 (≈2900 ₽/run,
+	# ~1000 ₽) : la boutique redevient un VRAI choix plutôt qu'un plein.
+	var gold := 20 + room * 5
 	if _is_boss_room(room):
-		# Butin de boss NETTEMENT plus généreux, croissant avec l'acte : ₽ ×4
+		# Butin de boss plus généreux, croissant avec l'acte : ₽ ×3
 		# + un gros lot de Baies + des Éclats de Champion (ressource), et un
 		# badge de gloire à la première victoire (cf. _reward_boss).
-		gold *= 4
+		gold *= 3
 		Sfx.play_music(Sfx.BGM_VICTORY)   # jusqu'au changement de zone
 		if is_instance_valid(_current_trainer) and is_instance_valid(_map):
 			_current_trainer.flee_to(_map.cell_to_world3(_map.exit_B))
