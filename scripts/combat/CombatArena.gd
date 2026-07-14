@@ -551,6 +551,7 @@ func _preload_moves() -> void:
 					md.damage_class = move_data.get("damage_class", "physical")
 					md.level_learned = lv
 					md.effect       = ct_effect
+					md.tune()   # portée/portée mini/cadence propres à ce move
 					pd.preloaded_moves.append(md)
 			counter[0] += 1
 			if counter[0] >= total:
@@ -1371,6 +1372,7 @@ func _load_recruit_moves(pid: int) -> void:
 			move.power         = pw
 			move.damage_class  = md.get("damage_class", "physical")
 			move.level_learned = lvl
+			move.tune()
 			pd.preloaded_moves.append(move)
 			pd.preloaded_moves.sort_custom(func(a: MoveData, b: MoveData) -> bool:
 				return a.level_learned < b.level_learned)
@@ -1524,7 +1526,7 @@ func _materialize_enemy(id: int, lv: int, pos: Vector3, champion: bool, boss: bo
 	add_child(enemy)
 	enemy.global_position = pos
 	enemy.setup(instance, champion, boss)
-	enemy.died.connect(_on_enemy_died.bind(id, data.is_base_form))
+	enemy.died.connect(_on_enemy_died.bind(id, data.is_base_form, enemy))
 	CombatVFX.spawn_death_poof(self, pos, Color(0.85, 0.88, 0.95))   # nuage d'arrivée
 	if _mp:
 		var ename := String(enemy.name)
@@ -1574,7 +1576,8 @@ func _random_valid_spawn() -> Vector3:
 
 # ── Signaux ───────────────────────────────────────────────────────────
 
-func _on_enemy_died(xp_reward: int, attacker_peer: int, pid: int, is_base_form: bool) -> void:
+func _on_enemy_died(xp_reward: int, attacker_peer: int, pid: int, is_base_form: bool,
+		enemy: Node = null) -> void:
 	_alive  -= 1
 	_killed += 1
 	hud.set_kills(_killed, _room_total)
@@ -1591,9 +1594,19 @@ func _on_enemy_died(xp_reward: int, attacker_peer: int, pid: int, is_base_form: 
 			if is_instance_valid(mine) and not mine.pokemon_instance.is_fainted():
 				mine.gain_xp(xp_reward)
 	else:
-		for member in _team:
-			if is_instance_valid(member) and not member.pokemon_instance.is_fainted():
-				member.gain_xp(xp_reward)
+		# Solo : l'XP ne va QU'AU Pokémon qui a porté le coup fatal (retour
+		# joueurs : « je ne veux pas l'effet multi-XP »). Avant, chaque mort
+		# créditait TOUS les membres de l'équipe du plein montant.
+		var killer: Node = null
+		if is_instance_valid(enemy):
+			killer = enemy.get("last_attacker")
+		if is_instance_valid(killer) and killer in _team \
+				and not killer.pokemon_instance.is_fainted():
+			killer.gain_xp(xp_reward)
+		elif _active_index < _team.size() and is_instance_valid(_team[_active_index]) \
+				and not _team[_active_index].pokemon_instance.is_fainted():
+			# Mort sans auteur identifié (dégâts sur la durée, lave…) → au membre actif.
+			_team[_active_index].gain_xp(xp_reward)
 
 	if GameManager.record_defeat(pid, is_base_form):
 		var name_fr := (_cache[str(pid)] as PokemonData).name_fr if _cache.has(str(pid)) else "Pokémon"
@@ -1903,6 +1916,7 @@ func _learn_boutique_move(member_index: int, option_index: int, replace_index: i
 	md.power         = int(offer["power"])
 	md.damage_class  = offer["class"]
 	md.level_learned = 0
+	md.tune()
 
 	if replace_index >= 0 and replace_index < inst.equipped_moves.size():
 		inst.equipped_moves[replace_index] = md
@@ -2115,6 +2129,7 @@ func _claim_boon_skill(member_index: int, option_index: int, replace_index: int)
 	md.power         = int(offer["power"])
 	md.damage_class  = offer["class"]
 	md.level_learned = 0
+	md.tune()
 
 	if replace_index >= 0 and replace_index < inst.equipped_moves.size():
 		inst.equipped_moves[replace_index] = md
@@ -3095,7 +3110,7 @@ func _spawn_cave_demiboss(lv: int) -> int:
 	var sz := _map.get_map_cell_size()
 	enemy.global_position = _map.cell_to_world3(Vector2i(sz.x / 2, sz.y / 2))
 	enemy.setup(instance, false, false, true)   # demi_boss = true
-	enemy.died.connect(_on_enemy_died.bind(id, data.is_base_form))
+	enemy.died.connect(_on_enemy_died.bind(id, data.is_base_form, enemy))
 	_alive += 1
 	if _mp:
 		var ename := String(enemy.name)

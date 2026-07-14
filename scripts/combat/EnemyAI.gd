@@ -770,8 +770,15 @@ func _update_grass_hiding() -> void:
 ## créditer l'XP au bon joueur si ce coup s'avère fatal (cf. signal died).
 ## Par défaut 1 (hôte) : couvre le solo et les attaques locales de l'hôte,
 ## qui n'ont pas besoin de préciser leur propre peer_id.
+## `attacker` : le TeamMember auteur du coup — sert à créditer l'XP au SEUL
+## Pokémon qui porte le coup fatal (cf. CombatArena._on_enemy_died). Avant, en
+## solo, chaque mort donnait l'XP à TOUTE l'équipe (retour joueurs : « je ne
+## veux pas l'effet multi-XP »).
+var last_attacker: Node = null
+
 func take_damage(amount: int, source_pos: Vector3 = Vector3(INF, INF, INF),
-		tint: Color = Color(1.0, 0.95, 0.78), attacker_peer: int = 1) -> void:
+		tint: Color = Color(1.0, 0.95, 0.78), attacker_peer: int = 1,
+		attacker: Node = null) -> void:
 	# Client multijoueur : la coquille ne s'endommage pas elle-même — elle
 	# relaie à l'hôte (qui connaît l'expéditeur via get_remote_sender_id,
 	# cf. _net_request_damage), qui appliquera et rediffusera les PV (_net_hp).
@@ -779,6 +786,8 @@ func take_damage(amount: int, source_pos: Vector3 = Vector3(INF, INF, INF),
 		_net_request_damage.rpc_id(1, amount, source_pos)
 		return
 	_last_attacker_peer = attacker_peer
+	if attacker != null:
+		last_attacker = attacker
 	pokemon_instance.take_damage(amount)
 	if Net.in_run:
 		_net_hp.rpc(pokemon_instance.current_hp)

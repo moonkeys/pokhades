@@ -7,8 +7,21 @@ extends CharacterBody3D
 ## distances/vitesses ci-dessous sont les valeurs 2D divisées par 16).
 
 const SPEED           := 9.4
-const ATTACK_RANGE    := 4.0
-const ATTACK_COOLDOWN := 0.7
+const ATTACK_RANGE    := 4.0   # secours : Pokémon sans move équipé
+const ATTACK_COOLDOWN := 0.7   # idem
+
+# ── Cadence & portée par ATTAQUE ──────────────────────────────────────
+# Chaque move a sa portée / portée mini / cadence (cf. MoveData.tune()).
+# Deux verrous distincts empêchent le spam :
+#   _move_cd[i]  : cadence PROPRE à chaque capacité (elles rechargent en
+#                  parallèle) — une grosse frappe reste indisponible longtemps ;
+#   _global_lock : court verrou APRÈS n'importe quelle attaque — sans lui on
+#                  pourrait enchaîner les 4 capacités d'un coup (retour joueurs).
+const GLOBAL_LOCK := 0.35
+
+var _move_cd:     PackedFloat32Array = PackedFloat32Array([0.0, 0.0, 0.0, 0.0])
+var _move_cd_max: PackedFloat32Array = PackedFloat32Array([1.0, 1.0, 1.0, 1.0])
+var _global_lock: float = 0.0
 const DISPLAY_UNITS   := 1.75   # largeur monde cible du sprite (28 px / 16)
 const FOOT_LIFT        := 0.05
 
@@ -58,6 +71,8 @@ var _path_repath_timer: float   = 0.0
 var _path_waypoint:     Vector3 = Vector3.ZERO
 
 var _range_ring: MeshInstance3D       = null
+var _min_ring:     MeshInstance3D       = null   # portée MINI (rouge), si le move en a une
+var _min_ring_mat: StandardMaterial3D   = null
 var _ring_mat:   StandardMaterial3D   = null
 
 signal hp_changed(ratio: float)
@@ -201,13 +216,16 @@ func _add_shadow() -> void:
 
 ## Anneau de portée d'attaque au sol — remplace l'ancien _draw() 2D. Visible
 ## seulement pour le membre contrôlé, pulse brièvement à chaque attaque.
+## Anneaux au sol de la capacité SÉLECTIONNÉE : un anneau doré = sa portée
+## MAX, un anneau rouge (seulement si le move en a une) = sa portée MINI, en
+## deçà de laquelle l'attaque ne part pas. Les tores sont construits au rayon
+## 1.0 puis MIS À L'ÉCHELLE — le rayon change à chaque changement de capacité.
 func _build_range_ring() -> void:
 	_range_ring = MeshInstance3D.new()
 	var torus := TorusMesh.new()
-	torus.inner_radius = ATTACK_RANGE - 0.06
-	torus.outer_radius = ATTACK_RANGE + 0.06
+	torus.inner_radius = 0.985
+	torus.outer_radius = 1.015
 	_range_ring.mesh = torus
-	_range_ring.scale = Vector3(1.0, 0.05, 1.0)   # écrasé : simple trait au sol
 	_range_ring.position.y = 0.03
 	_ring_mat = StandardMaterial3D.new()
 	_ring_mat.albedo_color   = Color(1.0, 0.85, 0.0, 0.18)
@@ -216,6 +234,21 @@ func _build_range_ring() -> void:
 	_range_ring.material_override = _ring_mat
 	_range_ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(_range_ring)
+
+	_min_ring = MeshInstance3D.new()
+	var torus2 := TorusMesh.new()
+	torus2.inner_radius = 0.975
+	torus2.outer_radius = 1.025
+	_min_ring.mesh = torus2
+	_min_ring.position.y = 0.035
+	_min_ring_mat = StandardMaterial3D.new()
+	_min_ring_mat.albedo_color  = Color(1.0, 0.25, 0.20, 0.30)
+	_min_ring_mat.transparency   = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_min_ring_mat.shading_mode   = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_min_ring.material_override = _min_ring_mat
+	_min_ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_min_ring.visible = false
+	add_child(_min_ring)
 
 
 func _register_move_keys() -> void:
@@ -333,6 +366,9 @@ func _physics_process(delta: float) -> void:
 	_attack_timer = max(0.0, _attack_timer - delta)
 	_attack_flash = max(0.0, _attack_flash - delta * 4.0)
 	_action_lock  = max(0.0, _action_lock - delta)
+	_global_lock  = max(0.0, _global_lock - delta)
+	for i in _move_cd.size():
+		_move_cd[i] = max(0.0, _move_cd[i] - delta)
 	_update_range_ring()
 	_update_grass_hiding()
 
@@ -359,9 +395,63 @@ func _physics_process(delta: float) -> void:
 
 	if is_active:
 		_player_process()
-		cooldown_changed.emit(1.0 - (_attack_timer / (ATTACK_COOLDOWN * cooldown_mult)))
+		# La jauge du HUD suit la capacité SÉLECTIONNÉE (chacune a sa cadence).
+		var i := clampi(_selected_move_idx, 0, _move_cd.size() - 1)
+		var mx: float = maxf(_move_cd_max[i], 0.01)
+		cooldown_changed.emit(1.0 - (_move_cd[i] / mx))
 	else:
 		_companion_process(delta)
+
+
+# ── Portée / cadence de la capacité sélectionnée ──────────────────────
+
+## Move équipé à l'index `idx`, ou null (Pokémon sans capacité → attaque de base).
+func _move_at(idx: int) -> MoveData:
+	var moves: Array = pokemon_instance.equipped_moves
+	if idx < 0 or idx >= moves.size():
+		return null
+	return moves[idx]
+
+
+func _move_range_max(idx: int) -> float:
+	var m := _move_at(idx)
+	return m.range_max if m != null else ATTACK_RANGE
+
+
+func _move_range_min(idx: int) -> float:
+	var m := _move_at(idx)
+	return m.range_min if m != null else 0.0
+
+
+## Cadence effective : celle du move, réduite par la VITESSE du Pokémon (une
+## bête rapide enchaîne plus vite) et par les bonus d'objets (cooldown_mult).
+## Vitesse 60 = neutre ; 140 → ×0.73 ; 20 → ×1.13.
+func _move_cooldown(idx: int) -> float:
+	var m := _move_at(idx)
+	var base: float = m.cooldown if m != null else ATTACK_COOLDOWN
+	var spd := float(pokemon_instance.get_effective_speed())
+	var spd_scale := clampf(1.0 - (spd - 60.0) / 300.0, 0.6, 1.3)
+	return base * spd_scale * cooldown_mult
+
+
+## La capacité `idx` est-elle lançable MAINTENANT ? (verrou global + sa propre
+## cadence). La portée mini est vérifiée séparément, à la cible.
+func _move_ready(idx: int) -> bool:
+	if _evolving or _global_lock > 0.0:
+		return false
+	if idx < 0 or idx >= _move_cd.size():
+		return false
+	return _move_cd[idx] <= 0.0
+
+
+## Portée mini : une grosse frappe à distance ne part pas si l'ennemi le plus
+## proche est collé à nous (il faut prendre du recul).
+func _min_range_ok(idx: int) -> bool:
+	var rmin := _move_range_min(idx)
+	if rmin <= 0.0:
+		return true
+	var near := _nearest_enemy(rmin)
+	return not is_instance_valid(near)
 
 
 var _status_icon: Label3D = null
@@ -487,8 +577,26 @@ func _update_range_ring() -> void:
 	if not is_instance_valid(_range_ring):
 		return
 	_range_ring.visible = is_active
-	if is_active:
-		_ring_mat.albedo_color = Color(1.0, 0.85, 0.0, 0.16 + _attack_flash * 0.45)
+	if not is_active:
+		if is_instance_valid(_min_ring):
+			_min_ring.visible = false
+		return
+
+	# Rayon = portée de la capacité SÉLECTIONNÉE (change à chaque touche 1-4).
+	var slot := clampi(_selected_move_idx, 0, 3)
+	var rmax := _move_range_max(slot)
+	_range_ring.scale = Vector3(rmax, 0.05, rmax)
+	# Doré normalement ; ROUGE quand la capacité n'est pas prête (verrou/cadence).
+	var ready := _move_ready(slot)
+	var base_col := Color(1.0, 0.85, 0.0) if ready else Color(0.85, 0.35, 0.25)
+	_ring_mat.albedo_color = Color(base_col.r, base_col.g, base_col.b,
+		0.16 + _attack_flash * 0.45)
+
+	if is_instance_valid(_min_ring):
+		var rmin := _move_range_min(slot)
+		_min_ring.visible = rmin > 0.0
+		if rmin > 0.0:
+			_min_ring.scale = Vector3(rmin, 0.05, rmin)
 
 
 # ── Mode joueur ───────────────────────────────────────────────────────
@@ -501,7 +609,9 @@ func _player_process() -> void:
 			if i < pokemon_instance.equipped_moves.size():
 				_selected_move_idx = i
 				move_selected.emit(_selected_move_idx)
-				if _attack_timer <= 0.0 and not _evolving:
+				# Lançable ? (verrou global + cadence propre + portée MINI :
+				# une grosse frappe à distance ne part pas si un ennemi est collé)
+				if _move_ready(i) and _min_range_ok(i):
 					_attack()
 			break
 
@@ -567,15 +677,37 @@ func _dash_phase_through() -> void:
 
 # ── IA compagnon ──────────────────────────────────────────────────────
 
+## Première capacité disponible (cadence écoulée + portée mini respectée) —
+## sinon celle dont la recharge finit le plus tôt, pour rester en position.
+## Sans capacité équipée : slot 0, qui retombe sur l'attaque de base
+## (ATTACK_RANGE / ATTACK_COOLDOWN via _move_at() == null).
+func _companion_pick_move() -> int:
+	var n: int = mini(pokemon_instance.equipped_moves.size(), _move_cd.size())
+	if n <= 0:
+		return 0
+	var best := -1
+	for i in n:
+		if _move_ready(i) and _min_range_ok(i):
+			return i
+		if best < 0 or _move_cd[i] < _move_cd[best]:
+			best = i
+	return best
+
+
 func _companion_process(delta: float) -> void:
 	var nearest := _nearest_enemy(AI_SEEK_RADIUS)
 
 	if nearest:
+		# Le compagnon choisit une capacité PRÊTE (cadences indépendantes) et
+		# s'engage à la portée de CETTE capacité, pas à une portée fixe.
+		var slot := _companion_pick_move()
+		if slot >= 0:
+			_selected_move_idx = slot
 		var dist := global_position.distance_to(nearest.global_position)
-		if dist <= ATTACK_RANGE:
+		if dist <= _move_range_max(_selected_move_idx):
 			velocity = Vector3.ZERO
 			_update_anim(Vector2.ZERO)
-			if _attack_timer <= 0.0 and not _evolving:
+			if slot >= 0 and _move_ready(slot) and _min_range_ok(slot):
 				_attack()
 		else:
 			_steer_toward(nearest.global_position, delta)
@@ -702,12 +834,22 @@ func _facing_suffix() -> String:
 
 func _attack() -> void:
 	_attack_flash = 1.0
-	_attack_timer = ATTACK_COOLDOWN * cooldown_mult
+
+	var moves: Array = pokemon_instance.equipped_moves
+	# Verrous : cadence PROPRE au move joué + court verrou global (pas
+	# d'enchaînement instantané des 4 capacités).
+	var slot := clampi(_selected_move_idx, 0, maxi(0, _move_cd.size() - 1))
+	var cd := _move_cooldown(slot)
+	_move_cd[slot]     = cd
+	_move_cd_max[slot] = cd
+	_global_lock       = GLOBAL_LOCK
+	_attack_timer      = cd   # conservé : anim/IA s'y réfèrent encore
+
+	var reach := _move_range_max(slot)
 
 	var move_type:  String
 	var move_power: int
 	var move_class: String = "physical"
-	var moves: Array = pokemon_instance.equipped_moves
 	if not moves.is_empty():
 		var idx  := clampi(_selected_move_idx, 0, moves.size() - 1)
 		var move: MoveData = moves[idx]
@@ -733,7 +875,7 @@ func _attack() -> void:
 	# projectile guidé vers l'ennemi le plus proche, anim Shoot/Charge.
 	# Attaque PHYSIQUE = corps à corps (zone autour de soi, comme avant).
 	if move_class == "special":
-		_ranged_attack(move_type, move_power)
+		_ranged_attack(move_type, move_power, reach)
 		return
 
 	var anim_prefixes: Array = ["attack"]
@@ -743,9 +885,9 @@ func _attack() -> void:
 	for enemy in get_tree().get_nodes_in_group("enemies"):
 		if not is_instance_valid(enemy):
 			continue
-		if global_position.distance_to(enemy.global_position) <= ATTACK_RANGE:
+		if global_position.distance_to(enemy.global_position) <= reach:
 			var dmg := DamageCalculator.calculate(pokemon_instance, enemy.pokemon_instance, move_power, move_type)
-			enemy.take_damage(dmg, global_position, CombatVFX.type_color(move_type), Net.local_id())
+			enemy.take_damage(dmg, global_position, CombatVFX.type_color(move_type), Net.local_id(), self)
 			# Animation d'attaque Essentials (planche du type) jouée sur la cible
 			AttackAnim.play(get_parent(), enemy.global_position, move_type)
 			# Chance d'infliger un statut selon le type de l'attaque
@@ -764,7 +906,7 @@ func _attack() -> void:
 	for tree in get_tree().get_nodes_in_group("berry_trees"):
 		if not is_instance_valid(tree):
 			continue
-		if global_position.distance_to(tree.global_position) <= ATTACK_RANGE:
+		if global_position.distance_to(tree.global_position) <= reach:
 			tree.take_hit(global_position)
 			if hit_count == 0:
 				lunge_pos += tree.global_position
@@ -774,7 +916,7 @@ func _attack() -> void:
 	for prop in get_tree().get_nodes_in_group("breakables"):
 		if not is_instance_valid(prop):
 			continue
-		if global_position.distance_to(prop.global_position) <= ATTACK_RANGE:
+		if global_position.distance_to(prop.global_position) <= reach:
 			prop.take_hit(global_position)
 			if hit_count == 0:
 				lunge_pos += prop.global_position
@@ -831,13 +973,13 @@ func _use_status_move(move: MoveData) -> void:
 		)
 
 
-## Attaque à distance : tire un Projectile sur l'ennemi le plus proche
-## (portée RANGED_RANGE), anim PMD Shoot→Charge→Attack. Dégâts, statut,
-## chiffre coloré et animation de type appliqués À L'IMPACT.
-const RANGED_RANGE := 9.0
+## Attaque à distance : tire un Projectile sur l'ennemi le plus proche, dans la
+## portée PROPRE au move (`reach`), anim PMD Shoot→Charge→Attack. Dégâts,
+## statut, chiffre coloré et animation de type appliqués À L'IMPACT.
+const RANGED_RANGE := 9.0   # secours (Pokémon sans move équipé)
 
-func _ranged_attack(move_type: String, move_power: int) -> void:
-	var target := _nearest_enemy(RANGED_RANGE)
+func _ranged_attack(move_type: String, move_power: int, reach: float = RANGED_RANGE) -> void:
+	var target := _nearest_enemy(reach)
 	if target == null:
 		# Tir à vide : petit flash, comme un coup dans le vide en mêlée
 		sprite.modulate = Color(2.2, 2.2, 2.2)
@@ -858,10 +1000,11 @@ func _ranged_attack(move_type: String, move_power: int) -> void:
 	var from := global_position
 	var parent := get_parent()
 	var tgt := target
+	var shooter := self   # auteur du tir → XP créditée au seul tueur
 	Projectile.launch(parent, global_position, target, tint, func() -> void:
 		if not is_instance_valid(tgt) or not is_instance_valid(parent):
 			return
-		tgt.take_damage(dmg, from, tint, Net.local_id())
+		tgt.take_damage(dmg, from, tint, Net.local_id(), shooter)
 		var st := StatusFx.roll(move_type)
 		if st != "":
 			tgt.pokemon_instance.apply_status(st, StatusFx.duration(st))

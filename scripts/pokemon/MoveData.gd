@@ -11,3 +11,36 @@ var level_learned: int  = 1
 ## MoveShopScreen.MOVE_LIST "effect" et TeamMember._use_status_move().
 ## Vide pour les attaques normales (dégâts + tirage de statut par type).
 var effect: Dictionary = {}
+
+# ── Portée & cadence PROPRES À CHAQUE ATTAQUE ─────────────────────────
+# Avant, tout le monde partageait une portée unique (4.0 en mêlée, 9.0 à
+# distance) et un cooldown unique (0.7 s) : aucune raison de préférer une
+# attaque à une autre, et on pouvait toutes les enchaîner. Désormais chaque
+# move a sa portée, sa portée MINIMALE éventuelle et sa cadence, dérivées de
+# sa classe et de sa puissance (cf. tune()) :
+#   - physique : corps à corps, portée courte, frappe rapide
+#   - spécial  : tir, longue portée qui grandit avec la puissance ; les GROSSES
+#                frappes exigent du recul (range_min) et sont lentes
+#   - statut   : longue portée utilitaire, cadence très lente
+var range_min: float = 0.0    # > 0 : ne peut PAS être lancée de trop près
+var range_max: float = 4.0
+var cooldown:  float = 0.7    # secondes, avant mise à l'échelle par la Vitesse
+
+
+## Recalcule portée/cadence depuis `power` + `damage_class`. À appeler après
+## avoir rempli ces deux champs (tous les sites de création de MoveData).
+func tune() -> void:
+	var p := clampf(float(power), 0.0, 120.0) / 120.0   # 0..1
+	match damage_class:
+		"special":
+			range_max = 7.0 + p * 4.0        # 7.0 → 11.0
+			range_min = 3.0 if power >= 90 else 0.0
+			cooldown  = 0.90 + p * 0.80      # 0.90 → 1.70
+		"status":
+			range_max = 8.0
+			range_min = 0.0
+			cooldown  = 3.0
+		_:  # physique
+			range_max = 3.4 + p * 1.2        # 3.4 → 4.6
+			range_min = 0.0
+			cooldown  = 0.55 + p * 0.75      # 0.55 → 1.30
