@@ -73,15 +73,10 @@ func _build() -> void:
 		_build_grid(panel)
 		_build_detail_panel(panel)
 
-	var w   := GameManager.compute_team_weight()
-	var cap := GameManager.build_weight_cap
-	var prg_str := "%d Pokémon libérés  •  Équipe %d / 6 slots  •  Capacités %d / 4 slots  •  Poids de build %d / %d" % [
-		GameManager.unlocked_pokemon.size(),
-		GameManager.team_slot_count,
-		GameManager.move_slot_count,
-		w, cap,
-	]
-	_lbl(panel, prg_str, 0, 590, 1080, 20, 12, (Color(0.90, 0.35, 0.30) if w > cap else C_DIM), true)
+	# Pied de page : mémorisé pour être rafraîchi EN DIRECT (le poids ne se
+	# mettait à jour qu'en quittant le menu — retour joueurs).
+	_prg_lbl = _lbl(panel, "", 0, 590, 1080, 20, 12, C_DIM, true)
+	_refresh_progress()
 
 	var close := UiKit.button("✕  Fermer", Vector2(160, 38), false)
 	close.position = Vector2(24, 578)
@@ -90,6 +85,28 @@ func _build() -> void:
 
 
 # ── Équipe actuelle (bande au-dessus de la grille) ──────────────────────
+
+## Poids de build + slots, recalculés À CHAQUE changement (ajout/retrait d'un
+## Pokémon, CT équipée, objet tenu) — avant, l'affichage était figé à
+## l'ouverture du menu et ne bougeait qu'en le quittant.
+var _prg_lbl: Label = null
+
+func _refresh_progress() -> void:
+	if not is_instance_valid(_prg_lbl):
+		return
+	var w   := GameManager.compute_team_weight()
+	var cap := GameManager.build_weight_cap
+	var over := w > cap
+	_prg_lbl.text = "%d Pokémon libérés  •  Équipe %d / %d  •  Capacités %d / 4 slots  •  ⚖ Poids de build %d / %d%s" % [
+		GameManager.unlocked_pokemon.size(),
+		GameManager.hub_team.size(), GameManager.get_max_team_size(),
+		GameManager.move_slot_count,
+		w, cap,
+		"   ✖ TROP LOURD — la run ne peut pas démarrer" if over else "",
+	]
+	_prg_lbl.add_theme_color_override("font_color",
+		Color(0.92, 0.35, 0.30) if over else C_DIM)
+
 
 func _build_team_strip(panel: Panel) -> void:
 	_lbl(panel, "ÉQUIPE ACTUELLE", 16, 84, 300, 18, 11, C_DIM)
@@ -124,6 +141,24 @@ func _refresh_team_strip() -> void:
 				tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 				tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				slot.add_child(tr)
+			# Poids de CE Pokémon (espèce + objet tenu + CT équipées) — on lit
+			# la composition du build d'un coup d'œil.
+			var pw := GameManager.pokemon_weight(pid)
+			if GameManager.get_assigned_item(pid) != "":
+				pw += GameManager.ITEM_WEIGHT
+			pw += GameManager.get_move_loadout(pid).size() * GameManager.MOVE_WEIGHT
+			var wl := Label.new()
+			wl.text = str(pw)
+			wl.position = Vector2(0, sw - 15)
+			wl.size     = Vector2(sw - 3, 14)
+			wl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+			wl.add_theme_font_size_override("font_size", UiKit.scaled_font(10))
+			wl.add_theme_color_override("font_color", C_GOLD)
+			wl.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.85))
+			wl.add_theme_constant_override("shadow_offset_y", 1)
+			wl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			slot.add_child(wl)
+
 			slot.mouse_filter = Control.MOUSE_FILTER_STOP
 			var capture_pid := pid
 			slot.gui_input.connect(func(event: InputEvent) -> void:
@@ -137,6 +172,8 @@ func _refresh_team_strip() -> void:
 			_style(slot, Color(0.16, 0.12, 0.07), C_BORDER, 6)
 
 		_team_strip_root.add_child(slot)
+
+	_refresh_progress()   # ajout/retrait d'un Pokémon → poids recalculé
 
 
 # ── Grille (gauche, triée par n° de Pokédex) ───────────────────────────
@@ -407,6 +444,7 @@ func _cycle_item(pid: int) -> void:
 
 
 func _refresh_detail() -> void:
+	_refresh_progress()   # CT équipée / objet tenu → le poids bouge en direct
 	if not is_instance_valid(_detail_root): return
 	for ch in _detail_root.get_children():
 		ch.queue_free()
@@ -517,11 +555,49 @@ func _refresh_detail() -> void:
 	sep.color    = C_BORDER
 	_detail_root.add_child(sep)
 
-	# Movepool — capacités achetées, assignables à CE Pokémon
 	var loadout := GameManager.get_move_loadout(_selected_pid)
+	var slots := GameManager.move_slot_count
+
+	# ── ATTAQUES DE BASE ──────────────────────────────────────────────
+	# Celles que le Pokémon connaît DÉJÀ à son niveau de départ (montée en
+	# niveau PokéAPI). Avant, on n'affichait que les CT achetées : sans CT, le
+	# joueur lisait « aucune capacité » alors que son Pokémon sait se battre.
+	# Les slots libres sont remplis automatiquement par ces attaques
+	# (cf. PokemonInstance.init_moves) — d'où l'indication "auto".
+	var start_lv: int = int(GameManager.get_effective_start(_selected_pid, 10).get("level", 10))
+	var base_moves: Array = []
+	for lm: Dictionary in pd.level_up_moves:
+		if int(lm.get("level", 1)) <= start_lv:
+			base_moves.append(lm)
+	base_moves.reverse()   # les plus récemment apprises d'abord (les plus fortes)
+
 	_detail_root.add_child(_lbl_node(
-		"── MOVEPOOL — %d / %d équipées (clic pour équiper/retirer) ──" % [loadout.size(), GameManager.move_slot_count],
+		"── ATTAQUES DE BASE (niv. %d) — remplissent les slots libres ──" % start_lv,
 		16, 280, 544, 20, 13, C_DIM))
+	if base_moves.is_empty():
+		_detail_root.add_child(_lbl_node("Aucune (données d'attaques non chargées)",
+			16, 302, 544, 20, 12, C_DIM))
+	else:
+		var free_slots := maxi(0, slots - loadout.size())
+		var bx := 16
+		for i in mini(base_moves.size(), 4):
+			var lm: Dictionary = base_moves[i]
+			var nm := str(lm.get("name", "")).replace("-", " ").capitalize()
+			var auto := i < free_slots   # sera équipée d'office au départ
+			var bcard := Panel.new()
+			bcard.position = Vector2(bx, 302)
+			bcard.size     = Vector2(130, 40)
+			_style(bcard, C_CARD_SEL if auto else C_CARD, C_GOOD if auto else C_BORDER, 6)
+			_detail_root.add_child(bcard)
+			bcard.add_child(_lbl_node(nm, 5, 3, 120, 18, 11, C_TEXT))
+			bcard.add_child(_lbl_node("auto" if auto else "niv. %d" % int(lm.get("level", 1)),
+				5, 21, 120, 14, 10, C_GOOD if auto else C_DIM))
+			bx += 136
+
+	# ── CT ACHETÉES ───────────────────────────────────────────────────
+	_detail_root.add_child(_lbl_node(
+		"── CT ACHETÉES — %d / %d équipées (clic pour équiper/retirer) ──" % [loadout.size(), slots],
+		16, 350, 544, 20, 13, C_DIM))
 
 	var purchasable: Array = []
 	for m: Dictionary in MoveShopScreen.MOVE_LIST:
@@ -530,12 +606,12 @@ func _refresh_detail() -> void:
 
 	if purchasable.is_empty():
 		_detail_root.add_child(_lbl_node(
-			"Aucune capacité achetée — direction le Tuteur de capacités !",
-			16, 320, 544, 24, 13, C_DIM, true))
+			"Aucune CT achetée — direction le Tuteur de capacités ! (les attaques de base ci-dessus suffisent pour partir)",
+			16, 374, 544, 34, 12, C_DIM))
 		return
 
 	var mx := 16
-	var my := 304
+	var my := 374
 	var col_w := 178
 	for m: Dictionary in purchasable:
 		var api: String   = str(m.get("api", ""))
