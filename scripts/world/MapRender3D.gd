@@ -63,12 +63,112 @@ func build(map: Node2D) -> void:
 	_build_pixel_grass()
 	_build_flowers()
 	_build_berry_trees()
+	if _map.theme == MapGenerator.MapTheme.VILLAGE:
+		_build_village_houses()
 	if _map.arena_mode:
 		_build_cave_kit_arena()
 		_build_cave_crystals()
 		_build_cave_decor()
 	_build_collisions()
 	_build_border_walls()
+
+
+## MAISONS du biome Village (cf. MapGenerator._place_houses) — bâtiments
+## procéduraux : murs (BoxMesh crépi), toit à deux pentes (PrismMesh tuile),
+## porte + fenêtres sombres en façade sud (côté caméra), collision pleine.
+## Pas d'asset de maison dans les packs → construction à la main, style
+## cohérent avec les portes de sortie (ExitPortal).
+const _HOUSE_WALLS: Array = [
+	Color(0.90, 0.86, 0.74), Color(0.86, 0.80, 0.68), Color(0.82, 0.78, 0.72),
+	Color(0.78, 0.72, 0.60),
+]
+const _HOUSE_ROOFS: Array = [
+	Color(0.60, 0.24, 0.20), Color(0.42, 0.34, 0.28),
+	Color(0.34, 0.40, 0.52), Color(0.50, 0.44, 0.30),
+]
+
+func _build_village_houses() -> void:
+	for rect: Rect2i in _map.get_village_houses():
+		_build_house(rect)
+
+
+func _build_house(rect: Rect2i) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(rect.position) + 47
+	var w := float(rect.size.x)
+	var d := float(rect.size.y)
+	var cx := float(rect.position.x) + w * 0.5
+	var cz := float(rect.position.y) + d * 0.5
+	var wall_h := rng.randf_range(2.2, 3.2)
+	# Marge pour que le bâtiment ne déborde pas sur la rue (emprise - 0.3).
+	w -= 0.4
+	d -= 0.4
+
+	var house := Node3D.new()
+	house.position = Vector3(cx, 0.0, cz)
+	add_child(house)
+
+	# Murs
+	var wall := MeshInstance3D.new()
+	var wb := BoxMesh.new()
+	wb.size = Vector3(w, wall_h, d)
+	wall.mesh = wb
+	wall.position = Vector3(0, wall_h * 0.5, 0)
+	wall.material_override = _flat_mat(_HOUSE_WALLS[rng.randi() % _HOUSE_WALLS.size()])
+	wall.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	house.add_child(wall)
+
+	# Toit à deux pentes (prisme) — faîte le long de X.
+	var roof_h := rng.randf_range(0.9, 1.5)
+	var roof := MeshInstance3D.new()
+	var pm := PrismMesh.new()
+	pm.size = Vector3(w + 0.5, roof_h, d + 0.5)
+	roof.mesh = pm
+	roof.position = Vector3(0, wall_h + roof_h * 0.5, 0)
+	roof.material_override = _flat_mat(_HOUSE_ROOFS[rng.randi() % _HOUSE_ROOFS.size()])
+	roof.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	house.add_child(roof)
+
+	# Porte + deux fenêtres en façade sud (+Z, côté caméra).
+	var face_z := d * 0.5 + 0.02
+	_house_quad(house, Vector3(0, 0.55, face_z), Vector2(0.7, 1.1), Color(0.20, 0.12, 0.07))
+	_house_quad(house, Vector3(-w * 0.28, wall_h * 0.6, face_z), Vector2(0.5, 0.5), Color(0.35, 0.48, 0.55))
+	_house_quad(house, Vector3(w * 0.28, wall_h * 0.6, face_z), Vector2(0.5, 0.5), Color(0.35, 0.48, 0.55))
+
+	# Collision pleine (emprise), layer 1 comme les autres obstacles.
+	var body := StaticBody3D.new()
+	body.collision_layer = 1
+	body.collision_mask  = 0
+	var cs := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(w, OBSTACLE_HEIGHT, d)
+	cs.shape = box
+	cs.position = Vector3(0, OBSTACLE_HEIGHT * 0.5, 0)
+	body.add_child(cs)
+	house.add_child(body)
+
+
+func _house_quad(parent: Node3D, pos: Vector3, size: Vector2, col: Color) -> void:
+	var q := MeshInstance3D.new()
+	var qm := QuadMesh.new()
+	qm.size = size
+	q.mesh = qm
+	q.position = pos
+	var m := StandardMaterial3D.new()
+	m.albedo_color = col
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	q.material_override = m
+	q.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	parent.add_child(q)
+
+
+func _flat_mat(col: Color) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.albedo_color  = col
+	m.roughness     = 0.95
+	m.diffuse_mode  = BaseMaterial3D.DIFFUSE_TOON
+	m.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+	return m
 
 
 ## Habillage de l'arène de grotte avec les modules texturés du cave-kit

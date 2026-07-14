@@ -4,7 +4,7 @@ extends MapBase  # MUST extend MapBase — CombatArena.gd cast: get_node("Map") 
 
 enum Terrain { GRASS = 0, PATH = 1, WATER = 2, TREE = 3 }
 enum GatingType { NONE = 0, SURF = 1, COUPE = 2, FORCE = 3 }
-enum MapTheme { FOREST = 0, SWAMP = 1, MEADOW = 2, ROCKY = 3, AUTUMN = 4, LAKE = 5, VOLCANO = 6 }
+enum MapTheme { FOREST = 0, SWAMP = 1, MEADOW = 2, ROCKY = 3, AUTUMN = 4, LAKE = 5, VOLCANO = 6, VILLAGE = 7 }
 ## Forme de la zone jouable — casse la silhouette rectangulaire par défaut.
 ## RECT reste possible (tirage pondéré) pour ne pas perdre les grandes maps
 ## ouvertes ; CIRCLE/L_SHAPE rognent les coins en forêt dense (cf.
@@ -153,6 +153,14 @@ var _cell_shadow:     Dictionary = {}  # case → Sprite2D (ombre blob associée
 ## consommées par MapRender3D pour instancier les volumes 3D avec leur
 ## hauteur procédurale : [{"rect": Rect2i, "height": float, "cave": bool}, ...]
 var _cliff_formations: Array = []
+## Emprises de maisons (biome Village) — Array[Rect2i], rendues en bâtiments
+## procéduraux par MapRender3D._build_village_houses. Les cases sont marquées
+## Terrain.TREE (bloquantes, pas de spawn dedans) mais SANS tuile _objects
+## (donc pas de rendu d'arbre) ; la collision est posée par le rendu.
+var _village_houses: Array = []
+
+func get_village_houses() -> Array:
+	return _village_houses
 
 ## Cases du pont du biome Lac (planches posées par MapRender3D au-dessus de
 ## l'eau) — cases marchables reliant la rive sud à l'île centrale.
@@ -303,6 +311,8 @@ func _generate() -> void:
 	# Après les chemins : rogne la silhouette sans jamais couper une route
 	# déjà tracée (cf. _carve_shape_mask, qui épargne Terrain.PATH).
 	_carve_shape_mask()
+	if theme == MapTheme.VILLAGE:
+		_place_houses()
 	_apply_to_tilemap()
 	_gen_tall_grass()
 	_gen_decorations()
@@ -408,7 +418,7 @@ func _apply_theme() -> void:
 		if not Engine.is_editor_hint():
 			theme = RunManager.inst().current_biome()
 		else:
-			theme = [MapTheme.FOREST, MapTheme.SWAMP, MapTheme.MEADOW, MapTheme.ROCKY, MapTheme.AUTUMN, MapTheme.LAKE, MapTheme.VOLCANO][_rng.randi() % 7]
+			theme = [MapTheme.FOREST, MapTheme.SWAMP, MapTheme.MEADOW, MapTheme.ROCKY, MapTheme.AUTUMN, MapTheme.LAKE, MapTheme.VOLCANO, MapTheme.VILLAGE][_rng.randi() % 8]
 	var cfg := _theme_config(theme)
 	_ground_tile    = cfg["ground_tile"]
 	_water_tile     = cfg["water_tile"]
@@ -559,6 +569,25 @@ func _theme_config(t: MapTheme) -> Dictionary:
 				"path_width":      3,
 				"gating":          GatingType.FORCE,
 				"water_mode":      "deep",
+			}
+		MapTheme.VILLAGE:
+			return {
+				# Village : pelouses + ROUTES PAVÉES (variantes de chemin pierre),
+				# maisons procédurales (cf. _place_houses / MapRender3D), quelques
+				# arbres ornementaux. Pas d'eau. Routes larges pour circuler entre
+				# les bâtiments.
+				"ground_tile": tile_grass,
+				"water_tile":   tile_water,
+				"path_tiles":   _stone_path_variants(),
+				"tree_origins": [tile_tree_origin],
+				"tree_density":    0.06,
+				"water_threshold": 0.99,   # aucune mare
+				"min_water_pools": 0,
+				"tg_threshold":    0.62,
+				"flower_density":  0.10,
+				"path_width":      4,       # rues larges
+				"gating":          GatingType.FORCE,
+				"water_mode":      "none",
 			}
 	return {}
 
@@ -722,6 +751,63 @@ func _carve_border() -> void:
 		for c in W:
 			if r < 4 or r >= H - 4 or c < 4 or c >= W - 4:
 				_grid[r][c] = Terrain.TREE
+
+
+## Dispose des MAISONS (biome Village) : rectangles posés sur des zones
+## d'herbe, JAMAIS sur un chemin (les rues doivent rester dégagées), avec une
+## marge entre bâtiments et loin des portails. Les cases sont marquées TREE
+## (bloquantes/pas de spawn) mais sans tuile d'objet — le rendu s'en charge.
+func _place_houses() -> void:
+	_village_houses.clear()
+	var W := map_size.x
+	var H := map_size.y
+	var target := clampi((W * H) / 130, 4, 12)
+	var attempts := 0
+	while _village_houses.size() < target and attempts < target * 40:
+		attempts += 1
+		var bw := _rng.randi_range(4, 6)
+		var bd := _rng.randi_range(4, 5)
+		var ox := _rng.randi_range(4, W - 5 - bw)
+		var oy := _rng.randi_range(4, H - 5 - bd)
+		var rect := Rect2i(ox, oy, bw, bd)
+		if not _house_area_free(rect):
+			continue
+		# Doit border une rue (au moins une case PATH dans l'anneau autour) —
+		# une maison inaccessible depuis la route n'a pas de sens.
+		if not _house_touches_road(rect):
+			continue
+		for r in range(oy, oy + bd):
+			for c in range(ox, ox + bw):
+				_grid[r][c] = Terrain.TREE
+		_village_houses.append(rect)
+
+
+## Emprise + marge de 1 case entièrement en herbe (ni chemin, ni autre
+## maison, ni bord, ni portail).
+func _house_area_free(rect: Rect2i) -> bool:
+	var W := map_size.x
+	var H := map_size.y
+	for r in range(rect.position.y - 1, rect.end.y + 1):
+		for c in range(rect.position.x - 1, rect.end.x + 1):
+			if c < 3 or c >= W - 3 or r < 3 or r >= H - 3:
+				return false
+			if _grid[r][c] != Terrain.GRASS:
+				return false
+			if _is_near_portal(c, r, 5):
+				return false
+	return true
+
+
+func _house_touches_road(rect: Rect2i) -> bool:
+	var W := map_size.x
+	var H := map_size.y
+	for r in range(rect.position.y - 2, rect.end.y + 2):
+		for c in range(rect.position.x - 2, rect.end.x + 2):
+			if c < 0 or c >= W or r < 0 or r >= H:
+				continue
+			if _grid[r][c] == Terrain.PATH:
+				return true
+	return false
 
 
 ## Rogne les coins de la zone selon `_map_shape` (RECT = no-op). Épargne
@@ -1492,6 +1578,12 @@ func is_valid_spawn_cell(cell: Vector2i) -> bool:
 	if _water.get_cell_source_id(cell)   != -1: return false
 	if _objects.get_cell_source_id(cell) != -1: return false
 	if _ground.get_cell_source_id(cell)  == -1: return false
+	# Emprise de maison (village) : TREE dans la grille sans tuile d'objet —
+	# rien ne doit y spawn.
+	if cell.y >= 0 and cell.y < _grid.size():
+		var grow: PackedByteArray = _grid[cell.y]
+		if cell.x >= 0 and cell.x < grow.size() and grow[cell.x] == Terrain.TREE:
+			return false
 	if not _reachable.get(cell, false):  return false
 	for dy in range(-1, 2):
 		for dx in range(-1, 2):

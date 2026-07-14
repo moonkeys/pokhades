@@ -83,7 +83,7 @@ func _pool_for_act(act: int) -> Array[int]:
 	match act:
 		0: return [MapGenerator.MapTheme.MEADOW]
 		1: return [MapGenerator.MapTheme.FOREST, MapGenerator.MapTheme.AUTUMN, MapGenerator.MapTheme.LAKE]
-		2: return [MapGenerator.MapTheme.SWAMP, MapGenerator.MapTheme.LAKE, MapGenerator.MapTheme.AUTUMN]
+		2: return [MapGenerator.MapTheme.SWAMP, MapGenerator.MapTheme.LAKE, MapGenerator.MapTheme.AUTUMN, MapGenerator.MapTheme.VILLAGE]
 		_: return [MapGenerator.MapTheme.ROCKY, MapGenerator.MapTheme.SWAMP, MapGenerator.MapTheme.VOLCANO]
 
 
@@ -148,6 +148,7 @@ const BIOME_NAMES := {
 	MapGenerator.MapTheme.AUTUMN: "Bois d'automne",
 	MapGenerator.MapTheme.LAKE:   "Lac",
 	MapGenerator.MapTheme.VOLCANO: "Volcan",
+	MapGenerator.MapTheme.VILLAGE: "Village",
 }
 
 func biome_name(theme: int) -> String:

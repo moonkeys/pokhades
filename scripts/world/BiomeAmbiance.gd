@@ -65,6 +65,7 @@ func _theme_ambiance(theme: int, is_cave: bool) -> Dictionary:
 		MapGenerator.MapTheme.AUTUMN: return _merged(_AUTUMN_PALETTE)
 		MapGenerator.MapTheme.LAKE:   return _merged(_LAKE_PALETTE)
 		MapGenerator.MapTheme.VOLCANO: return _merged(_VOLCANO_PALETTE)
+		MapGenerator.MapTheme.VILLAGE: return _merged(_VILLAGE_PALETTE)
 		_:                            return _merged(_MEADOW_PALETTE)
 
 
@@ -214,6 +215,21 @@ const _VOLCANO_PALETTE := {
 	"fireflies":    Color(1.0, 0.55, 0.18),          # braises
 	"midground_cliffs": true,
 	"ground_tint":  Color(0.30, 0.18, 0.16),
+}
+
+const _VILLAGE_PALETTE := {
+	# Village : plein jour dégagé et chaleureux, ciel bleu franc — ambiance
+	# accueillante de bourgade (contraste avec les biomes sauvages).
+	"sky_top":      Color(0.42, 0.66, 0.95),
+	"sky_horizon":  Color(0.82, 0.84, 0.78),
+	"fog_color":    Color(0.78, 0.80, 0.74),
+	"fog_density":  0.006,
+	"sun_color":    Color(1.0, 0.95, 0.84),
+	"hill_a":       Color(0.46, 0.58, 0.44),
+	"hill_b":       Color(0.40, 0.52, 0.42),
+	"cloud_alpha":  0.60,
+	"butterflies":  4,
+	"ground_tint":  Color(0.44, 0.60, 0.36),
 }
 
 const _CAVE_PALETTE := {

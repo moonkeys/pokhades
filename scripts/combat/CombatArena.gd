@@ -1098,6 +1098,7 @@ func _zone_label() -> String:
 		MapGenerator.MapTheme.AUTUMN: "Bois d'automne",
 		MapGenerator.MapTheme.LAKE:   "Lac",
 		MapGenerator.MapTheme.VOLCANO: "Volcan",
+		MapGenerator.MapTheme.VILLAGE: "Village",
 	}
 	return "%s — %s" % [names.get(_current_theme(), "Zone"), RunManager.inst().get_zone_name()]
 

@@ -60,6 +60,7 @@ const BIOME_CHAMPIONS := {
 	MapGenerator.MapTheme.LAKE:   ["Ondine"],
 	MapGenerator.MapTheme.ROCKY:  ["Pierre", "Giovanni"],
 	MapGenerator.MapTheme.VOLCANO: ["Auguste"],   # Blaine, type Feu
+	MapGenerator.MapTheme.VILLAGE: ["Giovanni"],  # chef en ville
 }
 
 # ── Apparence du champion — planches Characters/trainer_*.png (Pokémon
@@ -132,6 +133,7 @@ const BIOME: Dictionary = {
 	MapGenerator.MapTheme.AUTUMN: [585, 216, 46, 163, 204],       # Vivaldaim, Teddiursa, Paras, Hoothoot, Pomdepik
 	MapGenerator.MapTheme.LAKE:   [118, 129, 194, 54, 60, 79],    # Poissirène, Magicarpe, Axoloto, Psykokwak, Ptitard, Ramoloss
 	MapGenerator.MapTheme.VOLCANO: [77, 58, 218, 322, 324, 126],  # Ponyta, Caninos, Limagma, Chamallot, Chartor, Magmar
+	MapGenerator.MapTheme.VILLAGE: [19, 52, 58, 506, 263, 16],    # Rattata, Miaouss, Caninos, Ponchiot, Zigzaton, Roucool
 }
 
 # ── PNJ de la salle-Boutique ─────────────────────────────────────────────
@@ -148,4 +150,5 @@ const BERRIES_BY_THEME: Dictionary = {
 	MapGenerator.MapTheme.AUTUMN: ["SITRUSBERRY", "FIGYBERRY", "NANABBERRY"],
 	MapGenerator.MapTheme.LAKE:   ["ORANBERRY", "ASPEARBERRY", "MAGOBERRY"],
 	MapGenerator.MapTheme.VOLCANO: ["RAWSTBERRY", "CHERIBERRY", "LEPPABERRY"],   # anti-brûlure
+	MapGenerator.MapTheme.VILLAGE: ["ORANBERRY", "SITRUSBERRY", "LEPPABERRY"],
 }
