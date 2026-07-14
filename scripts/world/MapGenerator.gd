@@ -111,6 +111,16 @@ var _map_shape: MapShape = MapShape.RECT
 
 func is_shallow_cell(cell: Vector2i) -> bool:
 	return _shallow_cells.has(cell)
+
+## Cellule d'eau (ou de LAVE en biome Volcan) — utilisé par CombatArena pour
+## la brûlure au contact de la lave.
+func is_water_cell(cell: Vector2i) -> bool:
+	if cell.y < 0 or cell.y >= _grid.size():
+		return false
+	var row: PackedByteArray = _grid[cell.y]
+	if cell.x < 0 or cell.x >= row.size():
+		return false
+	return row[cell.x] == Terrain.WATER
 var _flower_mat: ShaderMaterial = null
 
 
