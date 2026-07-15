@@ -252,8 +252,10 @@ func update_team_hp(idx: int, ratio: float) -> void:
 		return
 	_update_hp_fill(fill, ratio)
 	_ghost_targets[card["ghost"]] = fill.size.x
-	if ratio <= 0.0:
-		(card["root"] as Panel).modulate = Color(1, 1, 1, 0.45)
+	# KO = carte grisée ; ranimé (rappel) = carte rendue à pleine opacité.
+	# Avant, on ne grisait qu'à 0 sans jamais restaurer → le Pokémon soigné
+	# restait affiché comme mort (retour joueurs).
+	(card["root"] as Panel).modulate = Color(1, 1, 1, 0.45 if ratio <= 0.0 else 1.0)
 
 
 func update_team_portrait(idx: int, texture: Texture2D) -> void:

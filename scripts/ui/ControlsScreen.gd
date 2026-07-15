@@ -48,26 +48,38 @@ func _build() -> void:
 		"Clique sur une touche pour la réassigner  ·  Échap : annuler",
 		Vector2(0, 66), 13, UiKit.CREAM, 840, HORIZONTAL_ALIGNMENT_CENTER)
 
-	var y := 96.0
+	# Liste SCROLLABLE : les 15 actions + catégories dépassent la hauteur du
+	# panneau (retour joueurs : on ne pouvait pas scroller). ScrollContainer +
+	# Control dimensionné au contenu.
+	var scroll := ScrollContainer.new()
+	scroll.position = Vector2(20, 92)
+	scroll.size     = Vector2(800, 496)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_panel.add_child(scroll)
+	var inner := Control.new()
+	scroll.add_child(inner)
+
+	var y := 0.0
 	for cat: String in Controls.CATEGORIES:
-		UiKit.label(_panel, cat.to_upper(), Vector2(36, y), 14, UiKit.GOLD, 300)
+		UiKit.label(inner, cat.to_upper(), Vector2(16, y), 14, UiKit.GOLD, 300)
 		y += 26.0
 		for d: Dictionary in Controls.CATALOG:
 			if str(d["cat"]) != cat:
 				continue
 			var id := str(d["id"])
-			var card := UiKit.card(_panel, Vector2(36, y), Vector2(768, 40))
+			var card := UiKit.card(inner, Vector2(16, y), Vector2(760, 40))
 			UiKit.label(card, str(d["label"]), Vector2(14, 9), 14, UiKit.TEXT_DARK, 560)
 
 			var btn := UiKit.button(Controls.key_name(Controls.key_for(id)),
 				Vector2(150, 30), false)
-			btn.position = Vector2(604, 5)
+			btn.position = Vector2(596, 5)
 			var cap := id
 			btn.pressed.connect(func() -> void: _begin_listen(cap))
 			card.add_child(btn)
 			_rows[id] = btn
 			y += 46.0
 		y += 8.0
+	inner.custom_minimum_size = Vector2(780, y + 8.0)
 
 	var reset := UiKit.button("↺  Réinitialiser", Vector2(190, 40), false)
 	reset.position = Vector2(36, 604)

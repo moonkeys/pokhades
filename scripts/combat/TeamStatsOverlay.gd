@@ -22,14 +22,28 @@ func setup(team: Array) -> void:
 		return
 
 	var vp := get_viewport().get_visible_rect().size
-	var total_w := live.size() * (CARD_W + 12.0) - 12.0
+	var gap := 12.0
+	# Rangée horizontale : à 5-6 Pokémon elle dépassait des bords de l'écran.
+	# On calcule un facteur d'échelle pour qu'elle tienne toujours (marge 48 px).
+	var natural := live.size() * (CARD_W + gap) - gap
+	var s := minf(1.0, (vp.x - 48.0) / maxf(natural, 1.0))
+	var step := (CARD_W + gap) * s
+	var total_w := live.size() * step - gap * s
 	var x0 := (vp.x - total_w) * 0.5
 
 	for i in live.size():
 		var card := _build_card(live[i].pokemon_instance)
-		card.position = Vector2(x0 + i * (CARD_W + 12.0), 64.0)
+		card.position = Vector2(x0 + i * step, 64.0)
 		add_child(card)
-		UiKit.pop_in(card, i * 0.04)
+		# Apparition en préservant l'échelle `s` (UiKit.pop_in forcerait scale=1
+		# et referait déborder la rangée).
+		card.pivot_offset = card.size * 0.5
+		card.scale = Vector2(s, s) * 0.92
+		card.modulate.a = 0.0
+		var tw := card.create_tween().set_parallel(true)
+		tw.tween_property(card, "scale", Vector2(s, s), 0.22) \
+			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT).set_delay(i * 0.04)
+		tw.tween_property(card, "modulate:a", 1.0, 0.14).set_delay(i * 0.04)
 
 
 func _build_card(inst: PokemonInstance) -> Panel:
