@@ -2152,12 +2152,18 @@ func _claim_boon_stat(stat_id: String) -> void:
 		pickable = _team.filter(func(m): return is_instance_valid(m) and m.remote_peer == 0)
 	var screen := ItemRewardScreen.new()
 	add_child(screen)
-	screen.setup({"name_fr": label, "desc": "%s — pour UN Pokémon (choisis lequel)" % label}, pickable)
+	screen.setup({"name_fr": label, "desc": "%s — pour UN Pokémon (choisis lequel)" % label},
+		pickable, true)   # true = annulable (revenir au choix de la stat)
 	screen.member_chosen.connect(func(idx: int) -> void:
 		_apply_bonus_to_member(stat_id, idx)
 		screen.queue_free()
 		Sfx.play("victory", -6.0)
 		_consume_boon()
+	, CONNECT_ONE_SHOT)
+	# Annuler → on rouvre l'écran des 4 stats (le don n'est pas consommé).
+	screen.cancelled.connect(func() -> void:
+		screen.queue_free()
+		_open_boon()
 	, CONNECT_ONE_SHOT)
 
 

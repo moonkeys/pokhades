@@ -6,9 +6,12 @@ extends CanvasLayer
 ## de l'équipe pour choisir QUI le reçoit (flèches + Entrée au clavier).
 
 signal member_chosen(team_index: int)
+signal cancelled
 
-
-func setup(item: Dictionary, team: Array) -> void:
+## `cancellable` : ajoute un bouton « Annuler » + Échap (don de stat, pour
+## revenir au choix de la stat). Laissé FALSE pour la récompense de coffre, qui
+## est obligatoire.
+func setup(item: Dictionary, team: Array, cancellable: bool = false) -> void:
 	layer = 24
 	Sfx.play_file(Sfx.SE_MENU_OPEN, -6.0)
 
@@ -54,6 +57,13 @@ func setup(item: Dictionary, team: Array) -> void:
 		var cx := pad_x + (i % cols) * (card_w + pad_x)
 		var cy := 232.0 + (i / cols) * (card_h + 16.0)
 		_build_card(panel, m.pokemon_instance, m.team_index, Vector2(cx, cy), card_w, card_h)
+
+	if cancellable:
+		add_child(MenuNav.make(func() -> void: cancelled.emit()))   # Échap = annuler
+		var back := UiKit.button("✕  Annuler", Vector2(180, 42), false)
+		back.position = Vector2(380, 536)
+		back.pressed.connect(func() -> void: cancelled.emit())
+		panel.add_child(back)
 
 	MenuNav.focus_first(panel)
 
