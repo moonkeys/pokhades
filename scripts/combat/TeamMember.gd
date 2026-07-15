@@ -443,6 +443,7 @@ var _status_shown: String = ""
 
 # ── Capture (dresseurs de village) ────────────────────────────────────
 signal capture_changed(capturing: bool, escape: float, active: bool)
+signal capture_began   # émis UNE fois au début (la notif ne doit sortir qu'une fois)
 
 var captured: bool = false
 var _cap_escape: float = 0.0        # 0..1 — barre d'évasion
@@ -463,6 +464,7 @@ func begin_capture() -> void:
 	_cap_last_dir = 0
 	_cap_dmg_accum = 0.0
 	_spawn_capture_ball()
+	capture_began.emit()
 	capture_changed.emit(true, 0.0, is_active)
 
 

@@ -7,7 +7,7 @@ extends Node3D
 ## reste pas figé), puis s'enfuit en courant vers la sortie une fois tous
 ## ses Pokémon vaincus (flee_to()).
 
-const WIDTH := 1.6
+const WIDTH := 1.15   # largeur monde du sprite (retour joueurs : trop gros à 1.6)
 const WALK_SPEED   := 6.5   # unités/s — allure de fuite
 const WANDER_SPEED := 2.2   # allure de déambulation pendant le combat
 const WANDER_RADIUS := 3.5  # rayon de patrouille autour du point d'ancrage

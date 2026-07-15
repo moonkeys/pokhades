@@ -390,15 +390,18 @@ func _generate_arena() -> void:
 	]:
 		_cliff_formations.append({"rect": rect, "height": arena_wall_h, "cave": false})
 
-	# Couverture centrale : rochers/gros cailloux (évite l'entrée et le centre)
+	# Couverture centrale : rochers/gros cailloux (évite l'entrée et le centre).
+	# PAS dans une MAISON (village) : le décor y est du mobilier (caisses,
+	# tapis…), pas des rochers — cf. MapRender3D._build_house_interior.
 	var center := Vector2i(W / 2, H / 2)
 	var cover: Array[Vector2i] = []
-	for r in range(4, H - 4):
-		for c in range(4, W - 4):
-			var cell := Vector2i(c, r)
-			if _cell_dist(cell, entry_tile) < 5: continue
-			if _cell_dist(cell, center) < 4:     continue
-			cover.append(cell)
+	if interior_style != "house":
+		for r in range(4, H - 4):
+			for c in range(4, W - 4):
+				var cell := Vector2i(c, r)
+				if _cell_dist(cell, entry_tile) < 5: continue
+				if _cell_dist(cell, center) < 4:     continue
+				cover.append(cell)
 	_seeded_shuffle(cover)
 	var placed := 0
 	for cell: Vector2i in cover:

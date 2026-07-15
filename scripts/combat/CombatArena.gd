@@ -668,8 +668,12 @@ func _wire_team_member(member, idx: int) -> void:
 	member.capture_changed.connect(func(capturing: bool, escape: float, active: bool) -> void:
 		# QTE affiché seulement pour le membre actuellement contrôlé.
 		hud.capture_qte(capturing, escape, active and idx == _active_index)
-		if capturing and escape == 0.0:
-			hud.notify("🚨  %s est capturé !" % member.pokemon_instance.data.name_fr.capitalize(), Color(1.0, 0.5, 0.4))
+	)
+	# Notif UNE seule fois au début (capture_changed est émis chaque frame → il
+	# spammait la notif ; retour joueurs).
+	member.capture_began.connect(func() -> void:
+		hud.notify("🚨  %s est capturé !" % member.pokemon_instance.data.name_fr.capitalize(),
+			Color(1.0, 0.5, 0.4))
 	)
 
 
@@ -2938,14 +2942,12 @@ func _update_village_trainers(delta: float) -> void:
 
 ## Cible éligible (vivante, non capturée) : en solo le membre actif ; en MP
 ## n'importe quel joueur (chaque P%d est contrôlé par son pair).
+## N'importe quel membre de l'équipe peut être visé — le joueur actif ET ses
+## COMPAGNONS (retour joueurs : avant, seul le Pokémon joué était ciblé). En
+## MP idem sur tous les P%d.
 func _pick_capture_target() -> Node:
 	var pool: Array = []
-	if _mp:
-		for m in _team:
-			if is_instance_valid(m) and not m.captured and not m.pokemon_instance.is_fainted():
-				pool.append(m)
-	elif _active_index < _team.size():
-		var m = _team[_active_index]
+	for m in _team:
 		if is_instance_valid(m) and not m.captured and not m.pokemon_instance.is_fainted():
 			pool.append(m)
 	if pool.is_empty():
@@ -2958,14 +2960,6 @@ func _member_peer(member) -> int:
 		return Net.local_id()
 	return member.remote_peer if member.remote_peer != 0 else Net.local_id()
 
-
-func _local_active_member() -> Node:
-	if not _mp:
-		return _team[_active_index] if _active_index < _team.size() else null
-	for m in _team:
-		if is_instance_valid(m) and m.remote_peer == 0:
-			return m
-	return null
 
 
 ## Lance la pokéball (visuel identique partout) ; seul le pair CIBLÉ résout la
@@ -2985,13 +2979,48 @@ func _do_pokeball(from: Vector3, tpos: Vector3, tpeer: int) -> void:
 
 func _on_pokeball_land(tpos: Vector3, mine: bool) -> void:
 	if mine:
-		var m = _local_active_member()
-		if is_instance_valid(m) and not m.captured and not m.pokemon_instance.is_fainted() \
-				and m.global_position.distance_to(tpos) < CAPTURE_HIT_RADIUS:
-			m.begin_capture()
+		# Capture le membre LOCAL le plus proche du point d'impact (joueur actif
+		# OU compagnon) s'il est encore à portée — sinon esquivé.
+		var best: Node = null
+		var best_d := CAPTURE_HIT_RADIUS
+		for m in _team:
+			if not is_instance_valid(m) or m.captured or m.pokemon_instance.is_fainted():
+				continue
+			if _mp and m.remote_peer != 0:
+				continue   # en MP on ne capture que NOS membres
+			var d: float = m.global_position.distance_to(tpos)
+			if d < best_d:
+				best_d = d
+				best = m
+		if is_instance_valid(best):
+			best.begin_capture()
 			return
-	# Esquivé / pas la cible : la ball rebondit dans le vide.
+	# Esquivé / pas la cible : la ball TOMBE au sol et y reste quelques secondes.
+	_drop_idle_pokeball(tpos)
+
+
+## Pokéball ratée : posée au sol, petit rebond, puis disparaît (~2,5 s) —
+## retour joueurs : avant elle s'évaporait instantanément.
+func _drop_idle_pokeball(pos: Vector3) -> void:
 	Sfx.play_file(PokeballFX.SE_DROP, -7.0)
+	var ball := Sprite3D.new()
+	ball.texture        = load(PokeballFX.TEX_BALL)
+	ball.hframes        = 8
+	ball.frame          = 0
+	ball.billboard      = BaseMaterial3D.BILLBOARD_ENABLED
+	ball.pixel_size     = 0.028
+	ball.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	ball.shaded         = false
+	ball.position = Vector3(pos.x, 0.9, pos.z)
+	add_child(ball)
+	# Petit rebond à l'atterrissage.
+	var tw := ball.create_tween()
+	tw.tween_property(ball, "position:y", 0.28, 0.18).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	tw.tween_property(ball, "position:y", 0.42, 0.12).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.tween_property(ball, "position:y", 0.30, 0.10).set_ease(Tween.EASE_IN)
+	tw.tween_interval(1.9)
+	tw.tween_property(ball, "modulate:a", 0.0, 0.5)
+	tw.tween_callback(ball.queue_free)
 
 
 @rpc("any_peer", "call_remote", "reliable")
