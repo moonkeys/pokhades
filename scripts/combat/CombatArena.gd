@@ -3046,6 +3046,7 @@ func _enter_cave(_entrance: Vector2i) -> void:
 	if _cave_active:
 		return
 	_cave_active = true
+	_cave_claimed_peers.clear()   # nouvelle cave → réclamations remises à zéro
 	_clear_boon()   # le don de zone ne suit pas dans la grotte
 	_fade_transition(func() -> void:
 		_save_overworld()
@@ -3242,17 +3243,70 @@ func _spawn_cave_reward() -> void:
 		return
 	var sz   := _map.get_map_cell_size()
 	var cell := Vector2i(sz.x / 2, sz.y / 2)
+	# Aucun Pokémon LOCAL en état de recevoir l'objet (équipe K.O.) → on
+	# réclame automatiquement pour ne pas bloquer la sortie groupée en multi.
+	if not _has_claimable_member():
+		_report_cave_claim()
+		return
 	var chest := Chest.new()
 	chest.position = _map.cell_to_world3(cell)
 	# Objet garanti puissant (meilleur du pool)
 	chest.setup(_map.get_objects_layer(), cell, _map.source_id,
 		{"api_name": "choice-band", "effect": "atk", "mult": 1.5})
 	chest.opened.connect(func(item: Dictionary) -> void:
-		_show_item_reward(item, _spawn_cave_return_portal)
+		_show_item_reward(item, _report_cave_claim)
 	, CONNECT_ONE_SHOT)
 	_wire_chest_prompt(chest)
 	add_child(chest)
 	hud.set_wave("✦ Coffre doré — approche-toi !")
+
+
+## Récompense de cave RÉCLAMÉE par ce joueur (coffre ouvert + objet donné).
+## En solo → le portail de retour apparaît. En MULTI → on ne débloque la
+## sortie (groupée) que lorsque TOUS les joueurs ont réclamé la leur — sinon un
+## joueur pressé forçait les autres à sortir avant d'avoir pris leur objet
+## (retour joueurs : "on peut sortir sans prendre l'objet").
+var _cave_claimed_peers: Dictionary = {}
+
+## Un membre LOCAL (le nôtre en multi) est-il en état de recevoir l'objet ?
+func _has_claimable_member() -> bool:
+	for m in _team:
+		if not is_instance_valid(m) or m.pokemon_instance.is_fainted():
+			continue
+		if _mp and m.remote_peer != 0:
+			continue
+		return true
+	return false
+
+
+func _report_cave_claim() -> void:
+	if not _mp:
+		_spawn_cave_return_portal()
+	elif multiplayer.is_server():
+		_register_cave_claim(Net.local_id())
+	else:
+		_net_cave_claim.rpc_id(1, Net.local_id())
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func _net_cave_claim(peer: int) -> void:
+	if multiplayer.is_server():
+		_register_cave_claim(peer)
+
+
+func _register_cave_claim(peer: int) -> void:
+	_cave_claimed_peers[peer] = true
+	var pending := Net.players.size() - _cave_claimed_peers.size()
+	if pending > 0:
+		hud.set_wave("✦ Objet pris — on attend les autres (%d)…" % pending)
+		return
+	_net_cave_ready.rpc()   # tout le monde a réclamé → sortie débloquée partout
+	_spawn_cave_return_portal()
+
+
+@rpc("authority", "call_remote", "reliable")
+func _net_cave_ready() -> void:
+	_spawn_cave_return_portal()
 
 
 ## Nettoyage de cave reçu de l'hôte (clients) — même récompense localement.
