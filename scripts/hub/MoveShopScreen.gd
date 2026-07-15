@@ -97,22 +97,34 @@ func _build() -> void:
 	cs_btn.pressed.connect(_open_cs_screen)
 	panel.add_child(cs_btn)
 
-	# Grille 4×5
+	# Grille SCROLLABLE (la liste des CT dépasse la hauteur du panneau) :
+	# un ScrollContainer + un Control dimensionné à la hauteur totale de la
+	# grille — molette/glisser pour parcourir toutes les capacités.
 	var cols   := 4
 	var card_w := 270.0
 	var card_h := 86.0
 	var gap_x  := 12.0
 	var gap_y  := 10.0
 	var ox     := 18.0
-	var oy     := 80.0
+
+	var scroll := ScrollContainer.new()
+	scroll.position = Vector2(6, 78)
+	scroll.size     = Vector2(1148, 512)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	panel.add_child(scroll)
+
+	var inner := Control.new()
+	var rows := int(ceil(MOVE_LIST.size() / float(cols)))
+	inner.custom_minimum_size = Vector2(1136, float(rows) * (card_h + gap_y) + 8.0)
+	scroll.add_child(inner)
 
 	for i in MOVE_LIST.size():
 		var m: Dictionary = MOVE_LIST[i]
 		var col := i % cols
 		var row := i / cols
 		var cx  := ox + col * (card_w + gap_x)
-		var cy  := oy + row * (card_h + gap_y)
-		_build_move_card(panel, m, cx, cy, card_w, card_h)
+		var cy  := 4.0 + row * (card_h + gap_y)
+		_build_move_card(inner, m, cx, cy, card_w, card_h)
 
 	var close := Button.new()
 	close.text     = "✕  Fermer"

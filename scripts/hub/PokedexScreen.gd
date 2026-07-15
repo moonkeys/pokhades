@@ -324,10 +324,19 @@ func _build_detail_panel(panel: Panel) -> void:
 	_style(frame, Color(0.16, 0.12, 0.07, 0.95), C_BORDER, 8)
 	panel.add_child(frame)
 
+	# Contenu SCROLLABLE : stats + attaques de base + CT peuvent dépasser la
+	# hauteur du cadre (retour joueurs : on ne pouvait pas scroller la liste
+	# d'attaques). Un ScrollContainer clippe au cadre ; _detail_root grandit
+	# selon son contenu (_refresh_detail fixe sa hauteur mini).
+	var scroll := ScrollContainer.new()
+	scroll.position = Vector2(490, 84)
+	scroll.size     = Vector2(572, 484)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	panel.add_child(scroll)
+
 	_detail_root = Control.new()
-	_detail_root.position = Vector2(488, 82)
-	_detail_root.size     = Vector2(576, 488)
-	panel.add_child(_detail_root)
+	_detail_root.custom_minimum_size = Vector2(556, 484)
+	scroll.add_child(_detail_root)
 
 	_refresh_detail()
 
@@ -448,6 +457,7 @@ func _refresh_detail() -> void:
 	if not is_instance_valid(_detail_root): return
 	for ch in _detail_root.get_children():
 		ch.queue_free()
+	_detail_root.custom_minimum_size.y = 484   # défaut ; étendu selon le contenu plus bas
 
 	if _selected_pid < 0:
 		return
@@ -666,6 +676,9 @@ func _refresh_detail() -> void:
 		if mx + col_w > 560:
 			mx = 16
 			my += 60
+
+	# Hauteur du contenu → le ScrollContainer sait jusqu'où défiler.
+	_detail_root.custom_minimum_size.y = maxf(484.0, my + 66.0)
 
 
 # ── Chargement API ────────────────────────────────────────────────────
