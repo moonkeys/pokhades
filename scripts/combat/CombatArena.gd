@@ -2133,10 +2133,55 @@ func _claim_boon_skill(member_index: int, option_index: int, replace_index: int)
 	_consume_boon()
 
 
+## Don de STATS : on choisit à quel Pokémon l'associer (retour joueurs : le
+## boost ne doit plus s'appliquer à TOUTE l'équipe). Ferme l'écran de don,
+## ouvre le sélecteur de membre, applique au seul Pokémon choisi.
+const _STAT_BOON_LABELS := {
+	"boost_atk": "Attaque +20%", "boost_def": "Défense +20%",
+	"boost_hp": "PV max +20%",   "boost_spd": "Vitesse +20%",
+}
+
 func _claim_boon_stat(stat_id: String) -> void:
-	_apply_bonus(stat_id)   # applique le boost à TOUTE l'équipe
-	Sfx.play("victory", -6.0)
-	_consume_boon()
+	if is_instance_valid(_boon_screen):
+		_boon_screen.queue_free()
+	_boon_screen = null
+	var label: String = _STAT_BOON_LABELS.get(stat_id, "Bonus de stats")
+	# En multi, on ne peut buffer que SES Pokémon (pas les copies des autres).
+	var pickable: Array = _team
+	if _mp:
+		pickable = _team.filter(func(m): return is_instance_valid(m) and m.remote_peer == 0)
+	var screen := ItemRewardScreen.new()
+	add_child(screen)
+	screen.setup({"name_fr": label, "desc": "%s — pour UN Pokémon (choisis lequel)" % label}, pickable)
+	screen.member_chosen.connect(func(idx: int) -> void:
+		_apply_bonus_to_member(stat_id, idx)
+		screen.queue_free()
+		Sfx.play("victory", -6.0)
+		_consume_boon()
+	, CONNECT_ONE_SHOT)
+
+
+## Applique un boost de stat à UN SEUL membre (cf. _apply_bonus pour l'ancienne
+## version équipe entière, désormais inutilisée).
+func _apply_bonus_to_member(bonus_id: String, idx: int) -> void:
+	if idx < 0 or idx >= _team.size():
+		return
+	var m = _team[idx]
+	if not is_instance_valid(m) or m.pokemon_instance.is_fainted():
+		return
+	var inst: PokemonInstance = m.pokemon_instance
+	match bonus_id:
+		"boost_hp":
+			inst.apply_hp_boost(1.2)
+			var r: float = inst.hp_ratio()
+			hud.update_team_hp(idx, r)
+			if idx == _active_index:
+				hud.update_hp(r)
+		"boost_atk": inst.attack_mult  *= 1.2
+		"boost_def": inst.defense_mult *= 1.2
+		"boost_spd": inst.speed_mult   *= 1.2
+	var label: String = _STAT_BOON_LABELS.get(bonus_id, "Bonus")
+	hud.notify("⬆  %s → %s" % [label, inst.data.name_fr.capitalize()], Color(0.95, 0.82, 0.35))
 
 
 ## Don réclamé : on ferme l'écran et on retire l'item du centre.

@@ -59,6 +59,9 @@ func setup(item: Dictionary, team: Array) -> void:
 
 
 func _describe_item(item: Dictionary) -> String:
+	# Description explicite fournie (ex : don de stat) — prioritaire.
+	if item.has("desc"):
+		return str(item["desc"])
 	var mult: float = item.get("mult", 1.0)
 	match item.get("effect", ""):
 		"atk": return "Objet tenu — Attaque ×%.1f en permanence" % mult
