@@ -108,6 +108,7 @@ var _boutique_screen: BoutiqueScreen = null
 var _boon_node:   Area3D = null             # item flottant au centre
 var _boon_type:   int    = -1               # RunManager.BONUS_SKILL / BONUS_STAT
 var _boon_screen: BoutiqueScreen = null     # écran de récompense (skill/stat)
+var _boon_picker: Node = null               # sélecteur de Pokémon d'un don de stat
 
 var _pause_screen: PauseMenuScreen = null
 
@@ -277,7 +278,8 @@ func _process(delta: float) -> void:
 	if Input.is_action_just_pressed("interact"):
 		if _near_vendor and not is_instance_valid(_boutique_screen):
 			_open_boutique_shop()
-		elif _near_boon and not is_instance_valid(_boon_screen):
+		elif _near_boon and not is_instance_valid(_boon_screen) \
+				and not is_instance_valid(_boon_picker):
 			_open_boon()
 		elif _near_recruit and not is_instance_valid(_recruit_screen):
 			_open_recruit_dialog()
@@ -2067,6 +2069,9 @@ func _clear_boon() -> void:
 	if is_instance_valid(_boon_screen):
 		_boon_screen.queue_free()
 	_boon_screen = null
+	if is_instance_valid(_boon_picker):
+		_boon_picker.queue_free()
+	_boon_picker = null
 	_boon_type = -1
 
 
@@ -2151,17 +2156,23 @@ func _claim_boon_stat(stat_id: String) -> void:
 	if _mp:
 		pickable = _team.filter(func(m): return is_instance_valid(m) and m.remote_peer == 0)
 	var screen := ItemRewardScreen.new()
+	# _boon_picker : tant qu'il est ouvert, [E] ne rouvre PAS l'écran des stats
+	# par-dessus (le joueur est encore sur le prisme). C'était ce qui masquait
+	# aussitôt le sélecteur de Pokémon (retour joueurs : "j'ai pas vu ce choix").
+	_boon_picker = screen
 	add_child(screen)
 	screen.setup({"name_fr": label, "desc": "%s — pour UN Pokémon (choisis lequel)" % label},
 		pickable, true)   # true = annulable (revenir au choix de la stat)
 	screen.member_chosen.connect(func(idx: int) -> void:
 		_apply_bonus_to_member(stat_id, idx)
+		_boon_picker = null
 		screen.queue_free()
 		Sfx.play("victory", -6.0)
 		_consume_boon()
 	, CONNECT_ONE_SHOT)
 	# Annuler → on rouvre l'écran des 4 stats (le don n'est pas consommé).
 	screen.cancelled.connect(func() -> void:
+		_boon_picker = null
 		screen.queue_free()
 		_open_boon()
 	, CONNECT_ONE_SHOT)

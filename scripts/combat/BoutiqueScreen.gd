@@ -166,7 +166,7 @@ func _build_stat_boon() -> void:
 		card.add_child(btn)
 
 	var info := UiKit.dark_card(_panel, Vector2(40, 402), Vector2(800, 74))
-	UiKit.label(info, "Choisis un bonus — appliqué à TOUTE l'équipe",
+	UiKit.label(info, "Choisis un bonus, puis à QUEL Pokémon l'associer",
 		Vector2(0, 24), 20, UiKit.CREAM, 800, HORIZONTAL_ALIGNMENT_CENTER)
 	_add_continue(520)
 
