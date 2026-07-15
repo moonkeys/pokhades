@@ -19,6 +19,15 @@ var is_champion: bool = false   # élite de salle : plus grand, anneau rouge, me
 var is_boss:     bool = false   # boss de palier : encore plus grand, anneau doré
 var is_demi_boss: bool = false  # demi-boss de grotte : aura rouge, débloque une espèce
 
+## Barres de vie MULTIPLES (retour joueurs : boss trop faibles, pas de tension).
+## À 0 PV, s'il reste une barre, le Pokémon se recharge à fond et entame la
+## suivante (façon phases de boss) — son endurance effective est ×hp_bars. Des
+## pastilles au-dessus de la barre indiquent combien il en reste. Assigné en
+## fonction du rôle dans setup() (demi-boss/boss d'as = 3, autres leads = 2).
+var hp_bars:    int = 1
+var _bars_left: int = 1
+var _bar_pips:  Array = []
+
 # ── ARCHÉTYPES DE DÉPLACEMENT ────────────────────────────────────────
 # Avant, TOUS les ennemis avaient le même comportement : foncer sur le joueur
 # et s'arrêter à portée — des vagues denses d'ennemis identiques qui
@@ -123,6 +132,36 @@ func _set_hp_ratio(ratio: float) -> void:
 	_hp_fill.position.x = -HP_BAR_W * 0.5 * (1.0 - ratio)   # la barre se vide vers la gauche
 
 
+## Pastilles au-dessus de la barre : une par "barre de vie" restante. Créées
+## seulement pour les multi-barres (boss). Or vif = restante, sombre = consommée.
+func _create_bar_pips() -> void:
+	if hp_bars <= 1:
+		return
+	var container := get_node_or_null("HPBar")
+	if container == null:
+		return
+	var pip_w := 0.16
+	var gap   := 0.05
+	var total := hp_bars * pip_w + (hp_bars - 1) * gap
+	for i in hp_bars:
+		var pip := MeshInstance3D.new()
+		var q := QuadMesh.new()
+		q.size = Vector2(pip_w, 0.10)
+		pip.mesh = q
+		pip.position = Vector3(-total * 0.5 + pip_w * 0.5 + i * (pip_w + gap), HP_BAR_H + 0.13, 0.01)
+		pip.material_override = _bar_material(Color(1.0, 0.82, 0.20))
+		container.add_child(pip)
+		_bar_pips.append(pip)
+
+
+func _update_bar_pips() -> void:
+	for i in _bar_pips.size():
+		var pip: MeshInstance3D = _bar_pips[i]
+		if is_instance_valid(pip):
+			(pip.material_override as StandardMaterial3D).albedo_color = \
+				Color(1.0, 0.82, 0.20) if i < _bars_left else Color(0.30, 0.22, 0.10)
+
+
 func setup(instance: PokemonInstance, champion: bool = false, boss: bool = false, demi_boss: bool = false) -> void:
 	pokemon_instance = instance
 	# Un move SPÉCIAL dans le set → cet ennemi attaque À DISTANCE (projectile,
@@ -134,6 +173,14 @@ func setup(instance: PokemonInstance, champion: bool = false, boss: bool = false
 	is_champion = champion or boss or demi_boss
 	is_boss = boss
 	is_demi_boss = demi_boss
+
+	# Barres de vie : demi-boss & as de champion = 3 ; autres leads/élites = 2.
+	if is_boss or is_demi_boss:
+		hp_bars = 3
+	elif champion:
+		hp_bars = 2
+	_bars_left = hp_bars
+	_create_bar_pips()
 
 	# Archétype : les tireurs kitent ; les boss/champions restent des CHASER
 	# lisibles ; le reste se répartit chasseur / chargeur / harceleur (tiré par
@@ -801,6 +848,26 @@ func take_damage(amount: int, source_pos: Vector3 = Vector3(INF, INF, INF),
 	)
 
 	var fatal := pokemon_instance.is_fainted()
+
+	# Transition de PHASE : à 0 PV, s'il reste une barre, le boss se recharge à
+	# fond et repart — il ne meurt qu'à la dernière barre (endurance ×hp_bars).
+	if fatal and _bars_left > 1:
+		_bars_left -= 1
+		pokemon_instance.current_hp = pokemon_instance.max_hp
+		if Net.in_run:
+			_net_hp.rpc(pokemon_instance.current_hp)
+		_set_hp_ratio(1.0)
+		_update_bar_pips()
+		fatal = false
+		# Flash + onde de choc de changement de phase.
+		sprite.modulate = Color(2.6, 2.4, 1.4)
+		get_tree().create_timer(0.2).timeout.connect(func():
+			if is_instance_valid(self):
+				sprite.modulate = Color.WHITE)
+		Sfx.play("levelup", -4.0)
+		CombatVFX.spawn_impact(get_parent(), global_position + Vector3(0, 1.0, 0),
+			Color(1.0, 0.9, 0.4))
+		get_tree().call_group("combat_arena", "add_camera_shake", 0.12)
 
 	# Impact directionnel : étincelle au point de contact + recul (sauf mort,
 	# où l'anim de chute prend le relais). Les gros gabarits encaissent mieux.

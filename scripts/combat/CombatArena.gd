@@ -3150,10 +3150,12 @@ func _spawn_cave_bosses() -> void:
 		return
 	var rooms := RunManager.inst().rooms_cleared
 	var lv := SEMI_BOSS_LEVEL + rooms * 3
-	# 1 demi-boss à aura rouge (espèce non évoluée à débloquer) + 3 sbires
-	# nettement plus faibles.
+	# 1 demi-boss à aura rouge (espèce non évoluée à débloquer, 3 barres de vie)
+	# + une VRAIE escorte de sbires (retour joueurs : combat trop facile).
+	# L'escorte grossit avec l'acte.
+	var act := RunManager.inst().act_of(rooms)
 	_cave_demiboss_pid = _spawn_cave_demiboss(lv + 4)
-	_spawn_from_pool(POOL_CAVE_ELITE, 3, maxi(PLAYER_LEVEL, lv - 5))
+	_spawn_from_pool(POOL_CAVE_ELITE, 4 + act, maxi(PLAYER_LEVEL, lv - 4))
 	_room_total = _alive
 	hud.set_kills(0, _room_total)
 	if _mp:
