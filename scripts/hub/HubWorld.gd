@@ -147,50 +147,28 @@ func _build_backdrop() -> void:
 	rng.seed = 99
 	var center := Vector3(MAP_W * 0.5, 0, MAP_H * 0.5)
 
-	# 1) Second plan : arbres + falaises étagées
-	var n := 30
-	for i in n:
-		var ang := (TAU / float(n)) * i + rng.randf_range(-0.07, 0.07)
-		var pos := center + Vector3(
-			cos(ang) * (MAP_W * 0.5 + rng.randf_range(2.5, 7.5)),
-			0,
-			sin(ang) * (MAP_H * 0.5 + rng.randf_range(2.0, 6.5))
-		)
-		if rng.randf() < 0.18:
-			_add_backdrop_cliff(rng, pos, ang)
-		else:
-			var pool: Array = KitProps.TREES_ROUND if rng.randf() < 0.65 else KitProps.TREES_PINE
+	# MUR DE FORÊT DENSE tout autour de la map — plusieurs anneaux d'arbres,
+	# de plus en plus hauts vers le fond, pour un horizon "on est au cœur des
+	# bois". Plus de montagnes/collines à l'extérieur (retour joueurs).
+	for ring in 5:
+		var n := 64 + ring * 10
+		var rx := MAP_W * 0.5 + 2.0 + ring * 4.2
+		var rz := MAP_H * 0.5 + 1.6 + ring * 3.8
+		for i in n:
+			var ang := (TAU / float(n)) * i + rng.randf_range(-0.05, 0.05)
+			var pos := center + Vector3(
+				cos(ang) * (rx + rng.randf_range(-1.4, 2.2)),
+				0,
+				sin(ang) * (rz + rng.randf_range(-1.4, 2.2)))
+			var pool: Array = KitProps.TREES_ROUND if rng.randf() < 0.6 else KitProps.TREES_PINE
 			var file: String = pool[rng.randi() % pool.size()]
 			var native_h: float = KitProps.TREE_NATIVE_HEIGHT.get(file, 1.7)
 			var tree := KitProps.instance(file)
-			tree.scale = Vector3.ONE * (rng.randf_range(3.2, 5.6) / native_h)
+			tree.scale = Vector3.ONE * (rng.randf_range(3.4, 5.8) + ring * 0.5) / native_h
 			tree.rotation.y = rng.randf_range(0.0, TAU)
 			tree.position = pos
 			add_child(tree)
 			_disable_shadows(tree)   # décor lointain : pas d'ombre intrusive
-
-	# 2) Collines lointaines
-	var hills := 20
-	for i in hills:
-		var ang := (TAU / float(hills)) * i + rng.randf_range(-0.15, 0.15)
-		var rx := MAP_W * 0.5 + rng.randf_range(12.0, 26.0)
-		var ry := MAP_H * 0.5 + rng.randf_range(10.0, 22.0)
-		var pos := center + Vector3(cos(ang) * rx, 0, sin(ang) * ry)
-
-		var hill := MeshInstance3D.new()
-		var mesh := SphereMesh.new()
-		mesh.radius = rng.randf_range(9.0, 17.0)
-		mesh.height = mesh.radius * 1.15
-		hill.mesh = mesh
-		hill.position = pos + Vector3(0, -mesh.radius * 0.5, 0)
-		var mat := StandardMaterial3D.new()
-		mat.albedo_color = Color(0.50, 0.60, 0.66).lerp(Color(0.40, 0.54, 0.60), rng.randf())
-		mat.roughness = 1.0
-		hill.material_override = mat
-		# Pas d'ombre portée : une colline géante hors map projetterait une
-		# énorme bande d'ombre en travers de la scène (artefact "clignotant").
-		hill.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		add_child(hill)
 
 	# 3) Nuages dérivants — HAUTS, petits et discrets pour ne pas former de
 	# grande bande translucide au premier plan (et pas de scintillement de tri

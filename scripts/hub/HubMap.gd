@@ -69,9 +69,8 @@ const _FLAT_RECTS: Array[Rect2i] = [
 	Rect2i(4, 14, 48, 6),    # bande de chemin horizontale
 	Rect2i(20, 12, 16, 12),  # plaza centrale
 	Rect2i(3, 21, 13, 11),   # étang + berges
-	Rect2i(4, 10, 7, 5),     # stand de marché
-	Rect2i(2, 3, 6, 6),      # tour
-	Rect2i(40, 3, 11, 8),    # ruines + statues
+	# (Stand de marché, tour et ruines retirés — leurs zones plates aussi, pour
+	# que l'herbe/les arbres/le décor les remplissent.)
 	Rect2i(28, 23, 12, 7),   # tournesols + barrières
 	Rect2i(15, 21, 5, 4),    # feu de camp ouest
 	Rect2i(37, 22, 5, 4),    # feu de camp est
@@ -248,8 +247,8 @@ func _generate() -> void:
 	# _place_market_stall() retiré — sprite (stall_*.png) supprimé, pas de
 	# substitut GLB dans le kit nature ; laissait un mur invisible gênant.
 	_place_big_tree()
-	_place_ruins()
-	_place_tower()
+	# Tour et ruines (sprites 2D du tileset) retirées — retour joueurs.
+	_place_stone_dallage()   # dalles de pierre à quelques endroits (plaza, abords)
 	_place_campfires()
 	_place_sunflower_fences()
 	_scatter_tall_grass()   # bouquets de haute herbe pixel-art (cf. GrassPatch)
@@ -538,10 +537,43 @@ func _scatter_life_decor() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 5150
 	_scatter_kit_pool(rng, KitProps.MUSHROOMS,   14, 1.7, 2.3, false)   # + de champignons
-	_scatter_kit_pool(rng, KitProps.STUMPS,       5, 1.8, 2.2, true)
-	_scatter_kit_pool(rng, KitProps.LOGS,         4, 1.8, 2.2, true)
+	_scatter_kit_pool(rng, KitProps.STUMPS,       5, 2.2, 2.8, true)
+	_scatter_kit_pool(rng, KitProps.LOGS,         7, 3.6, 4.6, true)   # rondins-bancs (bien plus gros)
 	_scatter_kit_pool(rng, KitProps.GRASS_SMALL, 60, 1.0, 1.7, false)   # touffes basses (couvre-sol)
 	_scatter_kit_pool(rng, KitProps.BUSHES,      16, 1.1, 1.7, false)   # buissons variés
+
+
+## Zones PAVÉES : dalles de pierre carrées (une par case, léger joint + teinte
+## variée) sur la plaza et devant quelques PNJ — un vrai sol dallé plutôt que
+## de la terre battue.
+func _place_stone_dallage() -> void:
+	_dallage_patch(Vector2i(23, 13), Vector2i(33, 23))   # plaza centrale
+	_dallage_patch(Vector2i(6, 12),  Vector2i(11, 16))   # devant la Boutique (ouest)
+	_dallage_patch(Vector2i(44, 12), Vector2i(48, 16))   # devant les Améliorations (est)
+
+
+func _dallage_patch(a: Vector2i, b: Vector2i) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(a) + 31
+	for r in range(a.y, b.y):
+		for c in range(a.x, b.x):
+			var cell := Vector2i(c, r)
+			if _water_cells.has(cell):
+				continue
+			var tile := MeshInstance3D.new()
+			var box := BoxMesh.new()
+			box.size = Vector3(0.9, 0.12, 0.9)   # 0,1 de joint entre dalles
+			tile.mesh = box
+			var y := get_height_at_world(Vector3(float(c) + 0.5, 0, float(r) + 0.5))
+			tile.position = Vector3(float(c) + 0.5, y + 0.07, float(r) + 0.5)
+			tile.rotation.y = (rng.randi() % 4) * (PI * 0.5)
+			var v := rng.randf_range(-0.06, 0.06)
+			var mat := StandardMaterial3D.new()
+			mat.albedo_color = Color(0.60 + v, 0.58 + v, 0.55 + v)
+			mat.roughness = 1.0
+			tile.material_override = mat
+			tile.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			add_child(tile)
 
 
 ## Bouquets de HAUTE HERBE pixel-art (mêmes touffes que les biomes de run, cf.
@@ -730,9 +762,59 @@ func _draw_paths() -> void:
 
 
 func _fill_path(x0: int, x1: int, y0: int, y1: int) -> void:
-	var mesh_inst := _make_nature_plane("path.png", x1 - x0, y1 - y0)
+	var w := float(x1 - x0)
+	var h := float(y1 - y0)
+	var mesh_inst := MeshInstance3D.new()
+	var plane := PlaneMesh.new()
+	plane.size = Vector2(w, h)
+	mesh_inst.mesh = plane
+	# Bords DISSOUS dans l'herbe par un bruit (le chemin flotte au-dessus du
+	# sol, cf. y=0.045) — jointure organique façon biomes de run, plus de bord
+	# rectangulaire net (retour joueurs).
+	var mat := ShaderMaterial.new()
+	mat.shader = _get_path_dissolve_shader()
+	mat.set_shader_parameter("tex", load(NATURE_DIR + "path.png"))
+	mat.set_shader_parameter("tiles", Vector2(w, h))
+	mat.set_shader_parameter("half_size", Vector2(w * 0.5, h * 0.5))
+	mesh_inst.material_override = mat
 	mesh_inst.position = Vector3(float(x0 + x1) * 0.5, 0.045, float(y0 + y1) * 0.5)
 	add_child(mesh_inst)
+
+
+static var _path_shader: Shader = null
+
+const _PATH_DISSOLVE_SHADER := """
+shader_type spatial;
+render_mode blend_mix, cull_disabled, depth_draw_opaque;
+uniform sampler2D tex : source_color, repeat_enable, filter_nearest;
+uniform vec2 tiles = vec2(1.0);
+uniform vec2 half_size = vec2(1.0);
+uniform float feather = 1.6;   // largeur de la frange dissoute (unités monde)
+
+float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float noise(vec2 p) {
+	vec2 i = floor(p); vec2 f = fract(p);
+	float a = hash(i), b = hash(i + vec2(1,0)), c = hash(i + vec2(0,1)), d = hash(i + vec2(1,1));
+	vec2 u = f*f*(3.0-2.0*f);
+	return mix(mix(a,b,u.x), mix(c,d,u.x), u.y);
+}
+void fragment() {
+	ALBEDO = texture(tex, UV * tiles).rgb;
+	ROUGHNESS = 1.0;
+	// Distance au bord le plus proche (en unités monde).
+	vec2 p = (UV - 0.5) * (half_size * 2.0);
+	float edge = min(half_size.x - abs(p.x), half_size.y - abs(p.y));
+	// Frange déchiquetée : le seuil de fondu est perturbé par du bruit.
+	float n = noise(UV * tiles * 1.5) - 0.5;
+	ALPHA = clamp(smoothstep(0.0, feather, edge + n * feather * 1.1), 0.0, 1.0);
+}
+"""
+
+func _get_path_dissolve_shader() -> Shader:
+	if _path_shader == null:
+		_path_shader = Shader.new()
+		_path_shader.code = _PATH_DISSOLVE_SHADER
+	return _path_shader
 
 
 # ── Forêts organiques (bordure + bosquets intérieurs) ─────────────────────
@@ -855,6 +937,7 @@ func _place_lamp(pos: Vector3) -> void:
 func _place_campfires() -> void:
 	_place_campfire(Vector3(17.5, 0, 22.5), 0)
 	_place_campfire(Vector3(39.5, 0, 23.5), 1)
+	_place_campfire(Vector3(28.0, 0, 8.5),  0)   # feu supplémentaire, haut du hub
 
 
 func _place_campfire(pos: Vector3, variant: int) -> void:
