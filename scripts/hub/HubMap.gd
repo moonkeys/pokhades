@@ -252,7 +252,8 @@ func _generate() -> void:
 	_place_tower()
 	_place_campfires()
 	_place_sunflower_fences()
-	_place_plaza_statue()
+	_scatter_tall_grass()   # bouquets de haute herbe pixel-art (cf. GrassPatch)
+	# Statue centrale retirée (retour joueurs : "la statue moche au centre").
 	# Les tournesols animés sont gérés par SunflowerField.gd (HubWorld._build_sunflowers)
 	# Rangées de test Outside.png : plus posées (encombraient le hub compact).
 
@@ -413,8 +414,10 @@ func _fill_ground() -> void:
 	var mesh_inst := MeshInstance3D.new()
 	mesh_inst.name = "Ground"
 	mesh_inst.mesh = st.commit()
-	# Sol saturé/assombri (shader partagé avec les maps de run)
-	mesh_inst.material_override = GrassPatch.ground_material(load(NATURE_DIR + "grass.png"))
+	# Sol saturé/assombri + "peint" (bruit organique) — même rendu que les maps
+	# de run améliorées, pour casser l'aspect dalle uniforme.
+	mesh_inst.material_override = GrassPatch.ground_material(
+		load(NATURE_DIR + "grass.png"), 1.45, 0.88, 1.0, Color.WHITE, 0.0, 1.0)
 	mesh_inst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	add_child(mesh_inst)
 
@@ -534,9 +537,45 @@ func _scatter_rocks() -> void:
 func _scatter_life_decor() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 5150
-	_scatter_kit_pool(rng, KitProps.MUSHROOMS, 9, 1.7, 2.3, false)
-	_scatter_kit_pool(rng, KitProps.STUMPS,    5, 1.8, 2.2, true)
-	_scatter_kit_pool(rng, KitProps.LOGS,      4, 1.8, 2.2, true)
+	_scatter_kit_pool(rng, KitProps.MUSHROOMS,   14, 1.7, 2.3, false)   # + de champignons
+	_scatter_kit_pool(rng, KitProps.STUMPS,       5, 1.8, 2.2, true)
+	_scatter_kit_pool(rng, KitProps.LOGS,         4, 1.8, 2.2, true)
+	_scatter_kit_pool(rng, KitProps.GRASS_SMALL, 60, 1.0, 1.7, false)   # touffes basses (couvre-sol)
+	_scatter_kit_pool(rng, KitProps.BUSHES,      16, 1.1, 1.7, false)   # buissons variés
+
+
+## Bouquets de HAUTE HERBE pixel-art (mêmes touffes que les biomes de run, cf.
+## GrassPatch.build_tufts) — semés en petits amas hors chemins/eau/structures,
+## deux MultiMesh (pleines / à cœur creux) pour la variété. Purement décoratif.
+func _scatter_tall_grass() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7777
+	var full: Array = []
+	var hollow: Array = []
+	for _cluster in 30:
+		var cc := Vector2i(rng.randi_range(3, W - 4), rng.randi_range(3, H - 4))
+		if _in_no_flower_zone(cc) or _water_cells.has(cc):
+			continue
+		for _blade in rng.randi_range(3, 7):
+			var cell := cc + Vector2i(rng.randi_range(-2, 2), rng.randi_range(-2, 2))
+			if cell.x < 2 or cell.x >= W - 2 or cell.y < 2 or cell.y >= H - 2:
+				continue
+			if _in_no_flower_zone(cell) or _water_cells.has(cell):
+				continue
+			var px := float(cell.x) + rng.randf_range(0.2, 0.8)
+			var pz := float(cell.y) + rng.randf_range(0.2, 0.8)
+			var y := get_height_at_world(Vector3(px, 0, pz))
+			var xf := Transform3D(Basis().scaled(Vector3.ONE * rng.randf_range(0.9, 1.35)),
+				Vector3(px, y, pz))
+			if rng.randf() < 0.3:
+				hollow.append(xf)
+			else:
+				full.append(xf)
+	var tint := Color(0.95, 1.08, 0.85)
+	if not full.is_empty():
+		add_child(GrassPatch.build_tufts(full, tint, false))
+	if not hollow.is_empty():
+		add_child(GrassPatch.build_tufts(hollow, tint, true))
 
 
 func _scatter_kit_pool(rng: RandomNumberGenerator, pool: Array, count: int,
