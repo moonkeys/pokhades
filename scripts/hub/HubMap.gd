@@ -984,6 +984,94 @@ func _place_campfires() -> void:
 	_place_campfire(Vector3(28.0, 0, 8.5),  0)   # feu supplémentaire, haut du hub
 
 
+## Feu en particules : une gerbe de flammes qui montent et rétrécissent
+## (dégradé jaune→orange→rouge, mélange additif) + de fines braises qui
+## s'envolent. Rendu vivant, contrairement au cône émissif d'avant.
+func _build_flame() -> Node3D:
+	var root := Node3D.new()
+
+	# ── Flammes ──
+	var flame := GPUParticles3D.new()
+	flame.amount   = 30
+	flame.lifetime = 0.75
+	flame.preprocess = 1.0
+	flame.local_coords = true
+
+	var pm := ParticleProcessMaterial.new()
+	pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
+	pm.emission_sphere_radius = 0.28
+	pm.direction = Vector3(0, 1, 0)
+	pm.spread = 12.0
+	pm.gravity = Vector3(0, 1.6, 0)              # les flammes s'élèvent
+	pm.initial_velocity_min = 0.7
+	pm.initial_velocity_max = 1.5
+	pm.scale_min = 0.7
+	pm.scale_max = 1.15
+	var scurve := Curve.new()                     # grossit puis s'éteint
+	scurve.add_point(Vector2(0.0, 0.5))
+	scurve.add_point(Vector2(0.25, 1.0))
+	scurve.add_point(Vector2(1.0, 0.0))
+	var sct := CurveTexture.new()
+	sct.curve = scurve
+	pm.scale_curve = sct
+	var grad := Gradient.new()                    # jaune vif → orange → rouge fondu
+	grad.set_color(0, Color(1.0, 0.95, 0.55, 1.0))
+	grad.add_point(0.35, Color(1.0, 0.6, 0.15, 0.95))
+	grad.set_color(1, Color(0.75, 0.12, 0.04, 0.0))
+	var gtex := GradientTexture1D.new()
+	gtex.gradient = grad
+	pm.color_ramp = gtex
+	flame.process_material = pm
+
+	var quad := QuadMesh.new()
+	quad.size = Vector2(0.7, 0.95)
+	var fmat := StandardMaterial3D.new()
+	fmat.albedo_texture   = CombatVFX._get_soft_texture()
+	fmat.billboard_mode   = BaseMaterial3D.BILLBOARD_PARTICLES
+	fmat.blend_mode       = BaseMaterial3D.BLEND_MODE_ADD
+	fmat.shading_mode     = BaseMaterial3D.SHADING_MODE_UNSHADED
+	fmat.transparency     = BaseMaterial3D.TRANSPARENCY_ALPHA
+	fmat.vertex_color_use_as_albedo = true        # la couleur des particules teinte le quad
+	fmat.texture_filter   = BaseMaterial3D.TEXTURE_FILTER_LINEAR
+	fmat.cull_mode        = BaseMaterial3D.CULL_DISABLED
+	quad.material = fmat
+	flame.draw_pass_1 = quad
+	flame.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.add_child(flame)
+
+	# ── Braises (fines étincelles qui montent plus haut) ──
+	var ember := GPUParticles3D.new()
+	ember.amount   = 14
+	ember.lifetime = 1.6
+	ember.preprocess = 1.0
+	ember.local_coords = true
+	var em := ParticleProcessMaterial.new()
+	em.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
+	em.emission_sphere_radius = 0.22
+	em.direction = Vector3(0, 1, 0)
+	em.spread = 22.0
+	em.gravity = Vector3(0, 0.9, 0)
+	em.initial_velocity_min = 0.6
+	em.initial_velocity_max = 1.3
+	em.scale_min = 0.10
+	em.scale_max = 0.20
+	var eg := Gradient.new()
+	eg.set_color(0, Color(1.0, 0.75, 0.3, 1.0))
+	eg.set_color(1, Color(1.0, 0.4, 0.1, 0.0))
+	var egt := GradientTexture1D.new()
+	egt.gradient = eg
+	em.color_ramp = egt
+	ember.process_material = em
+	var eq := QuadMesh.new()
+	eq.size = Vector2(0.16, 0.16)
+	eq.material = fmat            # même matériau additif teinté
+	ember.draw_pass_1 = eq
+	ember.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.add_child(ember)
+
+	return root
+
+
 func _place_campfire(pos: Vector3, variant: int) -> void:
 	var root := Node3D.new()
 	root.position = pos
@@ -995,21 +1083,11 @@ func _place_campfire(pos: Vector3, variant: int) -> void:
 	fire.scale = Vector3.ONE * 6.0
 	root.add_child(fire)
 
-	# Flamme stylisée : cône émissif — le glow de l'Environment fait le reste
-	var flame := MeshInstance3D.new()
-	var cone := CylinderMesh.new()
-	cone.top_radius    = 0.0
-	cone.bottom_radius = 0.34
-	cone.height        = 0.85
-	flame.mesh = cone
-	flame.position = Vector3(0, 0.5, 0)
-	var fmat := StandardMaterial3D.new()
-	fmat.albedo_color    = Color(1.0, 0.55, 0.15)
-	fmat.emission_enabled = true
-	fmat.emission         = Color(1.0, 0.45, 0.10)
-	fmat.emission_energy_multiplier = 1.6
-	flame.material_override = fmat
-	flame.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# VRAIES flammes en particules (montantes, colorées, + braises) au lieu
+	# d'un cône (retour joueurs).
+	var flame := _build_flame()
+	flame.position = Vector3(0, 0.55, 0)
+	flame.scale = Vector3.ONE * 1.8
 	root.add_child(flame)
 
 	# Lumière chaude vacillante (script CampfireFlicker, actif en jeu seulement)
