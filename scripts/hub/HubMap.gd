@@ -249,6 +249,7 @@ func _generate() -> void:
 	_place_big_tree()
 	# Tour et ruines (sprites 2D du tileset) retirées — retour joueurs.
 	_place_stone_dallage()   # dalles de pierre à quelques endroits (plaza, abords)
+	_place_tents()
 	_place_campfires()
 	_place_sunflower_fences()
 	_scatter_tall_grass()   # bouquets de haute herbe pixel-art (cf. GrassPatch)
@@ -537,8 +538,8 @@ func _scatter_life_decor() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 5150
 	_scatter_kit_pool(rng, KitProps.MUSHROOMS,   14, 1.7, 2.3, false)   # + de champignons
-	_scatter_kit_pool(rng, KitProps.STUMPS,       5, 2.2, 2.8, true)
-	_scatter_kit_pool(rng, KitProps.LOGS,         7, 3.6, 4.6, true)   # rondins-bancs (bien plus gros)
+	_scatter_kit_pool(rng, KitProps.STUMPS,       5, 4.0, 5.0, true)
+	_scatter_kit_pool(rng, KitProps.LOGS,         7, 7.0, 8.5, true)   # rondins-bancs (échelle lisible)
 	_scatter_kit_pool(rng, KitProps.GRASS_SMALL, 60, 1.0, 1.7, false)   # touffes basses (couvre-sol)
 	_scatter_kit_pool(rng, KitProps.BUSHES,      16, 1.1, 1.7, false)   # buissons variés
 
@@ -552,28 +553,27 @@ func _place_stone_dallage() -> void:
 	_dallage_patch(Vector2i(44, 12), Vector2i(48, 16))   # devant les Améliorations (est)
 
 
+## Un plan carrelé avec la MÊME tuile de chemin de pierre que le biome Village
+## (tileset, cf. MapGenerator.tile_chemin_pierre_orig), bords dissous dans
+## l'herbe par le shader de bruit — plus les vilaines boîtes grises.
+const ATLAS_STONE_FLOOR := Vector2i(46, 15)   # = MapGenerator.tile_chemin_pierre_orig
+
 func _dallage_patch(a: Vector2i, b: Vector2i) -> void:
-	var rng := RandomNumberGenerator.new()
-	rng.seed = hash(a) + 31
-	for r in range(a.y, b.y):
-		for c in range(a.x, b.x):
-			var cell := Vector2i(c, r)
-			if _water_cells.has(cell):
-				continue
-			var tile := MeshInstance3D.new()
-			var box := BoxMesh.new()
-			box.size = Vector3(0.9, 0.12, 0.9)   # 0,1 de joint entre dalles
-			tile.mesh = box
-			var y := get_height_at_world(Vector3(float(c) + 0.5, 0, float(r) + 0.5))
-			tile.position = Vector3(float(c) + 0.5, y + 0.07, float(r) + 0.5)
-			tile.rotation.y = (rng.randi() % 4) * (PI * 0.5)
-			var v := rng.randf_range(-0.06, 0.06)
-			var mat := StandardMaterial3D.new()
-			mat.albedo_color = Color(0.60 + v, 0.58 + v, 0.55 + v)
-			mat.roughness = 1.0
-			tile.material_override = mat
-			tile.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-			add_child(tile)
+	var w := float(b.x - a.x)
+	var h := float(b.y - a.y)
+	var mesh_inst := MeshInstance3D.new()
+	var plane := PlaneMesh.new()
+	plane.size = Vector2(w, h)
+	mesh_inst.mesh = plane
+	var mat := ShaderMaterial.new()
+	mat.shader = _get_path_dissolve_shader()
+	mat.set_shader_parameter("tex", Billboard3D.crop_tile(TILESET_PATH, ATLAS_STONE_FLOOR, 1, 1))
+	mat.set_shader_parameter("tiles", Vector2(w, h))          # 1 dalle par unité
+	mat.set_shader_parameter("half_size", Vector2(w * 0.5, h * 0.5))
+	mesh_inst.material_override = mat
+	# Au-dessus du chemin de terre (0,045) pour le recouvrir sans z-fight.
+	mesh_inst.position = Vector3(float(a.x) + w * 0.5, 0.06, float(a.y) + h * 0.5)
+	add_child(mesh_inst)
 
 
 ## Bouquets de HAUTE HERBE pixel-art (mêmes touffes que les biomes de run, cf.
@@ -691,7 +691,25 @@ func _draw_water_pond() -> void:
 	surf.position.y = WATER_SURFACE_Y
 	add_child(surf)
 
+	_build_pond_collision()
 	_draw_pond_edges_and_banks()
+
+
+## L'étang BLOQUE le passage (bug : on marchait dessus). Le hub n'a pas de CS
+## Surf, donc une collision pleine sur la couche des obstacles suffit.
+func _build_pond_collision() -> void:
+	var body := StaticBody3D.new()
+	body.name = "PondCollision"
+	body.collision_layer = 1     # même couche que les autres obstacles du hub
+	body.collision_mask  = 0
+	add_child(body)
+	for cell: Vector2i in _water_cells:
+		var cs := CollisionShape3D.new()
+		var box := BoxShape3D.new()
+		box.size = Vector3(1.0, 1.2, 1.0)
+		cs.shape = box
+		cs.position = Vector3(float(cell.x) + 0.5, 0.6, float(cell.y) + 0.5)
+		body.add_child(cs)
 
 
 func _add_flat_cell_quad(st: SurfaceTool, cell: Vector2i) -> void:
@@ -821,12 +839,38 @@ func _get_path_dissolve_shader() -> Shader:
 
 var _tree_rng := RandomNumberGenerator.new()
 
+## Bordure de forêt sur une ELLIPSE BRUITÉE plutôt que sur le rectangle de la
+## map — le hub se lit comme une clairière ronde (pas un cercle parfait : le
+## rayon ondule) et les COINS sont comblés d'arbres (retour joueurs : "je
+## voudrais que la map soit un peu plus en forme de cercle").
 func _draw_border_trees() -> void:
-	var m := 1.6
-	_scatter_forest_strip(Vector2(m, m), Vector2(W - m, m))          # haut
-	_scatter_forest_strip(Vector2(m, H - m), Vector2(W - m, H - m))  # bas
-	_scatter_forest_strip(Vector2(m, m), Vector2(m, H - m))          # gauche
-	_scatter_forest_strip(Vector2(W - m, m), Vector2(W - m, H - m))  # droite
+	var cx := float(W) * 0.5
+	var cz := float(H) * 0.5
+	var rx := cx - 1.0
+	var rz := cz - 1.0
+	var wobble := FastNoiseLite.new()
+	wobble.seed = 4321
+	wobble.frequency = 0.9
+
+	# 1) Lisière : deux anneaux d'arbres sur l'ellipse, rayon ondulé.
+	for ring in 2:
+		var n := 92 - ring * 10
+		for i in n:
+			var ang := (TAU / float(n)) * i + _tree_rng.randf_range(-0.02, 0.02)
+			var k := 1.0 + wobble.get_noise_1d(ang * 3.0) * 0.06 - ring * 0.055
+			var p := Vector2(cx + cos(ang) * rx * k, cz + sin(ang) * rz * k)
+			_try_spawn_forest_tree(p)
+
+	# 2) Coins : tout ce qui tombe HORS de l'ellipse est bouché par la forêt.
+	for r in range(1, H - 1):
+		for c in range(1, W - 1):
+			var dx := (float(c) + 0.5 - cx) / rx
+			var dz := (float(r) + 0.5 - cz) / rz
+			if dx * dx + dz * dz <= 1.0:
+				continue   # dans la clairière
+			if _tree_rng.randf() < 0.55:
+				_try_spawn_forest_tree(Vector2(float(c) + _tree_rng.randf_range(0.1, 0.9),
+					float(r) + _tree_rng.randf_range(0.1, 0.9)))
 
 
 func _scatter_forest_strip(from: Vector2, to: Vector2) -> void:
@@ -945,18 +989,20 @@ func _place_campfire(pos: Vector3, variant: int) -> void:
 	root.position = pos
 	add_child(root)
 
-	var fire := KitProps.instance(KitProps.CAMPFIRES[variant % KitProps.CAMPFIRES.size()])
-	fire.scale = Vector3.ONE * 2.2
+	# campfire_stones : foyer de pierres, à une échelle LISIBLE (retour joueurs :
+	# les feux étaient minuscules à 2.2).
+	var fire := KitProps.instance("campfire_stones.glb")
+	fire.scale = Vector3.ONE * 6.0
 	root.add_child(fire)
 
-	# Flamme stylisée : petit cône émissif — le glow de l'Environment fait le reste
+	# Flamme stylisée : cône émissif — le glow de l'Environment fait le reste
 	var flame := MeshInstance3D.new()
 	var cone := CylinderMesh.new()
 	cone.top_radius    = 0.0
-	cone.bottom_radius = 0.13
-	cone.height        = 0.30
+	cone.bottom_radius = 0.34
+	cone.height        = 0.85
 	flame.mesh = cone
-	flame.position = Vector3(0, 0.28, 0)
+	flame.position = Vector3(0, 0.5, 0)
 	var fmat := StandardMaterial3D.new()
 	fmat.albedo_color    = Color(1.0, 0.55, 0.15)
 	fmat.emission_enabled = true
@@ -1027,7 +1073,53 @@ func _place_sunflower_fences() -> void:
 		add_child(body)
 
 
+## Assets du kit COMPLET (pas dans le dossier plat de KitProps) — tentes et
+## barrières demandées. Chargés par chemin, matériaux d'origine conservés.
+const NATURE_FULL_DIR := "res://assets/kenney_nature-kit/Models/GLTF format/"
+
+
+## Campement : deux tentes près du feu du haut — donne de la vie au hub.
+func _place_tents() -> void:
+	var t1 := KitProps.instance_textured(NATURE_FULL_DIR, "tent_detailedOpen.glb")
+	t1.scale = Vector3.ONE * 3.2
+	t1.position = Vector3(24.5, 0, 8.0)
+	t1.rotation.y = deg_to_rad(20.0)
+	add_child(t1)
+	_add_box_collision(t1.position, Vector3(2.4, 1.6, 2.4))
+
+	var t2 := KitProps.instance_textured(NATURE_FULL_DIR, "tent_detailedClosed.glb")
+	t2.scale = Vector3.ONE * 3.2
+	t2.position = Vector3(31.5, 0, 8.5)
+	t2.rotation.y = deg_to_rad(-35.0)
+	add_child(t2)
+	_add_box_collision(t2.position, Vector3(2.4, 1.6, 2.4))
+
+
+func _add_box_collision(pos: Vector3, size: Vector3) -> void:
+	var body := StaticBody3D.new()
+	body.collision_layer = 1
+	body.collision_mask  = 0
+	var cs := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = size
+	cs.shape = box
+	cs.position = pos + Vector3(0, size.y * 0.5, 0)
+	body.add_child(cs)
+	add_child(body)
+
+
 func _place_fence(pos: Vector3, rot_y_deg: float) -> void:
+	# Barrières demandées (kit complet) : planches doubles, plus lisibles que
+	# l'ancienne fence_simpleLow minuscule.
+	var fence := KitProps.instance_textured(NATURE_FULL_DIR, "fence_planksDouble.glb")
+	fence.scale = Vector3.ONE * 2.4
+	fence.position = pos
+	fence.rotation.y = deg_to_rad(rot_y_deg)
+	add_child(fence)
+	return
+
+
+func _place_fence_old(pos: Vector3, rot_y_deg: float) -> void:
 	var fence := KitProps.instance(KitProps.FENCE_LOW)
 	fence.scale = Vector3.ONE * 0.96   # segment natif 1.04 → 1 case
 	fence.rotation_degrees = Vector3(0, rot_y_deg, 0)
