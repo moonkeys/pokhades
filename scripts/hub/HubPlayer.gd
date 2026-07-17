@@ -70,7 +70,12 @@ func _ready() -> void:
 
 	var pid := _spawn_pid
 	if pid <= 0:
-		pid = GameManager.selected_starter_id
+		# Le PREMIER de l'équipe, pas le starter historique : on incarne son
+		# équipe courante, et selected_starter_id ne bouge plus après le tout
+		# premier choix (retour joueurs : « le sprite du hub devrait être le
+		# premier Pokémon de l'équipe »).
+		pid = GameManager.hub_team[0] if not GameManager.hub_team.is_empty() \
+			else GameManager.selected_starter_id
 		if Net.active and Net.players.has(Net.local_id()):
 			pid = int(Net.players[Net.local_id()]["pid"])
 	if pid > 0:

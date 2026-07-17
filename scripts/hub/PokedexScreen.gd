@@ -2,6 +2,11 @@ class_name PokedexScreen
 extends CanvasLayer
 
 signal closed
+## Émis dès que l'équipe/le poids changent. Le bandeau du hub (« Équipe 3/6 ·
+## Poids 19/40 ») n'était rafraîchi qu'à l'OUVERTURE du hub et à la FERMETURE
+## d'un écran : il restait donc figé pendant qu'on composait son équipe ici,
+## juste au-dessus (retour joueurs). Cf. HubWorld._open_npc_screen.
+signal team_changed
 
 const C_BG      := Color(0.04, 0.03, 0.02, 0.82)
 const C_PANEL   := Color(0.10, 0.075, 0.045, 0.96)
@@ -25,10 +30,13 @@ var _sorted_ids:   Array  = []
 var _selected_pid: int    = -1
 var _loaded_data:  Dictionary = {}   # pid -> PokemonData
 var _portraits:    Dictionary = {}   # pid -> Texture2D
-var _card_panels:  Dictionary = {}   # pid -> Panel
+var _card_panels:  Dictionary = {}   # pid -> Button (carte de grille focalisable)
 var _card_tex:     Dictionary = {}   # pid -> TextureRect
 var _card_ph:      Dictionary = {}   # pid -> ColorRect
 
+## ScrollContainer de la grille — mémorisé pour faire défiler jusqu'à la carte
+## focalisée (navigation aux flèches et sélection depuis la bande d'équipe).
+var _grid_scroll:     ScrollContainer = null
 var _detail_root:     Control = null
 var _team_strip_root: Control = null
 
@@ -91,6 +99,19 @@ func _build() -> void:
 ## l'ouverture du menu et ne bougeait qu'en le quittant.
 var _prg_lbl: Label = null
 
+## FILET DE FOCUS — à appeler (en deferred) après toute reconstruction.
+## Les rafraîchissements de cet écran détruisent des boutons, y compris CELUI
+## qui a le focus : cliquer « Retirer » ou « Bonbon » reconstruit le détail où
+## vit le bouton pressé, et le focus meurt avec lui — la navigation aux flèches
+## s'arrête net. queue_free ne libère qu'en fin de frame, d'où le deferred :
+## on ne peut constater la perte qu'après.
+func _ensure_focus_alive() -> void:
+	if get_viewport() == null:
+		return
+	if get_viewport().gui_get_focus_owner() == null:
+		MenuNav.focus_first(self)
+
+
 func _refresh_progress() -> void:
 	if not is_instance_valid(_prg_lbl):
 		return
@@ -106,13 +127,60 @@ func _refresh_progress() -> void:
 	]
 	_prg_lbl.add_theme_color_override("font_color",
 		Color(0.92, 0.35, 0.30) if over else C_DIM)
+	# Ce point est déjà LE passage obligé de tout changement d'équipe/poids —
+	# on s'y branche plutôt que de dupliquer l'émission sur chaque bouton.
+	team_changed.emit()
 
+
+## Sprite PMD ANIMÉ (animation "idle") centré sur `center`, mis à l'échelle
+## pour tenir dans un carré de `box` pixels.
+##
+## AnimatedSprite2D et non TextureRect : les planches PMD ont déjà une anim
+## "idle" toute faite (cf. PMDSprites), et un AnimatedSprite2D est centré sur sa
+## position par défaut — ce qui règle du même coup le cadrage. Les portraits
+## statiques posés en haut-gauche d'un TextureRect débordaient de leur carré
+## (retour joueurs : « les poke ne sont pas centrés »).
+##
+## Le chargement est ASYNCHRONE (cache disque, réseau au 1er appel) : le parent
+## peut avoir été libéré entre-temps par un _refresh — d'où le garde-fou.
+func _add_idle_sprite(parent: Control, pid: int, box: float, center: Vector2) -> void:
+	var wref: WeakRef = weakref(parent)
+	PMDSprites.get_walk_sprites(pid, parent, func(res: Dictionary) -> void:
+		var par: Control = wref.get_ref()
+		if res.is_empty() or par == null:
+			return
+		var spr := AnimatedSprite2D.new()
+		spr.sprite_frames  = res.frames
+		spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		var fs: Vector2i = res.frame_size
+		var big := maxf(float(fs.x), float(fs.y))
+		var s := 1.0 if big <= 0.0 else box / big
+		spr.scale = Vector2.ONE * s
+
+		# AnimatedSprite2D centre la FRAME sur sa position — or les planches PMD
+		# ont une marge vide sous le personnage (cf. PMDSprites.foot_row, la
+		# rangée du pixel opaque le plus bas). Centrer la frame décalait donc le
+		# Pokémon vers le haut du carré. On recentre sur le CONTENU VISIBLE.
+		var h := float(fs.y)
+		var foot := float(res.get("foot_row", fs.y - 1))
+		spr.position = center + Vector2(0.0, (h - foot) * 0.5 * s)
+
+		par.add_child(spr)
+		spr.play("idle")
+	)
+
+
+## Taille d'un carré d'équipe. 40 px était trop petit pour lire un sprite
+## (retour joueurs) ; 68 tient encore dans la largeur de la colonne (6 × 68 +
+## 5 × 8 = 448 < 456).
+const TEAM_SLOT := 68.0
+const TEAM_GAP  := 8.0
 
 func _build_team_strip(panel: Panel) -> void:
 	_lbl(panel, "ÉQUIPE ACTUELLE", 16, 84, 300, 18, 11, C_DIM)
 	_team_strip_root = Control.new()
 	_team_strip_root.position = Vector2(16, 102)
-	_team_strip_root.size     = Vector2(456, 40)
+	_team_strip_root.size     = Vector2(456, TEAM_SLOT)
 	panel.add_child(_team_strip_root)
 	_refresh_team_strip()
 
@@ -123,24 +191,23 @@ func _refresh_team_strip() -> void:
 		c.queue_free()
 
 	var max_n := GameManager.get_max_team_size()
-	var sw  := 40.0
-	var gap := 6.0
+	var sw  := TEAM_SLOT
+	var gap := TEAM_GAP
 	for i in max_n:
-		var slot := Panel.new()
+		# Button et non Panel : les carrés d'équipe doivent être atteignables aux
+		# flèches comme le reste de l'écran (retour joueurs). Un slot VIDE reste
+		# un Panel — rien à y sélectionner, il ne doit pas capter le focus.
+		var filled := i < GameManager.hub_team.size()
+		var slot: Control = Button.new() if filled else Panel.new()
 		slot.position = Vector2(i * (sw + gap), 0)
 		slot.size     = Vector2(sw, sw)
 
-		if i < GameManager.hub_team.size():
+		if filled:
 			var pid: int = GameManager.hub_team[i]
-			_style(slot, Color(0.13, 0.24, 0.13), C_GOOD, 6)
-			if _portraits.has(pid):
-				var tr := TextureRect.new()
-				tr.position = Vector2(2, 2)
-				tr.size     = Vector2(sw - 4, sw - 4)
-				tr.texture  = _portraits[pid]
-				tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-				tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
-				slot.add_child(tr)
+			_style_team_slot(slot as Button)
+			# Sprite ANIMÉ centré (cf. _add_idle_sprite) au lieu du portrait
+			# statique, qui débordait du carré par le bas.
+			_add_idle_sprite(slot, pid, sw - 14.0, Vector2(sw * 0.5, sw * 0.5 - 4.0))
 			# Poids de CE Pokémon (espèce + objet tenu + CT équipées) — on lit
 			# la composition du build d'un coup d'œil.
 			var pw := GameManager.pokemon_weight(pid)
@@ -159,29 +226,52 @@ func _refresh_team_strip() -> void:
 			wl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			slot.add_child(wl)
 
-			slot.mouse_filter = Control.MOUSE_FILTER_STOP
 			var capture_pid := pid
-			slot.gui_input.connect(func(event: InputEvent) -> void:
-				if event is InputEventMouseButton:
-					var mbe := event as InputEventMouseButton
-					if mbe.pressed and mbe.button_index == MOUSE_BUTTON_LEFT:
-						_select(capture_pid)
-						get_viewport().set_input_as_handled()
-			)
+			var btn := slot as Button
+			btn.pressed.connect(func() -> void: _reveal(capture_pid))
+			# Sélection au FOCUS, comme dans la grille : parcourir son équipe aux
+			# flèches met la fiche à jour ET fait défiler la liste jusqu'à la
+			# carte correspondante, qui est souvent hors écran.
+			btn.focus_entered.connect(func() -> void: _reveal(capture_pid))
 		else:
-			_style(slot, Color(0.16, 0.12, 0.07), C_BORDER, 6)
+			_style(slot as Panel, Color(0.16, 0.12, 0.07), C_BORDER, 6)
 
 		_team_strip_root.add_child(slot)
 
 	_refresh_progress()   # ajout/retrait d'un Pokémon → poids recalculé
+	call_deferred("_ensure_focus_alive")
+
+
+## Style des carrés d'équipe (Button vert, liseré doré au focus) — même logique
+## que _apply_card_style : un Button ignore la stylebox "panel".
+func _style_team_slot(btn: Button) -> void:
+	for state in ["normal", "hover", "pressed", "focus"]:
+		var sb := StyleBoxFlat.new()
+		sb.bg_color     = Color(0.13, 0.24, 0.13).lightened(0.08 if state in ["hover", "focus"] else 0.0)
+		sb.border_color = C_GOLD_LT if state == "focus" else C_GOOD
+		sb.set_border_width_all(3 if state == "focus" else 2)
+		sb.set_corner_radius_all(6)
+		btn.add_theme_stylebox_override(state, sb)
+
+
+## Sélectionne `pid` ET fait défiler la grille jusqu'à sa carte — le chemin
+## bande d'équipe → fiche. La carte est souvent hors écran (la grille liste
+## tout le Pokédex), d'où le scroll explicite.
+func _reveal(pid: int) -> void:
+	_select(pid)
+	if is_instance_valid(_grid_scroll) and _card_panels.has(pid):
+		_grid_scroll.ensure_control_visible(_card_panels[pid] as Control)
 
 
 # ── Grille (gauche, triée par n° de Pokédex) ───────────────────────────
 
 func _build_grid(panel: Panel) -> void:
 	var scroll := ScrollContainer.new()
-	scroll.position = Vector2(16, 144)
-	scroll.size     = Vector2(456, 426)
+	_grid_scroll = scroll
+	# Décalée de 144 à 178 : la bande d'équipe est passée de 40 à 68 px de haut
+	# (cf. TEAM_SLOT) et la recouvrait.
+	scroll.position = Vector2(16, 178)
+	scroll.size     = Vector2(456, 392)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	panel.add_child(scroll)
 
@@ -205,10 +295,13 @@ func _build_grid(panel: Panel) -> void:
 func _build_entry(parent: Control, pid: int, x: int, y: int, w: int, h: int) -> void:
 	var unlocked := pid in GameManager.unlocked_pokemon
 
-	var card := Panel.new()
+	# Button et non Panel : un Panel n'est PAS focalisable, donc les flèches
+	# n'avaient rien à parcourir dans la grille — tout l'écran ne comptait que
+	# 4 boutons (retour joueurs : « je ne peux pas naviguer dans la liste »).
+	var card := Button.new()
 	card.position = Vector2(x, y)
 	card.size     = Vector2(w, h)
-	card.mouse_filter = Control.MOUSE_FILTER_STOP
+	card.focus_mode = Control.FOCUS_ALL
 	_apply_card_style(card, pid == _selected_pid)
 	_card_panels[pid] = card
 	parent.add_child(card)
@@ -260,12 +353,13 @@ func _build_entry(parent: Control, pid: int, x: int, y: int, w: int, h: int) -> 
 		prog.name = "ProgLbl"
 
 	var capture_pid := pid
-	card.gui_input.connect(func(event: InputEvent) -> void:
-		if event is InputEventMouseButton:
-			var mbe := event as InputEventMouseButton
-			if mbe.pressed and mbe.button_index == MOUSE_BUTTON_LEFT:
-				_select(capture_pid)
-				get_viewport().set_input_as_handled()
+	card.pressed.connect(func() -> void: _select(capture_pid))
+	# Sélection au FOCUS : parcourir la liste aux flèches met à jour la fiche
+	# en direct, sans avoir à valider chaque entrée.
+	card.focus_entered.connect(func() -> void:
+		_select(capture_pid)
+		if is_instance_valid(_grid_scroll):
+			_grid_scroll.ensure_control_visible(card)
 	)
 
 
@@ -307,12 +401,22 @@ func _select(pid: int) -> void:
 	_selected_pid = pid
 	for id in _sorted_ids:
 		if _card_panels.has(id):
-			_apply_card_style(_card_panels[id] as Panel, id == pid)
+			_apply_card_style(_card_panels[id] as Button, id == pid)
 	_refresh_detail()
 
 
-func _apply_card_style(card: Panel, selected: bool) -> void:
-	_style(card, C_CARD_SEL if selected else C_CARD, C_GOLD if selected else C_BORDER, 8)
+## Un Button ne lit PAS la stylebox "panel" : il lui faut normal/hover/pressed/
+## focus. Sans "focus", la carte survolée aux flèches ne se distinguerait pas.
+func _apply_card_style(card: Button, selected: bool) -> void:
+	var bg     := C_CARD_SEL if selected else C_CARD
+	var border := C_GOLD if selected else C_BORDER
+	for state in ["normal", "hover", "pressed", "focus"]:
+		var sb := StyleBoxFlat.new()
+		sb.bg_color     = bg.lightened(0.10) if state in ["hover", "focus"] else bg
+		sb.border_color = C_GOLD_LT if state == "focus" else border
+		sb.set_border_width_all(3 if state == "focus" else 2)
+		sb.set_corner_radius_all(8)
+		card.add_theme_stylebox_override(state, sb)
 
 
 # ── Panneau détail (droite) ─────────────────────────────────────────────
@@ -398,9 +502,14 @@ func _build_item_row(pid: int, x: int, y: int) -> void:
 	var item_name := "Aucun objet"
 	if held != "":
 		item_name = str(ItemCatalog.get_item(held).get("name", held))
-	_detail_root.add_child(_lbl_node("Objet : " + item_name, x + 34, y + 4, 240, 22, 13, C_TEXT))
+	var bonus_now := GameManager.get_start_level_bonus(pid)
+	if bonus_now > 0:
+		item_name += "   ·   Départ +%d niv" % bonus_now
+	_detail_root.add_child(_lbl_node("Objet : " + item_name, x + 34, y + 4, 300, 22, 13, C_TEXT))
 
-	# Bouton cycle d'objet
+	# Bouton d'ouverture du CHOIX d'objet — un vrai menu (cf. _open_item_picker)
+	# et non plus un cycle aveugle : avec 8+ objets possédés, « Changer » qui
+	# saute au suivant obligeait à cliquer en boucle sans voir la liste.
 	var cap_pid := pid
 	var cyc := Button.new()
 	cyc.text     = "Changer"
@@ -408,22 +517,24 @@ func _build_item_row(pid: int, x: int, y: int) -> void:
 	cyc.size     = Vector2(90, 30)
 	cyc.add_theme_font_size_override("font_size", UiKit.scaled_font(12))
 	_style_button(cyc, Color(0.34, 0.28, 0.16), C_GOLD_LT)
-	cyc.pressed.connect(func() -> void:
-		_cycle_item(cap_pid)
-		_refresh_detail()
-	)
+	cyc.pressed.connect(func() -> void: _open_item_picker(cap_pid))
 	_detail_root.add_child(cyc)
 
-	# Super Bonbon
+	# Super Bonbon — l'icône de l'objet en personne (rare-candy.png), le stock,
+	# et l'effet en toutes lettres : « +5 niv ».
 	var candies := GameManager.get_item_count("rare-candy")
 	var bonus := GameManager.get_start_level_bonus(pid)
-	var candy_txt := "Bonbon (+%d) ×%d" % [ItemCatalog.CANDY_LEVELS, candies]
-	if bonus > 0:
-		candy_txt = "Niv.+%d  |  " % bonus + candy_txt
+	# Compact : grosse icône, texte court — l'ancienne version à rallonge
+	# (« Niv.+N | Bonbon (+5) ×12 ») débordait du panneau (retour joueurs).
+	# Le bonus en cours s'affiche dans la ligne d'objet, pas dans le bouton.
 	var candy := Button.new()
-	candy.text     = candy_txt
-	candy.position = Vector2(x + 344, y)
-	candy.size     = Vector2(184, 30)
+	candy.icon = load("res://assets/items/rare-candy.png")
+	candy.expand_icon = false
+	candy.add_theme_constant_override("icon_max_width", 30)
+	candy.tooltip_text = "Super Bonbon : +%d niveaux de départ" % ItemCatalog.CANDY_LEVELS
+	candy.text     = "×%d  +%d niv" % [candies, ItemCatalog.CANDY_LEVELS]
+	candy.position = Vector2(x + 396, y - 3)
+	candy.size     = Vector2(132, 36)
 	candy.disabled = candies <= 0 or bonus >= ItemCatalog.CANDY_MAX_BONUS
 	candy.add_theme_font_size_override("font_size", UiKit.scaled_font(11))
 	_style_button(candy, Color(0.60, 0.28, 0.42) if not candy.disabled else Color(0.55, 0.48, 0.38), Color.WHITE)
@@ -435,25 +546,89 @@ func _build_item_row(pid: int, x: int, y: int) -> void:
 	_detail_root.add_child(candy)
 
 
-## Passe à l'objet tenu suivant pour `pid` : parcourt [Aucun] + les objets
-## tenus dont il reste des copies libres (ou celui déjà tenu).
-func _cycle_item(pid: int) -> void:
+## MENU de choix d'objet : « Aucun » + chaque objet possédé (icône, nom, stock
+## restant, poids), navigable aux flèches, Échap pour refermer sans choisir.
+##
+## Son MenuNav est ajouté APRÈS celui de l'écran : _unhandled_input remonte en
+## ordre inverse de l'arbre, donc c'est LUI qui consomme Échap tant que le menu
+## est ouvert — sans ça, Échap fermerait tout le Pokédex.
+var _item_picker: CanvasLayer = null
+
+func _open_item_picker(pid: int) -> void:
+	if is_instance_valid(_item_picker):
+		_item_picker.queue_free()
+	var pick := CanvasLayer.new()
+	pick.layer = 30
+	_item_picker = pick
+	add_child(pick)
+
+	var close_pick := func() -> void:
+		pick.queue_free()
+		_item_picker = null
+		_refresh_detail()
+		_refresh_team_strip()   # l'objet pèse : le carré d'équipe bouge aussi
+	pick.add_child(MenuNav.make(close_pick))
+
+	var veil := ColorRect.new()
+	veil.color = Color(0.02, 0.02, 0.01, 0.55)
+	veil.set_anchors_preset(Control.PRESET_FULL_RECT)
+	pick.add_child(veil)
+
 	var held := GameManager.get_assigned_item(pid)
-	var options: Array = [""]   # "Aucun"
+	var options: Array = [""]
 	for it: Dictionary in ItemCatalog.held_items():
 		var api: String = it["api"]
 		if api == held or GameManager.get_item_count(api) > 0:
 			options.append(api)
-	var idx := options.find(held)
-	var next: String = options[(idx + 1) % options.size()]
-	if next == "":
-		GameManager.unassign_item(pid)
-	else:
-		GameManager.assign_item(pid, next)
+
+	var row_h := 48.0
+	var ph := 96.0 + options.size() * (row_h + 6.0)
+	var panel := UiKit.main_panel(Vector2(420, maxf(40.0, 340.0 - ph * 0.5)), Vector2(440, ph))
+	pick.add_child(panel)
+	UiKit.banner(panel, "Objet tenu")
+
+	for i in options.size():
+		var api: String = options[i]
+		var btn := Button.new()
+		btn.position = Vector2(24, 84 + i * (row_h + 6.0))
+		btn.size     = Vector2(392, row_h)
+		btn.add_theme_font_size_override("font_size", UiKit.scaled_font(13))
+		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		if api == "":
+			btn.text = "     Aucun objet  (⚖ 0)"
+		else:
+			var it := ItemCatalog.get_item(api)
+			var stock := GameManager.get_item_count(api)
+			btn.text = "     %s   ×%d  (⚖ %d)" % [str(it.get("name", api)), stock, GameManager.ITEM_WEIGHT]
+			# L'EFFET en jeu sur la ligne même (retour joueurs) — c'est lui
+			# qu'on compare, pas les noms.
+			var fx := _lbl_node(str(it.get("desc", "")), 44, 26, 330, 14, 10, C_GOLD_LT)
+			fx.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			btn.add_child(fx)
+			var tex := ItemCatalog.icon(api)
+			if tex != null:
+				btn.icon = tex
+				btn.expand_icon = false
+				btn.add_theme_constant_override("icon_max_width", 26)
+		var selected := api == held
+		_style_button(btn, C_CARD_SEL if selected else Color(0.22, 0.17, 0.10),
+			C_GOLD if selected else C_TEXT)
+		var cap_api := api
+		btn.pressed.connect(func() -> void:
+			if cap_api == "":
+				GameManager.unassign_item(pid)
+			else:
+				GameManager.assign_item(pid, cap_api)
+			close_pick.call()
+		)
+		panel.add_child(btn)
+
+	MenuNav.focus_first(panel)
 
 
 func _refresh_detail() -> void:
 	_refresh_progress()   # CT équipée / objet tenu → le poids bouge en direct
+	call_deferred("_ensure_focus_alive")
 	if not is_instance_valid(_detail_root): return
 	for ch in _detail_root.get_children():
 		ch.queue_free()
@@ -476,22 +651,46 @@ func _refresh_detail() -> void:
 	p_bg.color    = Color(0.20, 0.17, 0.12)
 	_detail_root.add_child(p_bg)
 
-	var tex := TextureRect.new()
-	tex.position     = Vector2(16, 12)
-	tex.size         = Vector2(96, 96)
-	tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	tex.modulate     = Color.BLACK if not unlocked else Color.WHITE
-	if _portraits.has(_selected_pid):
-		tex.texture = _portraits[_selected_pid]
-	_detail_root.add_child(tex)
+	if unlocked:
+		# Débloqué : sprite ANIMÉ en idle (cf. _add_idle_sprite). Le portrait
+		# statique servait juste d'illustration ; l'animation rend la fiche
+		# vivante et montre le Pokémon tel qu'on le verra en jeu.
+		var holder := Control.new()
+		holder.position = Vector2(16, 12)
+		holder.size     = Vector2(96, 96)
+		holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_detail_root.add_child(holder)
+		_add_idle_sprite(holder, _selected_pid, 84.0, Vector2(48, 48))
+	else:
+		# Non débloqué : on garde le portrait STATIQUE en silhouette noire — le
+		# but est justement de ne pas révéler l'espèce.
+		var tex := TextureRect.new()
+		tex.position     = Vector2(16, 12)
+		tex.size         = Vector2(96, 96)
+		tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		tex.modulate     = Color.BLACK
+		if _portraits.has(_selected_pid):
+			tex.texture = _portraits[_selected_pid]
+		_detail_root.add_child(tex)
 
 	if not unlocked:
 		_refresh_detail_locked(pd)
 		return
 
-	# Nom + types
+	# Nom + types + POIDS de ce Pokémon (espèce + objet + slots), recalculé à
+	# chaque _refresh_detail — donc en direct après tout changement d'objet ou
+	# de slots (retour joueurs : le poids était figé).
 	_detail_root.add_child(_lbl_node("#%d  %s" % [_selected_pid, pd.name_fr.to_upper()],
 		122, 14, 300, 30, 20, C_GOLD))
+	var w_species := GameManager.pokemon_weight(_selected_pid)
+	var w_item := GameManager.ITEM_WEIGHT if GameManager.get_assigned_item(_selected_pid) != "" else 0
+	var w_slots := (GameManager.get_move_slots(_selected_pid) - 1) * GameManager.MOVE_WEIGHT
+	_detail_root.add_child(_lbl_node("⚖ %d" % (w_species + w_item + w_slots),
+		428, 14, 70, 24, 15, C_GOLD_LT))
+	# Décomposition : chaque source de poids a sa valeur (retour joueurs :
+	# « afficher la valeur de chaque poids partout »).
+	_detail_root.add_child(_lbl_node("esp. %d · obj. %d · slots %d" % [w_species, w_item, w_slots],
+		370, 38, 130, 16, 9, C_DIM))
 
 	var type_row := Control.new()
 	type_row.position = Vector2(122, 48)
@@ -566,7 +765,7 @@ func _refresh_detail() -> void:
 	_detail_root.add_child(sep)
 
 	var loadout := GameManager.get_move_loadout(_selected_pid)
-	var slots := GameManager.move_slot_count
+	var slots := GameManager.get_move_slots(_selected_pid)
 
 	# ── ATTAQUES DE BASE ──────────────────────────────────────────────
 	# Celles que le Pokémon connaît DÉJÀ à son niveau de départ (montée en
@@ -594,30 +793,94 @@ func _refresh_detail() -> void:
 			var lm: Dictionary = base_moves[i]
 			var nm := str(lm.get("name", "")).replace("-", " ").capitalize()
 			var auto := i < free_slots   # sera équipée d'office au départ
-			var bcard := Panel.new()
+			# Button : atteignable aux flèches, [I] ou Entrée = popup d'infos.
+			var bcard := Button.new()
 			bcard.position = Vector2(bx, 302)
-			bcard.size     = Vector2(130, 40)
-			_style(bcard, C_CARD_SEL if auto else C_CARD, C_GOOD if auto else C_BORDER, 6)
+			bcard.size     = Vector2(130, 44)
+			bcard.focus_mode = Control.FOCUS_ALL
+			_style_move_card(bcard, auto)
+			var cap_api_b := str(lm.get("name", ""))
+			var cap_nm_b  := nm
+			bcard.pressed.connect(func() -> void: _open_move_info(cap_api_b, cap_nm_b))
+			bcard.gui_input.connect(func(event: InputEvent) -> void:
+				if event is InputEventKey and (event as InputEventKey).pressed \
+						and (event as InputEventKey).keycode == KEY_I:
+					_open_move_info(cap_api_b, cap_nm_b)
+					get_viewport().set_input_as_handled()
+			)
 			_detail_root.add_child(bcard)
 			bcard.add_child(_lbl_node(nm, 5, 3, 120, 18, 11, C_TEXT))
-			bcard.add_child(_lbl_node("auto" if auto else "niv. %d" % int(lm.get("level", 1)),
-				5, 21, 120, 14, 10, C_GOOD if auto else C_DIM))
+			# Type + puissance RÉELS, chargés en async (PokéAPI, cache disque) —
+			# `level_up_moves` ne contient que {level, name}, il n'y a donc rien
+			# à afficher tant que la fiche du move n'est pas résolue. L'ancien
+			# libellé "auto" n'apprenait rien au joueur (retour joueurs) : la
+			# bordure verte suffit à signaler l'équipement d'office.
+			var pow_lbl := _lbl_node("…", 62, 24, 64, 16, 10, C_DIM)
+			bcard.add_child(pow_lbl)
+			var w_card: WeakRef = weakref(bcard)
+			var w_pow: WeakRef = weakref(pow_lbl)
+			PokemonAPI.get_move(str(lm.get("name", "")), func(md: Dictionary) -> void:
+				var c2: Control = w_card.get_ref()
+				if md.is_empty() or c2 == null:
+					return
+				var t := str(md.get("type", ""))
+				if t != "":
+					UiKit.type_badge(c2, Vector2(5, 23), t, 16.0)
+				var p2: Label = w_pow.get_ref()
+				if p2 != null:
+					var pv: Variant = md.get("power")
+					p2.text = ("%d pui." % int(pv)) if pv != null else "statut"
+			)
 			bx += 136
 
 	# ── CT ACHETÉES ───────────────────────────────────────────────────
 	_detail_root.add_child(_lbl_node(
-		"── CT ACHETÉES — %d / %d équipées (clic pour équiper/retirer) ──" % [loadout.size(), slots],
-		16, 350, 544, 20, 13, C_DIM))
+		"── CT ACHETÉES — %d / %d équipées  ·  [I] détails ──" % [loadout.size(), slots],
+		16, 350, 430, 20, 13, C_DIM))
 
+	# Réglage du nombre de SLOTS de CE Pokémon (− / +). Chaque slot au-delà du
+	# premier pèse MOVE_WEIGHT sur le build (cf. GameManager.compute_team_weight)
+	# — moins de slots = un Pokémon plus léger. Borné par l'achat global du hub.
+	var slot_pid := _selected_pid
+	for d: Array in [["−", -1, 448], ["+", 1, 522]]:
+		var sb := Button.new()
+		sb.text     = str(d[0])
+		sb.position = Vector2(int(d[2]), 346)
+		sb.size     = Vector2(28, 26)
+		sb.add_theme_font_size_override("font_size", UiKit.scaled_font(14))
+		var delta: int = d[1]
+		sb.disabled = (delta < 0 and slots <= 1) \
+			or (delta > 0 and slots >= GameManager.move_slot_count)
+		_style_button(sb, Color(0.34, 0.28, 0.16), C_GOLD_LT)
+		sb.pressed.connect(func() -> void:
+			GameManager.set_move_slots(slot_pid, GameManager.get_move_slots(slot_pid) + delta)
+			_refresh_detail()
+			_refresh_team_strip()   # le poids du carré d'équipe bouge aussi
+		)
+		_detail_root.add_child(sb)
+	_detail_root.add_child(_lbl_node("%d slot%s (⚖%d)" % [slots, "s" if slots > 1 else "",
+		(slots - 1) * GameManager.MOVE_WEIGHT], 478, 350, 44, 20, 11, C_GOLD_LT))
+
+	# On n'affiche QUE ce que CE Pokémon peut apprendre. Les CT hors movepool
+	# étaient listées grisées avec "✗ Hors movepool" : elles remplissaient la
+	# grille de cartes inutilisables et noyaient les vraies options (retour
+	# joueurs). `_hidden_ct` sert juste à l'expliquer plutôt qu'à les faire
+	# disparaître sans un mot.
 	var purchasable: Array = []
+	var hidden_ct := 0
 	for m: Dictionary in MoveShopScreen.MOVE_LIST:
-		if str(m.get("api", "")) in GameManager.purchased_move_names:
+		if not str(m.get("api", "")) in GameManager.purchased_move_names:
+			continue
+		if pd.can_learn(str(m.get("api", ""))):
 			purchasable.append(m)
+		else:
+			hidden_ct += 1
 
 	if purchasable.is_empty():
-		_detail_root.add_child(_lbl_node(
-			"Aucune CT achetée — direction le Tuteur de capacités ! (les attaques de base ci-dessus suffisent pour partir)",
-			16, 374, 544, 34, 12, C_DIM))
+		var why := "Aucune CT achetée — direction le Tuteur de capacités ! (les attaques de base ci-dessus suffisent pour partir)"
+		if hidden_ct > 0:
+			why = "Aucune de tes %d CT n'est apprenable par ce Pokémon (hors movepool)." % hidden_ct
+		_detail_root.add_child(_lbl_node(why, 16, 374, 544, 34, 12, C_DIM))
 		return
 
 	var mx := 16
@@ -628,57 +891,259 @@ func _refresh_detail() -> void:
 		var label: String = str(m.get("label", api))
 		var mtype: String  = str(m.get("type", "normal"))
 		var equipped := api in loadout
-		# Hors movepool : capacité achetée mais que CE Pokémon ne peut pas
-		# apprendre (ex : Séisme sur Absol) → carte grisée, non cliquable.
-		var learnable := pd.can_learn(api)
 
-		var card := Panel.new()
+		# Button focalisable (flèches + Entrée), comme la grille — et support de
+		# la touche [I] pour la popup d'infos (cf. _open_move_info).
+		var card := Button.new()
 		card.position = Vector2(mx, my)
-		card.size     = Vector2(col_w - 6, 56)
-		card.mouse_filter = Control.MOUSE_FILTER_STOP
-		var border := C_GOOD if equipped else C_BORDER
-		if not learnable:
-			border = Color(0.55, 0.30, 0.28)
-		_style(card, C_CARD_SEL if equipped else C_CARD, border, 6)
-		card.modulate = Color(1, 1, 1, 0.45) if not learnable else Color.WHITE
+		card.size     = Vector2(col_w - 6, 66)
+		card.focus_mode = Control.FOCUS_ALL
+		_style_move_card(card, equipped)
 		_detail_root.add_child(card)
 
 		var tpill := TypeIcon.make_pill(mtype, 70.0, 16.0, 8)
 		tpill.position = Vector2(4, 4)
+		tpill.mouse_filter = Control.MOUSE_FILTER_IGNORE   # le clic doit atteindre le bouton
 		card.add_child(tpill)
 
+		var full := loadout.size() >= GameManager.get_move_slots(_selected_pid)
 		card.add_child(_lbl_node(label, 4, 24, col_w - 14, 18, 11, C_TEXT))
-		if not learnable:
-			card.add_child(_lbl_node("✗ Hors movepool", 4, 40, col_w - 14, 14, 10, Color(0.80, 0.40, 0.36)))
-		elif equipped:
-			# Cliquable pour LA RETIRER (même handler ci-dessous) — c'est
-			# comme ça qu'on "remplace" une capacité quand les slots sont
-			# pleins : on retire d'abord, puis on clique la nouvelle.
-			card.add_child(_lbl_node("✓ Équipée (clic pour retirer)", 4, 40, col_w - 14, 14, 10, C_GOOD))
-		elif loadout.size() >= GameManager.move_slot_count:
-			card.add_child(_lbl_node("Slots pleins — retire-en une d'abord", 4, 40, col_w - 14, 14, 10, C_DIM))
-		else:
-			card.add_child(_lbl_node("Clic pour équiper", 4, 40, col_w - 14, 14, 10, C_DIM))
-
-		if learnable:
-			var move_pid := _selected_pid
-			var capture_api := api
-			card.gui_input.connect(func(event: InputEvent) -> void:
-				if event is InputEventMouseButton:
-					var mbe := event as InputEventMouseButton
-					if mbe.pressed and mbe.button_index == MOUSE_BUTTON_LEFT:
-						GameManager.toggle_move_in_loadout(move_pid, capture_api)
-						_refresh_detail()
-						get_viewport().set_input_as_handled()
+		# L'EFFET visible sur la carte même (retour joueurs) : effet maison
+		# s'il existe, sinon puissance réelle chargée en async. L'action
+		# (équiper/retirer/remplacer) reste sur la ligne du dessous.
+		var fx_line := _move_house_effect(api)
+		var fx_lbl := _lbl_node(fx_line if fx_line != "" else "…", 4, 38, col_w - 14, 13, 9, C_GOLD_LT)
+		card.add_child(fx_lbl)
+		if fx_line == "":
+			var w_fx: WeakRef = weakref(fx_lbl)
+			PokemonAPI.get_move(api, func(md: Dictionary) -> void:
+				var l2: Label = w_fx.get_ref()
+				if md.is_empty() or l2 == null:
+					return
+				var pv2: Variant = md.get("power")
+				var av2: Variant = md.get("accuracy")
+				l2.text = "pui. %s · préc. %s" % [
+					str(int(pv2)) if pv2 != null else "—",
+					("%d%%" % int(av2)) if av2 != null else "—"]
 			)
+		if equipped:
+			card.add_child(_lbl_node("✓ Équipée · Entrée : retirer", 4, 50, col_w - 14, 13, 9, C_GOOD))
+		elif full:
+			# Slots pleins : Entrée ouvre le CHOIX de la capacité à remplacer.
+			card.add_child(_lbl_node("Entrée : remplacer…", 4, 50, col_w - 14, 13, 9, C_DIM))
+		else:
+			card.add_child(_lbl_node("Entrée : équiper", 4, 50, col_w - 14, 13, 9, C_DIM))
+
+		var move_pid := _selected_pid
+		var capture_api := api
+		var capture_lbl := label
+		card.pressed.connect(func() -> void:
+			if not (capture_api in GameManager.get_move_loadout(move_pid)) \
+					and GameManager.get_move_loadout(move_pid).size() >= GameManager.get_move_slots(move_pid):
+				_open_replace_picker(move_pid, capture_api, capture_lbl)
+			else:
+				GameManager.toggle_move_in_loadout(move_pid, capture_api)
+				_refresh_detail()
+		)
+		card.gui_input.connect(func(event: InputEvent) -> void:
+			if event is InputEventKey and (event as InputEventKey).pressed \
+					and (event as InputEventKey).keycode == KEY_I:
+				_open_move_info(capture_api, capture_lbl)
+				get_viewport().set_input_as_handled()
+		)
 
 		mx += col_w
 		if mx + col_w > 560:
 			mx = 16
-			my += 60
+			my += 72
 
 	# Hauteur du contenu → le ScrollContainer sait jusqu'où défiler.
 	_detail_root.custom_minimum_size.y = maxf(484.0, my + 66.0)
+
+
+## Effet MAISON d'une CT (MoveShopScreen.MOVE_LIST) en toutes lettres — c'est
+## ce que fait réellement la capacité dans CE jeu. "" si pas d'effet spécial.
+func _move_house_effect(api: String) -> String:
+	for m: Dictionary in MoveShopScreen.MOVE_LIST:
+		if str(m.get("api", "")) != api:
+			continue
+		var fx: Dictionary = m.get("effect", {})
+		match str(fx.get("kind", "")):
+			"status":
+				var nm: String = {"poison": "empoisonne", "paralysis": "paralyse",
+					"burn": "brûle", "sleep": "endort"}.get(str(fx.get("status", "")), "altère")
+				return "Effet : %s la cible" % nm
+			"heal_team": return "Effet : soigne l'équipe de %d %%" % int(float(fx.get("pct", 0.0)) * 100)
+			"heal_self": return "Effet : se soigne de %d %%" % int(float(fx.get("pct", 0.0)) * 100)
+		return ""
+	return ""
+
+
+## Style d'une carte de capacité (Button) — équipée = vert, focus = liseré or.
+func _style_move_card(card: Button, equipped: bool) -> void:
+	for state in ["normal", "hover", "pressed", "focus"]:
+		var sb := StyleBoxFlat.new()
+		var bg := C_CARD_SEL if equipped else C_CARD
+		sb.bg_color     = bg.lightened(0.08) if state in ["hover", "focus"] else bg
+		sb.border_color = C_GOLD_LT if state == "focus" else (C_GOOD if equipped else C_BORDER)
+		sb.set_border_width_all(3 if state == "focus" else 2)
+		sb.set_corner_radius_all(6)
+		card.add_theme_stylebox_override(state, sb)
+
+
+## CHOIX de la capacité à remplacer quand les slots sont pleins : liste les
+## équipées, en choisir une la fait céder sa place à `new_api` (même slot).
+## Même mécanique de sur-popup que le sélecteur d'objet : son MenuNav consomme
+## Échap tant qu'elle est ouverte.
+var _replace_picker: CanvasLayer = null
+
+func _open_replace_picker(pid: int, new_api: String, new_label: String) -> void:
+	if is_instance_valid(_replace_picker):
+		_replace_picker.queue_free()
+	var pick := CanvasLayer.new()
+	pick.layer = 30
+	_replace_picker = pick
+	add_child(pick)
+
+	var close_pick := func() -> void:
+		pick.queue_free()
+		_replace_picker = null
+		_refresh_detail()
+	pick.add_child(MenuNav.make(close_pick))
+
+	var veil := ColorRect.new()
+	veil.color = Color(0.02, 0.02, 0.01, 0.55)
+	veil.set_anchors_preset(Control.PRESET_FULL_RECT)
+	pick.add_child(veil)
+
+	var equipped: Array = GameManager.get_move_loadout(pid)
+	var ph := 110.0 + equipped.size() * 50.0
+	var panel := UiKit.main_panel(Vector2(400, maxf(40.0, 340.0 - ph * 0.5)), Vector2(480, ph))
+	pick.add_child(panel)
+	UiKit.banner(panel, "Remplacer par %s" % new_label)
+	_lbl(panel, "Quelle capacité cède sa place ?", 0, 62, 480, 20, 12, C_DIM, true)
+
+	for i in equipped.size():
+		var old_api: String = equipped[i]
+		var btn := Button.new()
+		btn.position = Vector2(24, 90 + i * 50.0)
+		btn.size     = Vector2(432, 44)
+		btn.add_theme_font_size_override("font_size", UiKit.scaled_font(13))
+		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		btn.text = "  " + old_api.replace("-", " ").capitalize()
+		_style_button(btn, Color(0.22, 0.17, 0.10), C_TEXT)
+		# Nom français + type dès que la fiche du move arrive.
+		var fx_line := _move_house_effect(old_api)
+		var fx_lbl := _lbl_node(fx_line, 16, 27, 290, 14, 9, C_GOLD_LT)
+		fx_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		btn.add_child(fx_lbl)
+		var w_btn: WeakRef = weakref(btn)
+		var w_fx2: WeakRef = weakref(fx_lbl)
+		PokemonAPI.get_move(old_api, func(md: Dictionary) -> void:
+			var b2: Button = w_btn.get_ref()
+			if md.is_empty() or b2 == null:
+				return
+			var frn := str(md.get("name_fr", ""))
+			if frn != "":
+				b2.text = "  " + frn
+			UiKit.type_badge(b2, Vector2(316, 12), str(md.get("type", "normal")), 18.0)
+			var f2: Label = w_fx2.get_ref()
+			if f2 != null and f2.text == "":
+				var pv3: Variant = md.get("power")
+				f2.text = ("pui. %d" % int(pv3)) if pv3 != null else "statut"
+		)
+		var cap_old := old_api
+		btn.pressed.connect(func() -> void:
+			GameManager.replace_move_in_loadout(pid, cap_old, new_api)
+			close_pick.call()
+		)
+		panel.add_child(btn)
+
+	MenuNav.focus_first(panel)
+
+
+## POPUP D'INFOS d'une attaque ([I] sur une carte) : nom FR, type, puissance,
+## précision, PP, classe de dégâts et description officielle — la carte de la
+## grille est bien trop petite pour tout ça (retour joueurs : « trop condensé,
+## on ne voit rien »). L'effet spécial des CT du tuteur (MoveShopScreen) est
+## affiché en plus quand il existe : c'est LUI la vraie mécanique en jeu.
+var _move_info: CanvasLayer = null
+
+func _open_move_info(api: String, fallback_label: String) -> void:
+	if is_instance_valid(_move_info):
+		_move_info.queue_free()
+	var pop := CanvasLayer.new()
+	pop.layer = 31
+	_move_info = pop
+	add_child(pop)
+
+	var close_pop := func() -> void:
+		pop.queue_free()
+		_move_info = null
+		call_deferred("_ensure_focus_alive")
+	pop.add_child(MenuNav.make(close_pop))
+
+	var veil := ColorRect.new()
+	veil.color = Color(0.02, 0.02, 0.01, 0.55)
+	veil.set_anchors_preset(Control.PRESET_FULL_RECT)
+	pop.add_child(veil)
+
+	var panel := UiKit.main_panel(Vector2(340, 150), Vector2(600, 420))
+	pop.add_child(panel)
+	UiKit.banner(panel, fallback_label)
+
+	var body := _lbl(panel, "Chargement…", 32, 84, 536, 260, 14, C_TEXT)
+	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+
+	# Effet maison de la CT (soin, statut garanti…) — prioritaire sur le texte
+	# officiel, c'est ce que fait RÉELLEMENT la capacité dans CE jeu.
+	var house_fx := ""
+	for m: Dictionary in MoveShopScreen.MOVE_LIST:
+		if str(m.get("api", "")) == api:
+			house_fx = str(m.get("desc", ""))
+			break
+
+	var w_panel: WeakRef = weakref(panel)
+	var w_body: WeakRef = weakref(body)
+	PokemonAPI.get_move(api, func(md: Dictionary) -> void:
+		var pn: Panel = w_panel.get_ref()
+		var bd: Label = w_body.get_ref()
+		if pn == null or bd == null:
+			return
+		if md.is_empty():
+			bd.text = "Fiche introuvable (hors ligne ?)"
+			return
+		var frn := str(md.get("name_fr", ""))
+		if frn != "":
+			UiKit.banner(pn, frn)
+		UiKit.type_badge(pn, Vector2(32, 84), str(md.get("type", "normal")), 24.0)
+		var pv: Variant = md.get("power")
+		var av: Variant = md.get("accuracy")
+		var ppv: Variant = md.get("pp")
+		var klass: String = {"physical": "Physique", "special": "Spéciale", "status": "Statut"} \
+			.get(str(md.get("damage_class", "")), "?")
+		var lines: Array[String] = []
+		lines.append("Puissance : %s      Précision : %s      PP : %s" % [
+			str(int(pv)) if pv != null else "—",
+			("%d %%" % int(av)) if av != null else "—",
+			str(int(ppv)) if ppv != null else "—"])
+		lines.append("Classe : %s" % klass)
+		if house_fx != "":
+			lines.append("")
+			lines.append("★ Effet dans Pokhades : %s" % house_fx)
+		var desc := str(md.get("desc_fr", ""))
+		if desc != "":
+			lines.append("")
+			lines.append(desc)
+		bd.position = Vector2(32, 124)
+		bd.text = "\n".join(lines)
+	)
+
+	var ok := UiKit.button("Fermer  (Échap)", Vector2(220, 40), false)
+	ok.position = Vector2(190, 356)
+	ok.pressed.connect(close_pop)
+	panel.add_child(ok)
+	MenuNav.focus_first(panel)
 
 
 # ── Chargement API ────────────────────────────────────────────────────
@@ -690,7 +1155,10 @@ func _fetch_all() -> void:
 			var pd := PokemonData.from_api(data)
 			_loaded_data[pid] = pd
 			if _card_panels.has(pid):
-				var card: Panel = _card_panels[pid]
+				# Button depuis la conversion de la grille (navigation aux
+				# flèches) — ce callback arrive en ASYNCHRONE, le typage Panel
+				# d'origine ne plantait donc qu'à l'ouverture de l'écran.
+				var card: Button = _card_panels[pid]
 				var nm := card.get_node_or_null("NameLbl")
 				if nm: (nm as Label).text = pd.name_fr.to_upper()
 				var tr := card.get_node_or_null("TypeRow")
@@ -720,7 +1188,13 @@ func _fetch_portrait(pid: int, url: String) -> void:
 			ct.texture = new_tex
 			if _card_ph.has(pid):
 				(_card_ph[pid] as ColorRect).visible = false
-		_refresh_team_strip()
+		# PAS de _refresh_team_strip ici. La bande d'équipe affichait jadis ces
+		# portraits ; elle est passée aux sprites PMD animés et n'en dépend
+		# plus. Le garder reconstruisait la bande À CHAQUE portrait reçu
+		# (~140 fois à l'ouverture) — et chaque reconstruction détruisait le
+		# carré focalisé : le focus mourait ~1,5 s après l'ouverture et les
+		# flèches devenaient inertes (retour joueurs, reproduit par
+		# smoke_pokedex : focus t=1.25s OK, t=1.50s null).
 		if pid == _selected_pid:
 			_refresh_detail()
 	)

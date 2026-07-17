@@ -554,6 +554,16 @@ func _interact(npc: HubNPC) -> void:
 	Sfx.play_file(Sfx.SE_MENU_OPEN, -6.0)
 	_subscreen = screen
 
+	# Bandeau du hub tenu à jour PENDANT que l'écran est ouvert (il est visible
+	# juste au-dessus) : sans ça, "Équipe x/6 · Poids y/40" restait celui d'avant
+	# tant qu'on n'avait pas refermé le Pokédex (retour joueurs).
+	if screen.has_signal("team_changed"):
+		screen.team_changed.connect(_refresh_labels)
+		# Le sprite incarné suit le PREMIER de l'équipe : s'il change pendant
+		# qu'on compose dans le Pokédex, il se met à jour en direct, comme le
+		# bandeau (retour joueurs).
+		screen.team_changed.connect(_refresh_player_sprite)
+
 	if screen.has_signal("closed"):
 		screen.closed.connect(func() -> void:
 			Sfx.play_file(Sfx.SE_MENU_CLOSE, -6.0)
@@ -701,6 +711,22 @@ func _open_starter_selection() -> void:
 		if is_instance_valid(_player):
 			PMDSprites.get_walk_sprites(pokemon_id, _player, _player._on_sprites)
 	, CONNECT_ONE_SHOT)
+
+
+## Recharge le sprite incarné si le PREMIER de l'équipe a changé. Mémorise le
+## dernier pid appliqué : team_changed est émis à CHAQUE rafraîchissement du
+## Pokédex (poids, objet, slots…) — sans ce garde, on relancerait le chargement
+## de planche PMD des dizaines de fois pendant une simple session de menu.
+var _player_sprite_pid: int = -1
+
+func _refresh_player_sprite() -> void:
+	if GameManager.hub_team.is_empty() or not is_instance_valid(_player):
+		return
+	var pid: int = GameManager.hub_team[0]
+	if pid == _player_sprite_pid:
+		return
+	_player_sprite_pid = pid
+	PMDSprites.get_walk_sprites(pid, _player, _player._on_sprites)
 
 
 func _show_coming_soon(msg: String) -> void:

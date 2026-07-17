@@ -360,6 +360,25 @@ var purchased_move_names:  Array[String] = []  # capacités achetées chez le tu
 # pid:int -> Array[String] (api_name des capacités équipées, ordre = slots)
 var move_loadouts: Dictionary = {}
 
+# Nombre de SLOTS de capacités choisi PAR Pokémon (pid:int -> int). Chaque slot
+# pèse sur le build (cf. compute_team_weight) : en prendre moins allège le
+# Pokémon, en prendre plus coûte. Borné par move_slot_count (achat global au
+# hub) — le réglage par Pokémon ne peut pas dépasser ce qu'on a payé.
+var move_slot_choices: Dictionary = {}
+
+func get_move_slots(pid: int) -> int:
+	return clampi(int(move_slot_choices.get(pid, move_slot_count)), 1, move_slot_count)
+
+
+func set_move_slots(pid: int, n: int) -> void:
+	move_slot_choices[pid] = clampi(n, 1, move_slot_count)
+	# Rétrécir peut rendre le loadout trop grand : on retire par la FIN (les
+	# derniers équipés partent d'abord), jamais silencieusement au lancement.
+	var arr: Array = get_move_loadout(pid)
+	while arr.size() > get_move_slots(pid):
+		arr.pop_back()
+	move_loadouts[pid] = arr
+
 const MOVE_SLOT_COSTS: Array[int] = [100, 200, 400]  # coût pour passer à 2, 3, 4 slots
 const TEAM_SLOT_COSTS: Array[int] = [80, 120, 180, 250, 350]  # pour chaque slot ajouté
 const DASH_CHARGE_COSTS: Array[int] = [60, 120, 200]  # coût des charges de Dash 1, 2, 3
@@ -414,7 +433,10 @@ func compute_team_weight() -> int:
 		total += pokemon_weight(pid)
 		if get_assigned_item(pid) != "":
 			total += ITEM_WEIGHT
-		total += get_move_loadout(pid).size() * MOVE_WEIGHT
+		# Les SLOTS choisis pèsent, équipés ou non : c'est la CAPACITÉ à porter
+		# des CT qu'on paie, pas leur usage — sinon vider ses slots juste avant
+		# de partir allégerait "gratuitement" le build.
+		total += (get_move_slots(pid) - 1) * MOVE_WEIGHT
 	return total
 
 
@@ -423,12 +445,25 @@ func get_move_loadout(pid: int) -> Array:
 	return (move_loadouts.get(pid, []) as Array).duplicate()
 
 
+## Remplace `old_api` par `new_api` dans le loadout de `pid`, À LA MÊME PLACE.
+## C'est le chemin « slots pleins » du Pokédex : le joueur choisit explicitement
+## quelle capacité céder sa place (avant, il fallait deviner qu'on devait
+## d'abord retirer, puis équiper — retour joueurs).
+func replace_move_in_loadout(pid: int, old_api: String, new_api: String) -> void:
+	var arr: Array = get_move_loadout(pid)
+	var idx := arr.find(old_api)
+	if idx == -1 or new_api in arr:
+		return
+	arr[idx] = new_api
+	move_loadouts[pid] = arr
+
+
 ## Équipe/déséquipe une capacité pour un Pokémon précis — respecte move_slot_count.
 func toggle_move_in_loadout(pid: int, api_name: String) -> void:
 	var arr: Array = get_move_loadout(pid)
 	if api_name in arr:
 		arr.erase(api_name)
-	elif arr.size() < move_slot_count:
+	elif arr.size() < get_move_slots(pid):
 		arr.append(api_name)
 	move_loadouts[pid] = arr
 
@@ -680,6 +715,7 @@ func save_game() -> void:
 		"dash_charges_bought": dash_charges_bought,
 		"purchased_move_names": purchased_move_names,
 		"move_loadouts":       _stringify_keys(move_loadouts),
+		"move_slot_choices":   _stringify_keys(move_slot_choices),
 		"cs_holders":          cs_holders,
 		"owned_cs":            owned_cs,
 		"defeat_counts":       _stringify_keys(defeat_counts),
@@ -727,6 +763,7 @@ func load_game() -> void:
 	dash_charges_bought  = int(d.get("dash_charges_bought", dash_charges_bought))
 	purchased_move_names.assign(d.get("purchased_move_names", []))
 	move_loadouts        = _intify_keys(d.get("move_loadouts", {}))
+	move_slot_choices    = _intify_keys(d.get("move_slot_choices", {}))
 	cs_holders           = d.get("cs_holders", {})
 	owned_cs.assign(d.get("owned_cs", []))
 	defeat_counts        = _intify_keys(d.get("defeat_counts", {}))

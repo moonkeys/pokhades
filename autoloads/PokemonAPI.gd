@@ -180,9 +180,10 @@ func get_move(move_name: String, callback: Callable) -> void:
 		return
 
 	var disk := _read_json_cache(_disk_path("move", move_name))
-	# Invalidation : les caches d'avant l'ajout de name_fr n'ont pas le nom
-	# français — on les re-télécharge une fois.
-	if not disk.is_empty() and disk.has("name_fr"):
+	# Invalidation : les caches d'avant l'ajout de name_fr, puis de desc_fr/
+	# accuracy/pp (popup d'infos du Pokédex), n'ont pas ces clés — on les
+	# re-télécharge une fois.
+	if not disk.is_empty() and disk.has("name_fr") and disk.has("desc_fr"):
 		_move_cache[move_name] = disk
 		if callback.is_valid(): callback.call(disk)
 		return
@@ -209,12 +210,21 @@ func get_move(move_name: String, callback: Callable) -> void:
 			if entry.get("language", {}).get("name", "") == "fr":
 				name_fr = entry.get("name", "")
 				break
+		# Description française : dernier flavor text FR disponible (les entrées
+		# sont triées par génération — la dernière est la plus récente).
+		var desc_fr: String = ""
+		for fte in d.get("flavor_text_entries", []):
+			if fte.get("language", {}).get("name", "") == "fr":
+				desc_fr = str(fte.get("flavor_text", "")).replace("\n", " ")
 		var move_data := {
 			"name":         move_name,
 			"name_fr":      name_fr,
 			"type":         d.get("type", {}).get("name", "normal"),
 			"power":        d.get("power"),
+			"accuracy":     d.get("accuracy"),
+			"pp":           d.get("pp"),
 			"damage_class": d.get("damage_class", {}).get("name", "physical"),
+			"desc_fr":      desc_fr,
 		}
 		_move_cache[move_name] = move_data
 		_write_json_cache(_disk_path("move", move_name), move_data)

@@ -29,6 +29,10 @@ func _ready() -> void:
 			_run_scenario(_scenario_run.bind(0))
 		elif arg.begins_with("smoke_run_room="):
 			_run_scenario(_scenario_run.bind(int(arg.substr(15))))
+		elif arg == "smoke_pokedex":
+			_run_scenario(_scenario_pokedex)
+		elif arg == "smoke_pokedex_stress":
+			_run_scenario(_scenario_pokedex_stress)
 		elif arg == "mp_test_host":
 			_run_scenario(_scenario_mp_host)
 		elif arg.begins_with("mp_test_join="):
@@ -61,6 +65,96 @@ func _scenario_boot() -> void:
 		_fail("boot", "aucune scène courante")
 		return
 	_pass("boot", String(get_tree().current_scene.name))
+
+
+## Ouvre le VRAI PokedexScreen et vérifie la navigation clavier : deux erreurs
+## de suite (typage cassé, parse cassé) sont passées au travers des scénarios
+## de combat, qui n'instancient jamais cet écran. On simule ui_right/ui_down et
+## on exige que le focus BOUGE — c'est le contrat de la navigation aux flèches.
+func _scenario_pokedex() -> void:
+	GameManager.hub_team = [GameManager.STARTER_IDS[0]]
+	var screen := PokedexScreen.new()
+	get_tree().root.add_child(screen)
+	# 2,5 s : le temps que TOUT l'asynchrone retombe (données API, portraits,
+	# sprites PMD) — c'est un rafraîchissement déclenché par un portrait tardif
+	# qui tuait le focus à ~1,5 s, un simple await court ne l'aurait jamais vu.
+	await get_tree().create_timer(2.5).timeout
+
+	var vp := get_tree().root
+	var f0 := vp.gui_get_focus_owner()
+	if f0 == null:
+		_fail("pokedex", "aucun contrôle focalisé à l'ouverture")
+		return
+	for action in ["ui_right", "ui_down"]:
+		var ev := InputEventAction.new()
+		ev.action  = action
+		ev.pressed = true
+		Input.parse_input_event(ev)
+		await get_tree().process_frame
+		await get_tree().process_frame
+	var f1 := vp.gui_get_focus_owner()
+	if f1 == null or f1 == f0:
+		_fail("pokedex", "focus inerte (%s -> %s)" % [f0, f1])
+		return
+	_pass("pokedex", "focus %s -> %s" % [f0.name, f1.name])
+
+
+## STRESS : simule des remplacements d'attaque en RAFALE (retour joueurs :
+## « erreur quand je change une attaque plusieurs fois »). Presse les cartes CT
+## et les boutons du sélecteur de remplacement via leurs signaux pressed.
+func _scenario_pokedex_stress() -> void:
+	var starter: int = GameManager.STARTER_IDS[0]
+	GameManager.hub_team = [starter]
+	if not starter in GameManager.unlocked_pokemon:
+		GameManager.unlocked_pokemon.append(starter)
+	GameManager.purchased_move_names = ["cut", "strength", "surf", "thunderbolt"]
+	GameManager.move_slot_count = 2
+	var screen := PokedexScreen.new()
+	get_tree().root.add_child(screen)
+	await get_tree().create_timer(2.0).timeout
+	screen._select(starter)
+	await get_tree().create_timer(0.5).timeout
+
+	# Chaque pression déclenche un _refresh_detail qui DÉTRUIT les boutons
+	# suivants — la liste est donc re-collectée à chaque itération (une liste
+	# figée finirait par presser un nœud libéré : plantage du harnais, pas de
+	# l'écran).
+	var total_pressed := 0
+	for round_i in 40:
+		var btns: Array = _all_buttons(screen._detail_root)
+		if btns.is_empty():
+			break
+		var n: Button = btns[round_i % btns.size()]
+		if not is_instance_valid(n):
+			continue
+		n.emit_signal("pressed")
+		total_pressed += 1
+		await get_tree().process_frame
+		await get_tree().process_frame
+		# si un sélecteur de remplacement s'est ouvert, presse sa 1re option
+		if is_instance_valid(screen._replace_picker):
+			var opts := _all_buttons(screen._replace_picker)
+			if not opts.is_empty():
+				(opts[0] as Button).emit_signal("pressed")
+				await get_tree().process_frame
+				await get_tree().process_frame
+	if total_pressed < 10:
+		_fail("pokedex_stress", "trop peu de pressions exercées (%d)" % total_pressed)
+		return
+	_pass("pokedex_stress", "%d pressions sans erreur" % total_pressed)
+
+
+func _all_buttons(root: Node) -> Array:
+	var out: Array = []
+	if root == null or not is_instance_valid(root):
+		return out
+	var stack: Array = [root]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		if n is Button and not (n as Button).disabled:
+			out.append(n)
+		stack.append_array(n.get_children())
+	return out
 
 
 func _scenario_run(start_room: int) -> void:
