@@ -965,17 +965,25 @@ func _spawn_room_enemies() -> void:
 	var lv    := PLAYER_LEVEL + int(room * 1.5) + act * 3
 	var pool  := _pool_for_room(room)
 
-	# 5 à 9 VAGUES par salle de combat (retour joueurs) — tirage SEEDÉ (dérivé
-	# de la graine de zone en multi → même nb de vagues chez tous les pairs).
-	# RYTHME (passe d'équilibrage) : la densité MONTE avec l'acte au lieu d'un
-	# plafond figé — actes 1-2 plus calmes (cap effectif/vague = 2+act, total
-	# = 16+act·4), actes 3-4 nettement plus denses (jusqu'à 5/vague, 28 total).
-	# Corrige la stagnation de difficulté dès l'acte 2 signalée dans le code.
+	# RYTHME — PEU de vagues, mais FOURNIES. L'ancienne courbe donnait 5 à 9
+	# vagues d'UN SEUL Pokémon dans les 3 premières salles : on passait son
+	# temps à attendre le prochain solitaire (retour joueurs : « le premier
+	# biome paraît lent »). Le 1er biome fait désormais 2-3 vagues de 1 à 4.
+	#
+	# Progression indexée sur le COMBAT GLOBAL (0..19) et non sur `room` ou
+	# `room % ROOMS_PER_ACT` : ces deux-là repartaient à zéro ou stagnaient à
+	# chaque acte, ce qui donnait une densité PLATE dans l'acte, une marche à
+	# l'acte suivant — et même un CREUX de difficulté juste après un boss.
+	# Effectif et nombre de vagues montent à des cadences DÉCALÉES (~1.3 et 5
+	# combats) : s'ils grimpaient ensemble, la salle doublait d'un coup.
+	# Courbe résultante (moyennes) : 2.5 → 5 → 7.5 → 10 → 14 → 17.5 → 22.5 →
+	# 27.5, strictement croissante du 1er combat au dernier.
 	var wrng := RandomNumberGenerator.new()
 	wrng.seed = (Net.zone_seed(room) if Net.in_run else randi()) ^ 0x5A5A
-	var wave_count := wrng.randi_range(5, 9)
-	var per_wave   := clampi(1 + int(room / 3) + act, 1, 2 + act)
-	var count := mini(wave_count * per_wave, 16 + act * 4)
+	var combat_idx := act * RunManager.COMBATS_PER_ACT + (room % RunManager.ROOMS_PER_ACT)
+	var per_wave   := clampi(1 + int(float(combat_idx) * 0.75), 1, 5)
+	var wave_count := clampi(2 + combat_idx / 5, 2, 5) + wrng.randi_range(0, 1)
+	var count := mini(wave_count * per_wave, 30)
 
 	_wave_queue.clear()
 	_wave_num    = 0
@@ -1590,7 +1598,10 @@ func _spawn_telegraph_ring(pos: Vector3, radius: float, dur: float) -> void:
 
 
 ## Proportion d'ennemis ordinaires qui apparaissent DÉJÀ tapis dans une nappe.
-const AMBUSH_SPAWN_RATIO := 0.5
+## 0.35 et pas 0.5 : à la moitié, trop d'ennemis attendaient au lieu de venir,
+## et la salle se finissait en fouille de la prairie (retour joueurs). Un tiers
+## suffit à ce qu'une nappe reste suspecte sans que le combat s'arrête.
+const AMBUSH_SPAWN_RATIO := 0.35
 ## Distance minimale à toute l'équipe pour un spawn embusqué. Sans elle, un
 ## ennemi pouvait se matérialiser tapi à deux pas du joueur : ni évitable, ni
 ## repérable — une embuscade doit se marcher dedans, pas te tomber dessus.

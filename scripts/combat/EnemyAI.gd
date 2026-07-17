@@ -450,7 +450,12 @@ const AMBUSH_SEARCH_DIST := 22.0
 ## invisible dans une nappe que le joueur n'a aucune raison de traverser, et la
 ## salle ne se terminait jamais (il faut tous les vaincre pour ouvrir les
 ## portes). Renoncer le rend visible, donc trouvable.
-const AMBUSH_PATIENCE := 9.0
+## 4 s et pas 9 : à 9 s, une salle où plusieurs ennemis campent invisibles se
+## transformait en fouille de la map pour aller les débusquer un par un (retour
+## joueurs : « ils ne viennent pas à toi, il faut marcher tout autour »).
+## L'embuscade doit rester une SURPRISE si on passe près, pas une chasse au
+## trésor si on ne passe pas.
+const AMBUSH_PATIENCE := 4.0
 
 func _try_ambush(target: CharacterBody3D, dist: float, delta: float) -> bool:
 	if _ambush_spent or _ambush_none or is_champion or is_boss:
