@@ -121,6 +121,9 @@ const _FOREST_PALETTE := {
 	"leaves":       true,
 	"leaves_color": Color(0.45, 0.58, 0.22, 0.85),
 	"ground_tint":  Color(0.30, 0.50, 0.26),
+	# Un sous-bois cerné de pics n'a pas plus de sens qu'une prairie : l'horizon
+	# est fermé par la forêt lointaine estompée (cf. _build_distant_forest).
+	"backdrop_mountains": false,
 }
 
 const _SWAMP_PALETTE := {
@@ -140,6 +143,9 @@ const _SWAMP_PALETTE := {
 	"mist_color":   Color(0.72, 0.78, 0.66, 0.09),
 	"fireflies":    Color(0.85, 1.0, 0.45),
 	"ground_tint":  Color(0.36, 0.40, 0.28),
+	# Marécage : plat et embrumé jusqu'à l'horizon — la forêt lointaine se noie
+	# dans le brouillard dense (fog_density 0.014), pas de chaîne de montagnes.
+	"backdrop_mountains": false,
 }
 
 const _ROCKY_PALETTE := {

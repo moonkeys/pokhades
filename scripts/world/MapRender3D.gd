@@ -63,6 +63,7 @@ func build(map: Node2D) -> void:
 	_build_pixel_grass()
 	_build_flowers()
 	_build_leaf_litter()
+	_build_swamp_flora()
 	_build_berry_trees()
 	if _map.theme == MapGenerator.MapTheme.VILLAGE:
 		_build_village_houses()
@@ -706,8 +707,10 @@ func _build_water_surface() -> void:
 func _water_colors_for_theme() -> Dictionary:
 	match _map.theme:
 		MapGenerator.MapTheme.SWAMP:
-			# Écume verdâtre — pas de blanc éclatant dans la vase
-			return {"shallow": Color(0.42, 0.46, 0.30, 0.78), "deep": Color(0.20, 0.26, 0.18, 0.90),
+			# Écume verdâtre — pas de blanc éclatant dans la vase. Alphas BAS :
+			# ces flaques sont MARCHABLES, on doit voir le fond au travers pour
+			# les lire comme des flaques (retour joueurs), pas comme un lac.
+			return {"shallow": Color(0.42, 0.46, 0.30, 0.48), "deep": Color(0.20, 0.26, 0.18, 0.62),
 				"foam": Color(0.62, 0.68, 0.48)}
 		MapGenerator.MapTheme.ROCKY:
 			return {"shallow": Color(0.30, 0.58, 0.62, 0.70), "deep": Color(0.12, 0.30, 0.38, 0.86)}
@@ -728,7 +731,7 @@ func _water_colors_for_theme() -> Dictionary:
 			return {"shallow": Color(1.0, 0.55, 0.12, 0.98), "deep": Color(0.75, 0.16, 0.05, 1.0),
 				"foam": Color(1.0, 0.90, 0.35)}
 		_:  # FOREST
-			return {"shallow": Color(0.28, 0.58, 0.60, 0.70), "deep": Color(0.12, 0.32, 0.40, 0.86)}
+			return {"shallow": Color(0.28, 0.58, 0.60, 0.42), "deep": Color(0.12, 0.32, 0.40, 0.58)}
 
 
 ## Jonctions terre/eau : une frange d'herbe (edge_grass.png, déjà utilisée
@@ -1027,16 +1030,16 @@ func _bake_tall_grass_flat(img: Image, src: Image, sz: Vector2i) -> void:
 		_bake_tile(img, src, atlas, cell, true)
 
 
-## Décors du layer Objects qui sont visuellement À PLAT sur le sol/l'eau
-## (nénuphars) : les billboarder les ferait "se dresser" — on les bake dans
-## la texture du sol à la place.
+## Décors du layer Objects encore bakés à plat dans la texture du sol.
+## (Les nénuphars y étaient — ils sont désormais de VRAIS meshes 3D
+## destructibles posés sur l'eau, cf. _build_swamp_flora.)
 func _bake_flat_decors(img: Image, src: Image, sz: Vector2i) -> void:
 	for cell: Vector2i in _map._objects.get_used_cells():
 		if cell.x < 0 or cell.x >= sz.x or cell.y < 0 or cell.y >= sz.y:
 			continue
 		var atlas: Vector2i = _map._objects.get_cell_atlas_coords(cell)
 		if _is_flat_decor(atlas):
-			_bake_tile(img, src, atlas, cell, true)
+			pass   # nénuphars : rendus en 3D — rien à baker ici pour l'instant
 
 
 func _is_flat_decor(atlas: Vector2i) -> bool:
@@ -1046,6 +1049,58 @@ func _is_flat_decor(atlas: Vector2i) -> bool:
 		if atlas == nf:
 			return true
 	return false
+
+
+## ── FLORE DE MARÉCAGE 3D destructible ────────────────────────────────────
+## Nénuphars : vrais meshes du pack COMPLET (lily_large/small, déjà importés
+## par Godot) posés sur la surface de l'eau, à la place de l'ancien bake à
+## plat dans la texture — enveloppés dans un BreakableProp (2 coups, poof, la
+## tuile _objects est libérée).
+## Roseaux : touffes de bambou (crops_bambooStage*) sur les BERGES (cases de
+## boue adjacentes à l'eau, choisies par MapGenerator._reed_cells), cassables
+## aussi. Tout est déterministe par hash de case — identique sur tous les pairs.
+const _FULL_KIT := "res://assets/kenney_nature-kit/Models/GLTF format/"
+
+func _build_swamp_flora() -> void:
+	# Nénuphars (toutes les cases _objects portant une tuile de nénuphar)
+	for cell: Vector2i in _map._objects.get_used_cells():
+		var atlas: Vector2i = _map._objects.get_cell_atlas_coords(cell)
+		if not _is_flat_decor(atlas):
+			continue
+		var big: bool = atlas != _map.tile_petit_nenuphar
+		var lily := KitProps.instance_textured(_FULL_KIT,
+			"lily_large.glb" if big else "lily_small.glb")
+		var h := absi(hash(cell))
+		lily.rotation.y = float(h % 628) * 0.01
+		lily.scale = Vector3.ONE * (1.1 if big else 0.8) * (0.85 + float(h % 100) * 0.004)
+		var wrap := BreakableProp.new()
+		wrap.position = Vector3(cell.x + 0.5, WATER_SURFACE_Y + 0.015, cell.y + 0.5)
+		wrap.add_child(lily)
+		wrap.setup(lily, _map, [cell])
+		add_child(wrap)
+		_prop_by_cell[cell] = wrap
+
+	# Roseaux de berge (cf. MapGenerator._decor_swamp)
+	if not _map.has_method("get_reed_cells"):
+		return
+	for cell: Vector2i in _map.get_reed_cells():
+		var h2 := absi(hash(cell) ^ 0x51ED)
+		var clump := Node3D.new()
+		# 2-3 tiges par touffe, décalées — une tige seule lit comme un poteau.
+		for i in 2 + h2 % 2:
+			var reed := KitProps.instance_textured(_FULL_KIT,
+				"crops_bambooStageA.glb" if (h2 + i) % 2 == 0 else "crops_bambooStageB.glb")
+			reed.position = Vector3(
+				lerpf(-0.28, 0.28, float((h2 >> (i * 3)) % 8) / 7.0), 0.0,
+				lerpf(-0.28, 0.28, float((h2 >> (i * 3 + 3)) % 8) / 7.0))
+			reed.rotation.y = float((h2 >> i) % 628) * 0.01
+			reed.scale = Vector3.ONE * (0.85 + float((h2 >> i) % 60) * 0.005)
+			clump.add_child(reed)
+		var wrap2 := BreakableProp.new()
+		wrap2.position = Vector3(cell.x + 0.5, _map.get_height_at_cell(cell), cell.y + 0.5)
+		wrap2.add_child(clump)
+		wrap2.setup(clump, _map, [])   # pas de tuile ni collision à libérer
+		add_child(wrap2)
 
 
 # ─────────────────────────────────────────────────────────────────

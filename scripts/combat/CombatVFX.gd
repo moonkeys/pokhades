@@ -72,6 +72,92 @@ static var _impact_pm:    ParticleProcessMaterial = null
 static var _impact_mats:  Dictionary = {}   # tint(Color) -> StandardMaterial3D (éclat)
 static var _spark_meshes: Dictionary = {}   # tint(Color) -> QuadMesh avec matériau étincelle
 
+## ONDULATION DE FLAQUE — anneau plat au sol qui s'élargit et s'efface, posé
+## sous les pas d'un Pokémon qui traverse une eau peu profonde (biomes Forêt/
+## Marécage, cf. MapGenerator._shallow_cells). Purement cosmétique : rend les
+## flaques LISIBLES comme de l'eau (retour joueurs : « voir les pas comme si on
+## marchait sur des flaques »). Tween sur un tore plat plutôt que particules :
+## une par pas, la GPUParticles serait un canon pour une mouche.
+static var _ripple_mesh: TorusMesh = null
+
+static func spawn_puddle_ripple(parent: Node, pos: Vector3,
+		tint: Color = Color(0.94, 0.98, 1.0, 0.85)) -> void:
+	if not is_instance_valid(parent) or not parent.is_inside_tree():
+		return
+	if _ripple_mesh == null:
+		_ripple_mesh = TorusMesh.new()
+		_ripple_mesh.inner_radius = 0.14
+		_ripple_mesh.outer_radius = 0.22
+		_ripple_mesh.rings = 24
+		_ripple_mesh.ring_segments = 4
+	var mi := MeshInstance3D.new()
+	mi.mesh = _ripple_mesh
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color  = tint
+	mat.transparency  = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.shading_mode  = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mi.material_override = mat
+	# Écrasé à plat, posé AU-DESSUS de la surface d'eau (rendue à y=0.06, cf.
+	# MapRender3D.WATER_SURFACE_Y) — la première version flottait à 0.045,
+	# c'est-à-dire SOUS l'eau : les ondulations étaient invisibles (retour
+	# joueurs : « ça ne fait pas du tout effet flaque »).
+	mi.scale    = Vector3(0.5, 0.06, 0.5)
+	mi.position = Vector3(pos.x, 0.10, pos.z)
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	parent.add_child(mi)
+	var tw := mi.create_tween().set_parallel(true)
+	tw.tween_property(mi, "scale", Vector3(1.6, 0.06, 1.6), 0.5) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw.tween_property(mi, "transparency", 1.0, 0.5).set_ease(Tween.EASE_IN)
+	tw.chain().tween_callback(mi.queue_free)
+
+
+## EMPREINTE DE PAS dans la boue (biome Marécage) : petite tache sombre
+## ovale posée au sol, qui PERSISTE quelques secondes avant de s'estomper —
+## contrairement à l'ondulation d'eau, une trace dans la boue reste.
+## `side` (-1/+1) décale l'empreinte perpendiculairement à la marche :
+## pattes gauche/droite alternées, sinon on pond une ligne de tampons.
+##
+## PERF : mesh et matériau PARTAGÉS (des dizaines d'empreintes vivent en même
+## temps à 4 pas/s par Pokémon) — le fondu passe par la transparency PAR
+## INSTANCE, jamais par le matériau commun.
+static var _footprint_mesh: SphereMesh = null
+static var _footprint_mat:  StandardMaterial3D = null
+
+static func spawn_mud_footprint(parent: Node, pos: Vector3, dir: Vector3, side: int) -> void:
+	if not is_instance_valid(parent) or not parent.is_inside_tree():
+		return
+	if _footprint_mesh == null:
+		_footprint_mesh = SphereMesh.new()
+		_footprint_mesh.radius = 0.09
+		_footprint_mesh.height = 0.03   # galette écrasée = tache ovale au sol
+		_footprint_mesh.radial_segments = 10
+		_footprint_mesh.rings = 3
+		_footprint_mat = StandardMaterial3D.new()
+		_footprint_mat.albedo_color = Color(0.16, 0.12, 0.08, 0.85)
+		_footprint_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		_footprint_mat.roughness    = 1.0
+	var mi := MeshInstance3D.new()
+	mi.mesh = _footprint_mesh
+	mi.material_override = _footprint_mat
+	var flat := dir
+	flat.y = 0.0
+	if flat.length() < 0.01:
+		flat = Vector3.FORWARD
+	flat = flat.normalized()
+	var perp := Vector3(-flat.z, 0.0, flat.x)
+	mi.position = Vector3(pos.x, pos.y + 0.03, pos.z) + perp * 0.13 * float(side)
+	# Allongée dans le sens de la marche.
+	mi.scale = Vector3(0.8, 1.0, 1.3)
+	mi.rotation.y = atan2(flat.x, flat.z)
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	parent.add_child(mi)
+	var tw := mi.create_tween()
+	tw.tween_interval(2.6)                       # la trace RESTE, puis s'efface
+	tw.tween_property(mi, "transparency", 1.0, 1.2)
+	tw.tween_callback(mi.queue_free)
+
+
 static func spawn_impact(parent: Node, pos: Vector3, tint: Color = Color(1.0, 0.95, 0.72)) -> void:
 	if not is_instance_valid(parent) or not parent.is_inside_tree():
 		return

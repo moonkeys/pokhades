@@ -833,7 +833,10 @@ func _is_on_water(body: Node3D) -> bool:
 			or _map.get("_water") == null:
 		return false
 	var cell: Vector2i = _map.world3_to_cell(body.global_position)
-	return _map._water.get_cell_source_id(cell) != -1
+	if _map._water.get_cell_source_id(cell) == -1:
+		return false
+	# Une flaque marchable ne compte pas comme « être sur l'eau » : on y marche.
+	return not (_map.has_method("is_shallow_cell") and _map.is_shallow_cell(cell))
 
 
 ## Le membre actif touche-t-il le bord de l'eau (sa case ou une voisine) ?
@@ -846,8 +849,15 @@ func _active_near_water() -> bool:
 	var cell: Vector2i = _map.world3_to_cell(_team[_active_index].global_position)
 	for dy in range(-1, 2):
 		for dx in range(-1, 2):
-			if _map._water.get_cell_source_id(cell + Vector2i(dx, dy)) != -1:
-				return true
+			var nb := cell + Vector2i(dx, dy)
+			if _map._water.get_cell_source_id(nb) == -1:
+				continue
+			# Les FLAQUES marchables (Forêt/Marécage) sont dans la couche _water
+			# mais se traversent à pied : proposer Surf à leur bord n'a aucun
+			# sens (retour joueurs) — seule l'eau PROFONDE compte.
+			if _map.has_method("is_shallow_cell") and _map.is_shallow_cell(nb):
+				continue
+			return true
 	return false
 
 

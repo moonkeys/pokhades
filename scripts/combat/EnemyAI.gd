@@ -372,6 +372,7 @@ func _physics_process(delta: float) -> void:
 		return
 
 	_update_grass_hiding()
+	_update_puddle_steps(delta)
 
 	# Recul en cours : l'IA lâche les commandes, le corps glisse (move_and_slide
 	# gère les collisions) puis la vitesse s'amortit.
@@ -497,6 +498,33 @@ func _try_ambush(target: CharacterBody3D, dist: float, delta: float) -> bool:
 ## Ralentissement dû au TERRAIN sous les pattes (boue du marécage) — même règle
 ## que pour l'équipe du joueur (cf. TeamMember._terrain_speed_mult) : un terrain
 ## qui ne collerait qu'aux pattes du joueur serait un malus déguisé.
+
+## Mêmes éclaboussures de flaque que l'équipe (cf. TeamMember) — un terrain
+## cosmétique qui ne réagirait qu'au joueur trahirait les ennemis comme des
+## fantômes sans pas.
+var _puddle_cd: float = 0.0
+var _step_side: int = 1     # alternance patte gauche/droite des empreintes
+
+func _update_puddle_steps(delta: float) -> void:
+	_puddle_cd = maxf(0.0, _puddle_cd - delta)
+	if _puddle_cd > 0.0 or velocity.length() < 1.2:
+		return
+	if not is_instance_valid(_map) or not _map.has_method("is_shallow_cell"):
+		return
+	var here := _map.world3_to_cell(global_position)
+	if _map.is_shallow_cell(here):
+		_puddle_cd = 0.26
+		var tint := Color(0.80, 0.88, 0.66, 0.80) \
+			if _map.get("theme") == MapGenerator.MapTheme.SWAMP \
+			else Color(0.94, 0.98, 1.0, 0.80)
+		CombatVFX.spawn_puddle_ripple(get_parent(), global_position, tint)
+	elif _map.has_method("is_mud_cell") and _map.is_mud_cell(global_position):
+		# Boue nue : une EMPREINTE qui reste, pattes alternées (cf. _step_side).
+		_puddle_cd = 0.26
+		_step_side = -_step_side
+		CombatVFX.spawn_mud_footprint(get_parent(), global_position, velocity, _step_side)
+
+
 func _terrain_speed_mult() -> float:
 	if not is_instance_valid(_map) or not _map.has_method("terrain_speed_mult"):
 		return 1.0

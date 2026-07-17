@@ -126,6 +126,15 @@ var _rng:  RandomNumberGenerator = RandomNumberGenerator.new()
 ## retour joueurs : l'eau profonde partout cassait le rythme).
 var _shallow_cells: Dictionary = {}
 var _water_mode: String = "deep"
+## Demi-axes (x, y) des mares creusées par _ensure_water_pools.
+var pool_radius: Vector2i = Vector2i(3, 2)
+
+## Cases de BERGE choisies pour les touffes de roseaux (Marécage) — rendues en
+## bambous 3D destructibles par MapRender3D._build_swamp_flora.
+var _reed_cells: Array[Vector2i] = []
+
+func get_reed_cells() -> Array[Vector2i]:
+	return _reed_cells
 var _map_shape: MapShape = MapShape.RECT
 ## Bruit qui déforme le contour de la forme (cf. _shape_sdf) — c'est LUI qui
 ## enlève le côté "géométrique" : sans lui un cercle est un cercle parfait.
@@ -149,6 +158,21 @@ func is_shallow_cell(cell: Vector2i) -> bool:
 ## Porté par la map (et pas par TeamMember) : la connaissance du terrain reste
 ## d'un seul côté, joueur et IA n'ont qu'à multiplier (cf. TeamMember).
 const MUD_SPEED_MULT := 0.55
+
+## La case sous `pos` est-elle de la BOUE nue (Marécage) ? — le sol de base du
+## biome, hors chemins (fermes) et hors eau. Sert aux empreintes de pas (cf.
+## TeamMember/EnemyAI._update_puddle_steps).
+func is_mud_cell(pos: Vector3) -> bool:
+	if theme != MapTheme.SWAMP:
+		return false
+	var cell := world3_to_cell(pos)
+	if cell.y < 0 or cell.y >= _grid.size():
+		return false
+	var row: PackedByteArray = _grid[cell.y]
+	if cell.x < 0 or cell.x >= row.size():
+		return false
+	return row[cell.x] == Terrain.GRASS
+
 
 func terrain_speed_mult(pos: Vector3) -> float:
 	if theme != MapTheme.SWAMP:
@@ -603,12 +627,16 @@ func _apply_theme() -> void:
 	# d'eau du tout) — retour joueurs : l'eau profonde partout cassait le
 	# rythme hors du biome Lac.
 	_water_mode = cfg.get("water_mode", "deep")
+	pool_radius = cfg.get("pool_radius", Vector2i(3, 2))
 	# VARIATION intra-biome : un acte enchaîne 5+ salles du MÊME biome —
 	# chaque salle jitterle ses densités (par graine) pour que deux forêts
 	# consécutives ne se ressemblent pas (clairsemée, touffue, marécageuse…).
 	tree_density    *= _rng.randf_range(0.65, 1.45)
 	flower_density  *= _rng.randf_range(0.5, 1.6)
-	water_threshold  = clampf(water_threshold + _rng.randf_range(-0.05, 0.04), 0.5, 0.95)
+	# Borne basse à 0.32 et non 0.5 : l'ancien clamp ÉCRASAIT toute config de
+	# biome sous 0.5 — le marécage (0.47) recevait moins d'eau que configuré,
+	# silencieusement, depuis le début.
+	water_threshold  = clampf(water_threshold + _rng.randf_range(-0.05, 0.04), 0.32, 0.95)
 	if random_gating:
 		gating_type = cfg["gating"]
 	print("MapGenerator: thème=%s  gating=%s" % [
@@ -636,14 +664,19 @@ func _theme_config(t: MapTheme) -> Dictionary:
 		MapTheme.SWAMP:
 			return {
 				"ground_tile": tile_sol_boueux,
+				# Boue + herbes malades : le sol composite vaut aussi ici — les
+				# jointures 2D (_apply_blob) sont de toute façon recomposées au
+				# bake par _blend_terrain_edges.
+				"ground_tiles": [tile_sol_boueux, tile_herbe_seche, tile_terre_seche],
 				"water_tile":   tile_eau_sale,
 				"path_tiles":   [tile_chemin_terre],
 				"tree_origins": [tile_arbre_mort_orig, tile_tree_origin],
 				# Allégé par rapport à l'original : trop dense/obstrué, ne laissait
 				# quasiment aucun espace marchable hors des 3 chemins principaux.
 				"tree_density":    0.14,
-				"water_threshold": 0.47,
-				"min_water_pools": 3,
+				"water_threshold": 0.40,   # abaissé : de vraies étendues, pas des taches
+				"min_water_pools": 6,
+				"pool_radius":     Vector2i(6, 4),   # vraies étendues, pas des flaques de poche
 				"tg_threshold":    0.52,
 				"flower_density":  0.02,
 				"path_width":      4,   # corridors plus larges — marécage plus praticable
@@ -733,6 +766,9 @@ func _theme_config(t: MapTheme) -> Dictionary:
 				# terrain chaotique. La lave bloque (deep) — brûlure au contact
 				# gérée côté combat. Pas de Surf sur la lave (gating FORCE).
 				"ground_tile": tile_sol_boueux,
+				# Cendre : les variantes claires ressortent en nuances de gris
+				# une fois passées sous la teinte sombre du sol (cf. MapRender3D).
+				"ground_tiles": [tile_sol_boueux, tile_terre_seche, tile_sable],
 				"water_tile":   tile_water,
 				"path_tiles":   [tile_chemin_terre],
 				"tree_origins": [tile_arbre_mort_orig],   # arbres morts/brûlés
@@ -877,9 +913,17 @@ func _ensure_water_pools() -> void:
 					break
 		if too_close:
 			continue
-		for dy in range(-2, 3):
-			for dx in range(-3, 4):
-				if abs(dx) == 3 and abs(dy) == 2: continue
+		# Ellipse de rayon `pool_radius` (par biome — le marécage creuse GRAND,
+		# cf. _theme_config) au lieu du 7×5 fixe : ses "mares" étaient des
+		# flaques de poche (retour joueurs : « plus de zones d'eau et plus
+		# grandes »).
+		var prx := pool_radius.x
+		var pry := pool_radius.y
+		for dy in range(-pry, pry + 1):
+			for dx in range(-prx, prx + 1):
+				var fx := float(dx) / float(prx + 1)
+				var fy := float(dy) / float(pry + 1)
+				if fx * fx + fy * fy > 1.0: continue
 				var cell := center + Vector2i(dx, dy)
 				if cell.x < 3 or cell.x >= W - 3 or cell.y < 3 or cell.y >= H - 3: continue
 				_grid[cell.y][cell.x] = Terrain.WATER
@@ -1205,6 +1249,13 @@ func _carve_curved_path(curve: Curve2D) -> void:
 				# Bord irrégulier : rayon perturbé par un bruit local haute freq.
 				var edge := edge_noise.get_noise_2d(cell.x * 3.0, cell.y * 3.0) * 0.9
 				if p.distance_to(Vector2(cell) + Vector2(0.5, 0.5)) < width + edge:
+					# Eau MARCHABLE (Forêt/Marécage) : le chemin passe À GUÉ au
+					# lieu de la combler — le tracé restait la 1re cause de
+					# disparition des mares (la moitié des cases d'eau du
+					# marécage y passait, mesuré à la sonde). La connexité ne
+					# souffre pas : ces cases se traversent à pied.
+					if _water_mode == "shallow" and _grid[cell.y][cell.x] == Terrain.WATER:
+						continue
 					_grid[cell.y][cell.x] = Terrain.PATH
 
 
@@ -1541,7 +1592,9 @@ func _place_cliff_outcrops(cells: Array, max_count: int, with_cave: bool,
 func _decor_forest() -> void:
 	var cells := _get_walkable_cells(5)
 	_seeded_shuffle(cells)
-	_place_cliff_outcrops(cells, 2, false, 3, 5, 3, 4)
+	# Plus d'affleurements rocheux : les falaises sont la signature des biomes
+	# Montagne/Volcan, partout ailleurs elles lisaient comme des blocs posés là
+	# (retour joueurs — même décision que _decor_meadow).
 	var stumps := [tile_souche_sombre, tile_souche_claire]
 	var champi := 0
 	var stump  := 0
@@ -1566,8 +1619,7 @@ func _decor_forest() -> void:
 func _decor_swamp() -> void:
 	var cells := _get_walkable_cells(6)
 	_seeded_shuffle(cells)
-	# Bancs rocheux/berges élevées, discrets — le marécage reste surtout plat.
-	_place_cliff_outcrops(cells, 1, false, 3, 5, 3, 4)
+	# Pas de bancs rocheux : falaises réservées à Montagne/Volcan (cf. _decor_forest).
 
 	var lily := tiles_nenuphars_fleur.duplicate()
 	lily.append(tile_nenuphar)
@@ -1576,6 +1628,41 @@ func _decor_swamp() -> void:
 		if _objects.get_cell_source_id(cell) != -1: continue
 		if _rng.randf() < 0.12:
 			_objects.set_cell(cell, source_id, lily[_rng.randi() % lily.size()])
+
+	# CHAMPIGNONS GÉANTS destructibles (mêmes tuiles/mécanique qu'en forêt :
+	# billboard 1×3 enveloppé dans un BreakableProp par MapRender3D — secousse
+	# à l'attaque, poof, collision libérée). Ils poussent où c'est humide : le
+	# marécage en reçoit PLUS que la forêt (14 vs 12) et n'avait jusqu'ici
+	# aucun décor destructible — que des nénuphars intouchables.
+	var champi := 0
+	for cell: Vector2i in cells:
+		if champi >= 14: break
+		if _objects.get_cell_source_id(cell) != -1: continue
+		if _rng.randf() < 0.06 and _champi_fits(cell):
+			for k in 3:
+				_objects.set_cell(cell + Vector2i(0, -k), source_id,
+					tile_champi_origin + Vector2i(0, 2 - k))
+			champi += 1
+
+
+	# ROSEAUX sur les berges : boue nue ADJACENTE à l'eau — c'est là que les
+	# quenouilles poussent, et ça souligne le contour des mares. Cases choisies
+	# au RNG seedé (identiques sur tous les pairs) ; le rendu 3D est fait par
+	# MapRender3D._build_swamp_flora.
+	_reed_cells.clear()
+	for rcell: Vector2i in cells:
+		if _reed_cells.size() >= 46: break
+		if _objects.get_cell_source_id(rcell) != -1: continue
+		if _grid[rcell.y][rcell.x] != Terrain.GRASS: continue
+		var bank := false
+		for d: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var nb := rcell + d
+			if nb.y >= 0 and nb.y < map_size.y and nb.x >= 0 and nb.x < map_size.x \
+					and _grid[nb.y][nb.x] == Terrain.WATER:
+				bank = true
+				break
+		if bank and _rng.randf() < 0.5:
+			_reed_cells.append(rcell)
 
 
 func _decor_meadow() -> void:

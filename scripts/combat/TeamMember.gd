@@ -355,6 +355,7 @@ func _physics_process(delta: float) -> void:
 		_move_cd[i] = max(0.0, _move_cd[i] - delta)
 	_update_range_ring()
 	_update_grass_hiding(delta)
+	_update_puddle_steps(delta)
 
 	# Diffusion de notre état aux autres joueurs (membre contrôlé localement)
 	if is_active and Net.in_run:
@@ -741,6 +742,33 @@ func _steer_toward(target_pos: Vector3, delta: float) -> void:
 ## le joueur ET pour l'IA : une mécanique de terrain qui n'affecterait qu'un
 ## camp serait un avantage déguisé, pas un terrain.
 ## `has_method` : les scènes de map legacy (MapBase nu) ne l'exposent pas.
+
+## ÉCLABOUSSURES DE PAS sur l'eau peu profonde (Forêt/Marécage) : une petite
+## ondulation sous les pattes à cadence fixe tant qu'on se déplace dans une
+## flaque. Cadence et non par-frame : à 60 fps ce serait un sillage opaque.
+var _puddle_cd: float = 0.0
+var _step_side: int = 1     # alternance patte gauche/droite des empreintes
+
+func _update_puddle_steps(delta: float) -> void:
+	_puddle_cd = maxf(0.0, _puddle_cd - delta)
+	if _puddle_cd > 0.0 or velocity.length() < 1.5:
+		return
+	if not is_instance_valid(_map) or not _map.has_method("is_shallow_cell"):
+		return
+	var here := _map.world3_to_cell(global_position)
+	if _map.is_shallow_cell(here):
+		_puddle_cd = 0.24
+		var tint := Color(0.80, 0.88, 0.66, 0.85) \
+			if _map.get("theme") == MapGenerator.MapTheme.SWAMP \
+			else Color(0.94, 0.98, 1.0, 0.85)
+		CombatVFX.spawn_puddle_ripple(get_parent(), global_position, tint)
+	elif _map.has_method("is_mud_cell") and _map.is_mud_cell(global_position):
+		# Boue nue : une EMPREINTE qui reste, pattes alternées (cf. _step_side).
+		_puddle_cd = 0.24
+		_step_side = -_step_side
+		CombatVFX.spawn_mud_footprint(get_parent(), global_position, velocity, _step_side)
+
+
 func _terrain_speed_mult() -> float:
 	if not is_instance_valid(_map) or not _map.has_method("terrain_speed_mult"):
 		return 1.0
