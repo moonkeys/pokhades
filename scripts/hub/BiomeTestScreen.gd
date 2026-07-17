@@ -29,6 +29,10 @@ func _ready() -> void:
 	layer = 30
 	add_child(MenuNav.make(func() -> void: closed.emit()))   # Échap = fermer
 	_build()
+	# Échap fonctionnait déjà, mais SANS focus initial la navigation clavier de
+	# Godot est inerte : les flèches n'ont aucun point de départ à partir duquel
+	# résoudre le bouton voisin.
+	MenuNav.focus_first(self)
 
 
 func _build() -> void:

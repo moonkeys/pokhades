@@ -576,42 +576,40 @@ func _open_run_menu() -> void:
 	add_child(menu)
 	_subscreen = menu
 
-	var bg := ColorRect.new()
-	bg.color = Color(0.08, 0.06, 0.03, 0.75)
-	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	menu.add_child(bg)
+	var veil := ColorRect.new()
+	veil.color = Color(0.04, 0.05, 0.03, 0.45)
+	veil.set_anchors_preset(Control.PRESET_FULL_RECT)
+	menu.add_child(veil)
 
 	var close_menu := func() -> void:
 		menu.queue_free()
 		_subscreen = null
 		_blocked   = false
 
+	# Ce menu était bâti à la main (StyleBoxFlat maison, boutons posés en
+	# absolu sur le CanvasLayer) : il jurait avec le reste du hub et n'avait ni
+	# Échap ni navigation aux flèches. Il passe à UiKit comme tous les autres
+	# écrans — et ça règle la navigation par la même occasion : les boutons
+	# vivent maintenant dans un Panel, alors que la résolution du voisin par les
+	# flèches remonte l'arbre des Control et ne pouvait pas franchir le
+	# CanvasLayer, qui n'en est pas un.
+	menu.add_child(MenuNav.make(close_menu))
+
+	var panel := UiKit.main_panel(Vector2(400, 180), Vector2(480, 400))
+	menu.add_child(panel)
+	UiKit.banner(panel, "Prêt à partir ?")
+
 	var defs: Array = [
-		{"txt": "🗡  Partir seul",              "y": 230, "accent": true},
-		{"txt": "⚔  Multijoueur (jusqu'à 6)",  "y": 300, "accent": true},
-		{"txt": "🧪  Tester un biome",          "y": 370, "accent": false},
-		{"txt": "✕  Annuler",                   "y": 440, "accent": false},
+		{"txt": "🗡  Partir seul",             "green": true},
+		{"txt": "⚔  Multijoueur (jusqu'à 6)", "green": true},
+		{"txt": "🧪  Tester un biome",         "green": false},
+		{"txt": "✕  Annuler",                  "green": false},
 	]
 	for i in defs.size():
 		var d: Dictionary = defs[i]
-		var b := Button.new()
-		b.text = d["txt"]
-		b.position = Vector2(440, d["y"])
-		b.size     = Vector2(400, 60)
-		b.add_theme_font_size_override("font_size", UiKit.scaled_font(19))
-		b.add_theme_color_override("font_color", Color(0.96, 0.92, 0.80))
-		b.add_theme_color_override("font_hover_color", Color(0.98, 0.93, 0.75))
-		var sn := StyleBoxFlat.new()
-		sn.bg_color     = Color(0.10, 0.075, 0.045, 0.96)
-		sn.border_color = Color(0.92, 0.72, 0.25) if d["accent"] else Color(0.55, 0.42, 0.22)
-		sn.set_border_width_all(2)
-		sn.set_corner_radius_all(12)
-		var sh := sn.duplicate() as StyleBoxFlat
-		sh.bg_color = Color(0.22, 0.17, 0.09)
-		b.add_theme_stylebox_override("normal",  sn)
-		b.add_theme_stylebox_override("hover",   sh)
-		b.add_theme_stylebox_override("pressed", sh)
-		menu.add_child(b)
+		var b := UiKit.button(d["txt"], Vector2(400, 58), d["green"])
+		b.position = Vector2(40, 96 + i * 72)
+		panel.add_child(b)
 		var idx := i
 		b.pressed.connect(func() -> void:
 			close_menu.call()
@@ -620,6 +618,10 @@ func _open_run_menu() -> void:
 				1: _open_multiplayer_lobby()
 				2: _open_biome_test()
 		)
+
+	# Sans bouton focalisé, la navigation clavier de Godot est inerte : les
+	# flèches n'ont aucun point de départ à partir duquel résoudre le voisin.
+	MenuNav.focus_first(panel)
 
 
 ## Menu de test de biome (Dracolosse) — choisir un biome lance une run solo

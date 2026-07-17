@@ -19,7 +19,9 @@ var _name_cache:   Dictionary = {}   # pid -> nom FR (résolu async)
 
 
 func _ready() -> void:
+	add_child(MenuNav.make(func() -> void: closed.emit()))   # Échap = fermer
 	_build()
+	MenuNav.focus_first(self)
 
 
 func _build() -> void:
@@ -77,6 +79,7 @@ func _rebuild_sections() -> void:
 	for def: Dictionary in GameManager.CS_CATALOG:
 		_build_cs_section(def, y)
 		y += 168.0
+	MenuNav.focus_first(self)   # les boutons viennent d'être recréés : le focus est à reposer
 
 
 func _build_cs_section(def: Dictionary, y: float) -> void:

@@ -59,7 +59,9 @@ const MOVE_LIST: Array[Dictionary] = [
 
 func _ready() -> void:
 	layer = 10
+	add_child(MenuNav.make(func() -> void: closed.emit()))   # Échap = fermer
 	_build()
+	MenuNav.focus_first(self)
 
 
 func _build() -> void:
@@ -209,9 +211,12 @@ func _buy_move(api: String, price: int) -> void:
 
 func _rebuild() -> void:
 	for child in get_children():
+		if child is MenuNav:
+			continue   # il doit SURVIVRE à la reconstruction, sinon Échap meurt au 1er achat
 		child.queue_free()
 	await get_tree().process_frame
 	_build()
+	MenuNav.focus_first(self)   # les boutons viennent d'être recréés : le focus est à reposer
 
 
 # ── Helpers UI ────────────────────────────────────────────────────────
