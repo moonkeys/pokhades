@@ -414,11 +414,88 @@ func _physics_process(delta: float) -> void:
 
 	var dist := global_position.distance_to(target.global_position)
 
+	# Embuscade : tant qu'il n'a pas frappé, l'ennemi PRÉFÈRE rejoindre une
+	# nappe d'herbe et s'y tapir plutôt que de charger à découvert.
+	if _try_ambush(target, dist, delta):
+		return
+
 	match behavior:
 		Behavior.KITER:      _move_kiter(target, dist, delta)
 		Behavior.CHARGER:    _move_charger(target, dist, delta)
 		Behavior.SKIRMISHER: _move_skirmisher(target, dist, delta)
 		_:                   _move_chaser(target, dist, delta)
+
+
+## ── EMBUSCADE DANS LES HAUTES HERBES (Prairie) ───────────────────────────
+## Se cacher devient une INTENTION et non plus un hasard : tant qu'il n'a pas
+## frappé, l'ennemi rejoint la nappe la plus proche et s'y tapit jusqu'à ce
+## qu'une proie passe à portée. Avant, il ne se cachait que s'il se trouvait
+## déjà par hasard sur une case d'herbe en chargeant.
+##
+## L'embuscade est à USAGE UNIQUE : une fois qu'il a attaqué, il est repéré et
+## ne peut plus se re-fondre (cf. _ambush_spent, posé dans _do_attack). Sans ça
+## un ennemi rapide ferait des allers-retours herbe↔joueur, invisible entre
+## chaque coup — infrappable et pénible.
+var _ambush_spent: bool = false
+var _ambush_spot:  Vector3 = Vector3.INF   # nappe visée ; INF = pas encore cherchée
+var _ambush_none:  bool = false            # aucune herbe à portée : ne plus chercher
+var _ambush_wait:  float = 0.0             # temps passé tapi sans proie
+
+## Rayon de recherche d'une nappe. Au-delà, traverser la moitié de la map pour
+## se cacher serait absurde — l'ennemi charge normalement.
+const AMBUSH_SEARCH_DIST := 22.0
+## Patience : au bout de ce délai tapi sans proie, l'ennemi renonce et charge.
+##
+## Autant un garde-fou qu'un comportement : sans lui, un ennemi pouvait camper
+## invisible dans une nappe que le joueur n'a aucune raison de traverser, et la
+## salle ne se terminait jamais (il faut tous les vaincre pour ouvrir les
+## portes). Renoncer le rend visible, donc trouvable.
+const AMBUSH_PATIENCE := 9.0
+
+func _try_ambush(target: CharacterBody3D, dist: float, delta: float) -> bool:
+	if _ambush_spent or _ambush_none or is_champion or is_boss:
+		return false   # les menaces majeures restent lisibles : elles ne se cachent pas
+	if not is_instance_valid(_map) or not _map.has_method("nearest_tall_grass"):
+		return false
+
+	# Déjà tapi : on ne bouge plus tant que la proie n'est pas à portée. C'est
+	# _update_grass_hiding qui nous rend invisible, et _find_target qui nous
+	# fera charger dès qu'elle approchera.
+	if _map.is_tall_grass_3d(global_position):
+		if dist > GRASS_REVEAL_DIST:
+			_ambush_wait += delta
+			if _ambush_wait >= AMBUSH_PATIENCE:
+				_ambush_spent = true   # il renonce : sort du couvert et charge
+				return false
+			velocity = Vector3.ZERO
+			_update_anim(Vector2.ZERO)
+			move_and_slide()
+			return true
+		return false   # repéré de toute façon : on passe à l'attaque
+
+	# Trop près pour se cacher : le combat est déjà engagé.
+	if dist <= _attack_range() * 1.4:
+		return false
+
+	if _ambush_spot == Vector3.INF:
+		# Cherché UNE fois par ennemi (balayage des nappes) puis mis en cache —
+		# le refaire à chaque frame coûterait cher pour un résultat identique.
+		_ambush_spot = _map.nearest_tall_grass(global_position, AMBUSH_SEARCH_DIST)
+		if _ambush_spot == Vector3.INF:
+			_ambush_none = true
+			return false
+
+	_steer_to(_ambush_spot, delta)
+	return true
+
+
+## Ralentissement dû au TERRAIN sous les pattes (boue du marécage) — même règle
+## que pour l'équipe du joueur (cf. TeamMember._terrain_speed_mult) : un terrain
+## qui ne collerait qu'aux pattes du joueur serait un malus déguisé.
+func _terrain_speed_mult() -> float:
+	if not is_instance_valid(_map) or not _map.has_method("terrain_speed_mult"):
+		return 1.0
+	return _map.terrain_speed_mult(global_position)
 
 
 ## Avance vers `pos` (via l'A* de la map si la vue est bouchée).
@@ -427,7 +504,7 @@ func _steer_to(pos: Vector3, delta: float, speed_mult: float = 1.0) -> void:
 	var dir := (steer_pos - global_position)
 	dir.y = 0.0
 	dir = dir.normalized()
-	velocity = dir * SPEED * speed_mult * pokemon_instance.status_speed_mult()
+	velocity = dir * SPEED * speed_mult * pokemon_instance.status_speed_mult() * _terrain_speed_mult()
 	_update_anim(Vector2(velocity.x, velocity.z))
 	move_and_slide()
 	position.y = _map.get_height_at_world(global_position) if is_instance_valid(_map) else 0.0
@@ -438,7 +515,7 @@ func _flee_from(pos: Vector3, speed_mult: float = 1.0) -> void:
 	var away := global_position - pos
 	away.y = 0.0
 	away = away.normalized() if away.length() > 0.01 else Vector3(1, 0, 0)
-	velocity = away * SPEED * speed_mult * pokemon_instance.status_speed_mult()
+	velocity = away * SPEED * speed_mult * pokemon_instance.status_speed_mult() * _terrain_speed_mult()
 	_update_anim(Vector2(velocity.x, velocity.z))
 	move_and_slide()
 	position.y = _map.get_height_at_world(global_position) if is_instance_valid(_map) else 0.0
@@ -575,6 +652,8 @@ func _find_target() -> CharacterBody3D:
 			continue
 		if p.pokemon_instance == null or p.pokemon_instance.is_fainted():
 			continue
+		if _player_concealed(p):
+			continue
 		var mult := DamageCalculator.type_multiplier(attack_type, p.pokemon_instance.data.types)
 		if mult <= 0.0:
 			continue   # immunité — ne pas cibler
@@ -590,12 +669,32 @@ func _find_target() -> CharacterBody3D:
 		for p in get_tree().get_nodes_in_group("players"):
 			if not is_instance_valid(p): continue
 			if p.pokemon_instance == null or p.pokemon_instance.is_fainted(): continue
+			if _player_concealed(p): continue
 			var d := global_position.distance_to(p.global_position)
 			if d < min_d:
 				min_d = d
 				best = p
 
 	return best
+
+
+## Le joueur `p` est-il CACHÉ pour cet ennemi ?
+##
+## Les hautes herbes jouent désormais DANS LES DEUX SENS. Elles ne servaient
+## qu'à embusquer le joueur (cf. _update_grass_hiding, sens ennemi) : c'était
+## une punition à traverser, pas un outil. Le joueur qui s'y tapit est
+## maintenant perdu de vue, et peut décrocher ou tendre sa propre embuscade.
+##
+## Même seuil que l'embuscade ennemie (GRASS_REVEAL_DIST) : au contact, on se
+## voit, quel que soit le camp. Si tous les joueurs sont cachés, _find_target
+## renvoie null et l'ennemi s'immobilise — il t'a perdu.
+func _player_concealed(p: Node3D) -> bool:
+	if global_position.distance_to(p.global_position) < GRASS_REVEAL_DIST:
+		return false
+	# Délégué au joueur (source unique) : il sait aussi qu'une attaque le trahit
+	# pendant quelques secondes — sans ça, on pourrait mitrailler depuis l'herbe
+	# une cible incapable de riposter.
+	return p.has_method("is_grass_concealed") and p.is_grass_concealed()
 
 
 func _update_anim(vel: Vector2) -> void:
@@ -736,6 +835,9 @@ func _attack_range() -> float:
 
 func _do_attack(target: CharacterBody3D) -> void:
 	_attack_timer = ATTACK_COOLDOWN
+	# L'embuscade est grillée : on s'est montré en frappant. Définitif — cet
+	# ennemi restera visible et ne cherchera plus de nappe (cf. _try_ambush).
+	_ambush_spent = true
 	var move_type:  String
 	var move_power: int
 	if _ranged_move != null:
@@ -799,7 +901,9 @@ var _grass_hidden: bool = false
 
 func _update_grass_hiding() -> void:
 	var hidden := false
-	if not is_champion and not is_boss \
+	# _ambush_spent : après sa première attaque, l'ennemi reste visible même
+	# s'il retraverse une nappe — on doit pouvoir le suivre et le frapper.
+	if not _ambush_spent and not is_champion and not is_boss \
 			and is_instance_valid(_map) and _map.has_method("is_tall_grass_3d") \
 			and _map.is_tall_grass_3d(global_position):
 		hidden = true
@@ -811,6 +915,15 @@ func _update_grass_hiding() -> void:
 	if hidden != _grass_hidden:
 		_grass_hidden = hidden
 		visible = not hidden
+
+
+## Cet ennemi est-il tapi et invisible ? Consulté par l'équipe du joueur (cf.
+## TeamMember._enemy_visible) : on ne peut ni cibler ni frapper ce qu'on ne
+## voit pas. Sans ça, les alliés en IA visaient droit sur un ennemi embusqué
+## qui ne s'était pas montré — l'embuscade ne trompait que le joueur humain
+## (retour joueurs).
+func is_grass_hidden() -> bool:
+	return _grass_hidden
 
 
 ## `attacker_peer` = peer_id du joueur qui inflige ce coup — retenu pour

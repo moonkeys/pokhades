@@ -354,7 +354,7 @@ func _physics_process(delta: float) -> void:
 	for i in _move_cd.size():
 		_move_cd[i] = max(0.0, _move_cd[i] - delta)
 	_update_range_ring()
-	_update_grass_hiding()
+	_update_grass_hiding(delta)
 
 	# Diffusion de notre état aux autres joueurs (membre contrôlé localement)
 	if is_active and Net.in_run:
@@ -653,7 +653,9 @@ func _player_process() -> void:
 	if _dash_timer > 0.0:
 		velocity = _dash_dir * DASH_SPEED
 	else:
-		velocity = dir * SPEED * pokemon_instance.status_speed_mult()   # paralysie = ralenti
+		# paralysie = ralenti ; boue du marécage = ralentie aussi (cf.
+		# MapGenerator.terrain_speed_mult)
+		velocity = dir * SPEED * pokemon_instance.status_speed_mult() * _terrain_speed_mult()
 	_update_anim(Vector2(dir.x, dir.z))
 	move_and_slide()
 	_snap_to_ground()
@@ -729,10 +731,20 @@ func _steer_toward(target_pos: Vector3, delta: float) -> void:
 	var dir := (steer_pos - global_position)
 	dir.y = 0.0
 	dir = dir.normalized()
-	velocity = dir * AI_SPEED * pokemon_instance.status_speed_mult()
+	velocity = dir * AI_SPEED * pokemon_instance.status_speed_mult() * _terrain_speed_mult()
 	_update_anim(Vector2(dir.x, dir.z))
 	move_and_slide()
 	_snap_to_ground()
+
+
+## Ralentissement dû au TERRAIN sous les pattes (boue du marécage). Vaut pour
+## le joueur ET pour l'IA : une mécanique de terrain qui n'affecterait qu'un
+## camp serait un avantage déguisé, pas un terrain.
+## `has_method` : les scènes de map legacy (MapBase nu) ne l'exposent pas.
+func _terrain_speed_mult() -> float:
+	if not is_instance_valid(_map) or not _map.has_method("terrain_speed_mult"):
+		return 1.0
+	return _map.terrain_speed_mult(global_position)
 
 
 ## Colle le personnage au relief procédural (collines douces) sous ses pieds
@@ -773,11 +785,21 @@ func _has_clear_line_of_sight(target_pos: Vector3) -> bool:
 	return result.is_empty()
 
 
+## Un ennemi tapi dans les hautes herbes ne peut être ni ciblé ni frappé tant
+## qu'il ne s'est pas montré : l'embuscade doit tromper l'ÉQUIPE, pas seulement
+## l'œil du joueur. Il se révèle de lui-même dès qu'on l'approche (cf.
+## EnemyAI.GRASS_REVEAL_DIST) — la mêlée reste donc toujours possible.
+func _enemy_visible(enemy: Node) -> bool:
+	return not (enemy.has_method("is_grass_hidden") and enemy.is_grass_hidden())
+
+
 func _nearest_enemy(max_dist: float) -> CharacterBody3D:
 	var nearest: CharacterBody3D = null
 	var min_d := max_dist
 	for enemy in get_tree().get_nodes_in_group("enemies"):
 		if not is_instance_valid(enemy):
+			continue
+		if not _enemy_visible(enemy):
 			continue
 		var d := global_position.distance_to(enemy.global_position)
 		if d < min_d:
@@ -835,6 +857,13 @@ func _facing_suffix() -> String:
 
 func _attack() -> void:
 	_attack_flash = 1.0
+	# Tirer depuis les hautes herbes TRAHIT la position : on redevient visible
+	# pour les ennemis pendant GRASS_REVEAL_TIME (cf. is_grass_concealed). Sans
+	# ça, l'herbe permettait de mitrailler indéfiniment une cible incapable de
+	# riposter. Contrairement à l'ennemi, dont l'embuscade est à usage unique,
+	# le joueur peut se re-fondre après le délai — l'herbe reste un outil, elle
+	# se paie juste à chaque coup.
+	_grass_reveal = GRASS_REVEAL_TIME
 
 	var moves: Array = pokemon_instance.equipped_moves
 	# Verrous : cadence PROPRE au move joué + court verrou global (pas
@@ -886,6 +915,8 @@ func _attack() -> void:
 	for enemy in get_tree().get_nodes_in_group("enemies"):
 		if not is_instance_valid(enemy):
 			continue
+		if not _enemy_visible(enemy):
+			continue   # tapi : le coup passe au travers, on ne le voit pas
 		if global_position.distance_to(enemy.global_position) <= reach:
 			var dmg := DamageCalculator.calculate(pokemon_instance, enemy.pokemon_instance, move_power, move_type)
 			enemy.take_damage(dmg, global_position, CombatVFX.type_color(move_type), Net.local_id(), self)
@@ -1045,16 +1076,36 @@ func _play_attack_lunge(target_pos: Vector3, anim_prefixes: Array = ["attack"]) 
 # Dans une case de haute herbe, le sprite devient PLUS CLAIR et translucide :
 # le joueur voit qu'il est caché. Réappliqué chaque frame car les flashes de
 # combat (dégâts, attaque, dash) réécrivent modulate puis restaurent WHITE.
-# Nettement translucide (retour joueur : à 0.55 la différence ne se voyait
-# pas) — le Pokémon devient un fantôme clair, impossible à confondre.
-const GRASS_HIDDEN_TINT := Color(1.5, 1.55, 1.45, 0.3)
+# SEULEMENT de la transparence, PAS d'éclaircissement — le signal doit dire
+# « tu es dans l'herbe », rien de plus.
+#
+# Les essais précédents poussaient le tint jusqu'à 2.4 pour « mieux voir » le
+# Pokémon : ça produisait l'inverse. Un sprite multiplié par 2.4 est cramé en
+# blanc, et sur le fond clair d'une prairie il DISPARAÎT — ce qu'on prenait à
+# tort pour un excès de transparence. Le tint n'éclaircit pas un sprite déjà
+# clair, il l'efface. On garde donc rgb neutre et on ne joue que sur l'alpha.
+const GRASS_HIDDEN_TINT := Color(1.0, 1.0, 1.0, 0.6)
 
-func _update_grass_hiding() -> void:
+## Durée pendant laquelle une attaque nous trahit (cf. _attack).
+const GRASS_REVEAL_TIME := 2.5
+var _grass_reveal: float = 0.0
+
+## Ce Pokémon est-il DISSIMULÉ dans les hautes herbes ? Source unique de vérité :
+## le rendu (ci-dessous) ET le ciblage ennemi (EnemyAI._player_concealed) la
+## consultent. Si les deux la calculaient chacun de leur côté, on finirait avec
+## un Pokémon qui a l'air caché mais que l'IA voit — ou l'inverse.
+func is_grass_concealed() -> bool:
+	if _grass_reveal > 0.0:
+		return false   # on vient d'attaquer : on s'est trahi
+	return is_instance_valid(_map) and _map.has_method("is_tall_grass_3d") \
+		and _map.is_tall_grass_3d(global_position)
+
+
+func _update_grass_hiding(delta: float) -> void:
+	_grass_reveal = maxf(0.0, _grass_reveal - delta)
 	if _evolving or not is_instance_valid(sprite):
 		return
-	var hidden: bool = is_instance_valid(_map) and _map.has_method("is_tall_grass_3d") \
-		and _map.is_tall_grass_3d(global_position)
-	if hidden:
+	if is_grass_concealed():
 		if sprite.modulate == Color.WHITE:
 			sprite.modulate = GRASS_HIDDEN_TINT
 	elif sprite.modulate == GRASS_HIDDEN_TINT:

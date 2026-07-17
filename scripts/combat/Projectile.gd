@@ -15,6 +15,8 @@ var _use_point:  bool    = false   # vise un POINT fixe (esquivable) au lieu d'u
 var _on_hit:  Callable
 var _speed:   float = 14.0
 var _age:     float = 0.0
+var _tint:    Color = Color.WHITE
+var _map:     Node  = null
 
 
 ## Lance un projectile de `from` vers `target` ; `on_hit` est appelé à
@@ -58,6 +60,7 @@ var _ball: bool = false
 
 
 func _build(tint: Color) -> void:
+	_tint = tint   # retenu pour l'impact sur un tronc (cf. _process)
 	if _ball:
 		_build_pokeball()
 		return
@@ -100,9 +103,22 @@ func _build_pokeball() -> void:
 	, 0.0, 8.0, 0.4)
 
 
+func _ready() -> void:
+	_map = get_tree().get_first_node_in_group("combat_map")
+
+
 func _process(delta: float) -> void:
 	_age += delta
 	if _age > LIFETIME or (not _use_point and not is_instance_valid(_target)):
+		queue_free()
+		return
+	# Couvert (biome Forêt) : un tronc traversé ABSORBE le tir — `on_hit` n'est
+	# pas appelé, le coup est perdu. Testé sur la position courante plutôt qu'en
+	# raycast : le pas de déplacement (≈ 0.23 u à vitesse 14 en 60 fps) est bien
+	# plus fin qu'une case, donc aucun tronc ne peut être enjambé.
+	if is_instance_valid(_map) and _map.has_method("blocks_projectile") \
+			and _map.blocks_projectile(global_position):
+		CombatVFX.spawn_impact(get_parent(), global_position, _tint)
 		queue_free()
 		return
 	var goal: Vector3 = _target_pos if _use_point else _target.global_position + Vector3(0, 0.8, 0)

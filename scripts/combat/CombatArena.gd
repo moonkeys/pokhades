@@ -232,6 +232,34 @@ func _update_lava_burn() -> void:
 				break
 
 
+## Biome Automne : marcher sur un tas de feuilles peut faire sauter un COLLET
+## caché dessous (cf. MapGenerator._gen_leaf_litter) — dégâts + entrave
+## (statut "paralysis" : on se débat, on avance à demi-vitesse). Un collet ne
+## sert qu'une fois : spring_trap le consomme.
+##
+## Même schéma que _update_lava_burn : chaque pair applique aux membres de SON
+## équipe. Les collets sont posés à la graine de zone, donc aux mêmes cases
+## partout ; leur consommation reste locale, ce qui suffit — un joueur ne
+## déclenche que ce sur quoi il marche.
+const LEAF_TRAP_DAMAGE := 7
+
+func _update_leaf_traps() -> void:
+	if not is_instance_valid(_map) or not _map.has_method("spring_trap"):
+		return
+	for m in _team:
+		if not is_instance_valid(m) or m.pokemon_instance == null:
+			continue
+		if m.pokemon_instance.is_fainted():
+			continue
+		var cell: Vector2i = _map.world3_to_cell(m.global_position)
+		if not _map.spring_trap(cell):
+			continue
+		m.take_damage(LEAF_TRAP_DAMAGE, m.global_position)
+		m.pokemon_instance.apply_status("paralysis", StatusFx.duration("paralysis"))
+		CombatVFX.spawn_impact(self, m.global_position, Color(0.82, 0.42, 0.12))
+		add_camera_shake(0.12)
+
+
 func _process(delta: float) -> void:
 	if _team.size() > 0 and is_instance_valid(_team[_active_index]):
 		_cam_pos = _cam_pos.lerp(_team[_active_index].global_position, 8.0 * delta)
@@ -242,6 +270,7 @@ func _process(delta: float) -> void:
 	_update_surf_state()
 	_update_surf_mount()
 	_update_lava_burn()
+	_update_leaf_traps()
 	_update_village_trainers(delta)
 
 	# Multijoueur (hôte) : diffusion groupée des positions d'ennemis — un
@@ -1484,7 +1513,16 @@ func _spawn_from_pool(pool: Array[int], count: int, lv: int, champion: bool = fa
 		# _alive est réservé tout de suite : la salle ne peut pas se "nettoyer"
 		# pendant que des apparitions sont en cours.
 		_alive += 1
-		var pos := _random_valid_spawn()
+		# Une partie de la vague apparaît DÉJÀ tapie dans les hautes herbes
+		# (Prairie). Les champions/boss en sont exclus : ils ne se cachent pas
+		# (cf. EnemyAI._try_ambush), ils doivent rester lisibles.
+		var pos := Vector3.INF
+		var ambushing := false
+		if not champion and not boss and randf() < AMBUSH_SPAWN_RATIO:
+			pos = _random_grass_spawn()
+			ambushing = pos != Vector3.INF
+		if not ambushing:
+			pos = _random_valid_spawn()
 		var captured_id := id
 		# Salle de dresseur : le Pokémon sort d'une POKÉBALL lancée par le
 		# champion (flash, spin, burst d'ouverture — cf. PokeballFX) au lieu
@@ -1496,8 +1534,12 @@ func _spawn_from_pool(pool: Array[int], count: int, lv: int, champion: bool = fa
 				_materialize_enemy(captured_id, lv, pos, champion, boss)
 			)
 			continue
-		_spawn_telegraph_ring(pos, 1.6 if boss else (1.2 if champion else 0.9),
-			SPAWN_TELEGRAPH_TIME)
+		# PAS d'anneau de télégraphie pour un embusqué : il dessinerait sa
+		# position au sol, ce qui annulerait exactement la surprise qu'on vient
+		# de mettre en place. Le délai, lui, est conservé — seul le tell saute.
+		if not ambushing:
+			_spawn_telegraph_ring(pos, 1.6 if boss else (1.2 if champion else 0.9),
+				SPAWN_TELEGRAPH_TIME)
 		get_tree().create_timer(SPAWN_TELEGRAPH_TIME).timeout.connect(func() -> void:
 			if _game_over_triggered or _victory_triggered or not is_instance_valid(self):
 				return
@@ -1547,6 +1589,41 @@ func _spawn_telegraph_ring(pos: Vector3, radius: float, dur: float) -> void:
 	tw.tween_property(ring, "scale", Vector3(1.0, 0.05, 1.0), dur * 0.85).set_ease(Tween.EASE_OUT)
 	tw.tween_property(ring, "scale", Vector3(0.05, 0.05, 0.05), dur * 0.15).set_ease(Tween.EASE_IN)
 	tw.tween_callback(ring.queue_free)
+
+
+## Proportion d'ennemis ordinaires qui apparaissent DÉJÀ tapis dans une nappe.
+const AMBUSH_SPAWN_RATIO := 0.5
+## Distance minimale à toute l'équipe pour un spawn embusqué. Sans elle, un
+## ennemi pouvait se matérialiser tapi à deux pas du joueur : ni évitable, ni
+## repérable — une embuscade doit se marcher dedans, pas te tomber dessus.
+const AMBUSH_SPAWN_MIN_DIST := 7.0
+
+## Position de spawn DANS une nappe de hautes herbes, ou INF si la zone n'en a
+## pas (tout biome hors Prairie) ou si aucune case ne convient.
+##
+## Sans ça, l'embuscade n'arrivait jamais : les ennemis apparaissaient à
+## découvert et se faisaient descendre en chemin vers l'herbe (retour joueurs).
+## Faire apparaître une partie de la vague déjà en place est le seul moyen que
+## le couvert serve vraiment.
+func _random_grass_spawn() -> Vector3:
+	if not is_instance_valid(_map) or not _map.has_method("get_tall_grass_cells"):
+		return Vector3.INF
+	var cells: Array = _map.get_tall_grass_cells()
+	if cells.is_empty():
+		return Vector3.INF
+	for _attempt in 24:
+		var cell: Vector2i = cells[randi() % cells.size()]
+		if not _map.is_valid_spawn_cell(cell):
+			continue
+		var pos: Vector3 = _map.cell_to_world3(cell)
+		var too_close := false
+		for m in _team:
+			if is_instance_valid(m) and m.global_position.distance_to(pos) < AMBUSH_SPAWN_MIN_DIST:
+				too_close = true
+				break
+		if not too_close:
+			return pos
+	return Vector3.INF
 
 
 func _random_valid_spawn() -> Vector3:
@@ -2593,7 +2670,8 @@ func _spawn_exit_portals() -> void:
 ## Portes visibles DÈS L'ENTRÉE dans la salle mais INERTES (pas de halo, pas
 ## de trigger) — cf. _open_exit_doors, appelé une fois la salle nettoyée.
 ## Une seule porte si la salle suivante est la boutique (même destination,
-## pas besoin de la dupliquer) ; style "tunnel" en biome Montagne.
+## pas besoin de la dupliquer). Le STYLE suit le biome : "tunnel" en Montagne,
+## "toll" au Village, "arch" (feuillage) dans les biomes végétaux, "house" sinon.
 func _spawn_exit_doors_closed() -> void:
 	var room  := RunManager.inst().rooms_cleared
 	var count := 1 if RunManager.inst().is_shop_room(room + 1) else 2
@@ -2603,6 +2681,11 @@ func _spawn_exit_doors_closed() -> void:
 		style = "tunnel"          # Montagne : bouche de grotte
 	elif biome == MapGenerator.MapTheme.VILLAGE:
 		style = "toll"            # Village : barrière de péage qui se lève au clear
+	elif biome == MapGenerator.MapTheme.MEADOW or biome == MapGenerator.MapTheme.FOREST \
+			or biome == MapGenerator.MapTheme.AUTUMN:
+		# Biomes végétaux : arche de feuillage + sentier entre deux haies. Une
+		# porte de maison au milieu d'un champ n'avait aucun sens (retour joueurs).
+		style = "arch"
 	var exits_data := RunManager.inst().get_exits(count)
 	for e: Dictionary in exits_data:
 		e["active"] = false
@@ -2678,9 +2761,10 @@ func _host_advance(data: Dictionary) -> void:
 
 func _do_advance(data: Dictionary) -> void:
 	Sfx.stop_music()   # la musique de victoire s'arrête au changement de zone
-	for p in _exit_portals:
-		if is_instance_valid(p): p.queue_free()
-	_exit_portals.clear()
+	# NB : les portails de sortie ne sont PAS détruits ici. Ils l'étaient, et
+	# l'arche s'évaporait sous les yeux du joueur à l'instant où il la touchait,
+	# avant même le fondu (retour joueurs). Ils sont maintenant retirés une fois
+	# l'écran NOIR, dans _transition_to_next_zone.
 
 	# Boutique quittée : referme l'écran et retire les PNJ (enfants de l'arène,
 	# ils survivraient sinon au changement de map).
@@ -2722,6 +2806,13 @@ func _transition_to_next_zone() -> void:
 	var tw := create_tween()
 	tw.tween_property(fade_rect, "color:a", 1.0, 0.5).set_ease(Tween.EASE_IN)
 	tw.tween_callback(func() -> void:
+		# Écran noir : c'est MAINTENANT qu'on retire les portes de la zone
+		# quittée. Les détruire au contact faisait disparaître l'arche devant
+		# le joueur, en pleine lumière ; leurs positions sont de toute façon
+		# celles de l'ancienne map, elles ne doivent pas lui survivre.
+		for p in _exit_portals:
+			if is_instance_valid(p): p.queue_free()
+		_exit_portals.clear()
 		# Charger la nouvelle zone
 		if is_instance_valid(_map):
 			_map.queue_free()
@@ -2767,6 +2858,16 @@ func _transition_to_next_zone() -> void:
 		_spawn_chests()
 		# Grotte : ouverte seulement après nettoyage (cf. _show_run_status)
 		_spawn_cs_triggers()
+		# Ces deux-là manquaient sur le chemin de TRANSITION : seul _start_zone
+		# (qui ne tourne qu'au tout premier chargement de l'arène) les appelait.
+		# Conséquences : les portes de sortie n'existaient pas avant la fin de
+		# salle dès la zone 2 — elles n'apparaissaient qu'au nettoyage, via le
+		# filet de sécurité de _on_room_cleared, et déjà ouvertes (retour
+		# joueurs : « la porte est visible en zone 1 mais plus ensuite ») — et
+		# les dresseurs du Village ne sortaient QUE si le Village était la
+		# toute première zone de la run, donc quasiment jamais.
+		_spawn_exit_doors_closed()
+		_spawn_village_trainers()
 		await get_tree().create_timer(0.8).timeout
 		await _net_zone_barrier()
 		_spawn_room_enemies()
