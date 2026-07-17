@@ -172,6 +172,43 @@ const EVOLUTIONS: Dictionary = {
 	29:  {"level": 16, "evolves_to": 30},    # Nidoran♀ → Nidorina
 	30:  {"level": 36, "evolves_to": 31},    # → Nidoqueen (pierre)
 	104: {"level": 28, "evolves_to": 105},   # Osselait → Ossatueur
+	# ── Élargissement des viviers de biome (cf. PokePools.BIOME) ─────
+	# Indispensable : à partir de l'acte 2, _pool_for_room remplace chaque
+	# espèce par sa forme finale (final_evolution_of). Une espèce absente
+	# d'ici reste à sa forme de base et sort largement sous-dimensionnée en
+	# fin de run. Les espèces sans lignée (Tauros, Lokhlass, Séviper,
+	# Scarabrute, Écrémeuh, Insolourdo, Bargantua, Limonde, Qwilfish,
+	# Boumata) sont volontairement absentes : elles n'évoluent pas.
+	203: {"level": 32, "evolves_to": 981},   # Girafarig → Farigiraf
+	664: {"level": 9,  "evolves_to": 665},   # Lépidonille → Papilonette
+	665: {"level": 12, "evolves_to": 666},   # → Prismillon
+	590: {"level": 39, "evolves_to": 591},   # Trompignon → Gaulet
+	742: {"level": 21, "evolves_to": 743},   # Bombydou → Rubombelle
+	114: {"level": 30, "evolves_to": 465},   # Saquedeneu → Vortente
+	21:  {"level": 20, "evolves_to": 22},    # Piafabec → Rapasdepic
+	546: {"level": 28, "evolves_to": 547},   # Doudouvet → Farfaduvet (pierre)
+	710: {"level": 33, "evolves_to": 711},   # Pitrouille → Banshitrouye
+	708: {"level": 33, "evolves_to": 709},   # Brocélôme → Desséliande
+	183: {"level": 18, "evolves_to": 184},   # Marill → Azumarill
+	98:  {"level": 28, "evolves_to": 99},    # Krabby → Krabboss
+	72:  {"level": 30, "evolves_to": 73},    # Tentacool → Tentacruel
+	592: {"level": 40, "evolves_to": 593},   # Viskuse → Moyade
+	339: {"level": 30, "evolves_to": 340},   # Barloche → Barbicha
+	434: {"level": 34, "evolves_to": 435},   # Moufouette → Moufflair
+	568: {"level": 36, "evolves_to": 569},   # Miamiasme → Miasmax
+	438: {"level": 24, "evolves_to": 185},   # Manzaï → Simularbre
+	557: {"level": 34, "evolves_to": 558},   # Crabicoque → Crabaraque
+	837: {"level": 18, "evolves_to": 838},   # Charbi → Wagomine
+	838: {"level": 34, "evolves_to": 839},   # → Monthracite
+	622: {"level": 43, "evolves_to": 623},   # Gringolem → Golemastoc
+	236: {"level": 20, "evolves_to": 237},   # Debugant → Kapoera
+	155: {"level": 14, "evolves_to": 156},   # Héricendre → Feurisson
+	156: {"level": 36, "evolves_to": 157},   # → Typhlosion
+	255: {"level": 16, "evolves_to": 256},   # Poussifeu → Galifeu
+	256: {"level": 36, "evolves_to": 257},   # → Braségali
+	636: {"level": 59, "evolves_to": 637},   # Pyronille → Pyrax
+	300: {"level": 25, "evolves_to": 301},   # Skitty → Delcatty (pierre)
+	924: {"level": 25, "evolves_to": 925},   # Compagnol → Maushold
 }
 
 # ── Navigation dans les lignées d'évolution (combats de dresseur, boss) ──

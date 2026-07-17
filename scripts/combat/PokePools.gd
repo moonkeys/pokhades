@@ -128,53 +128,66 @@ static func all_champion_ids() -> Array[int]:
 # ── Faune par biome (MapGenerator.MapTheme → ids) ────────────────────────
 # LE VIVIER EST 100 % LOCAL : plus aucun pool "de base" commun (Rattata &
 # Chenipan partout) — retour joueurs : « je veux vraiment des Pokémon
-# adversaires particuliers pour chaque biome ». Chaque biome a 12 espèces,
-# ORDONNÉES des plus communes/faibles aux plus rares : les 6 premières
+# adversaires particuliers pour chaque biome ». Chaque biome a 18 espèces,
+# ORDONNÉES des plus communes/faibles aux plus rares : les 9 premières
 # peuplent les salles d'ouverture d'un acte, la liste complète s'ouvre
 # ensuite (cf. CombatArena._pool_for_room), et les formes évoluent avec
 # l'acte. Modifier une ligne ici suffit à re-caster un biome.
-const BIOME_TIER_SPLIT := 6   # nb d'espèces "communes" en tête de liste
+#
+# Ne mettre ici que des espèces NON ÉVOLUÉES quand c'est possible : à partir de
+# l'acte 2, _pool_for_room remplace chaque entrée par sa forme finale (cf.
+# GameManager.final_evolution_of), donc une espèce déjà évoluée ne progresse
+# plus et "s'aplatit" en fin de run.
+const BIOME_TIER_SPLIT := 9   # nb d'espèces "communes" en tête de liste
 
 const BIOME: Dictionary = {
 	# Prairie — Normal / Plante / Vol : la faune la plus douce (acte 1).
 	MapGenerator.MapTheme.MEADOW: [
 		187, 16, 165, 298, 179, 659,        # Granivol, Roucool, Coxy, Azurill, Wattouat, Sapereau
 		415, 669, 191, 522, 831, 43,        # Apitrini, Flabébé, Tournegrin, Zébibron, Moumouton, Mystherbe
+		396, 519, 29, 241, 203, 128,        # Étourmi, Poichigeon, Nidoran♀, Écrémeuh, Girafarig, Tauros
 	],
 	# Forêt — Insecte / Plante, dense et grouillante.
 	MapGenerator.MapTheme.FOREST: [
 		10, 13, 265, 46, 69, 273,           # Chenipan, Aspicot, Chenipotte, Paras, Chétiflor, Grainipiot
 		285, 204, 540, 401, 543, 214,       # Balignon, Pomdepik, Larveyette, Crikzik, Venipatte, Scarhino
+		664, 590, 742, 114, 123, 127,       # Lépidonille, Trompignon, Bombydou, Saquedeneu, Insécateur, Scarabrute
 	],
 	# Bois d'automne — Normal / Plante / Sol, teintes fauves.
 	MapGenerator.MapTheme.AUTUMN: [
 		163, 265, 46, 204, 216, 585,        # Hoothoot, Chenipotte, Paras, Pomdepik, Teddiursa, Vivaldaim
 		511, 190, 234, 214, 273, 43,        # Feuillajou, Capumain, Cerfrousse, Scarhino, Grainipiot, Mystherbe
+		161, 21, 546, 710, 708, 206,        # Fouinette, Piafabec, Doudouvet, Pitrouille, Brocélôme, Insolourdo
 	],
 	# Lac — Eau exclusivement.
 	MapGenerator.MapTheme.LAKE: [
 		129, 118, 60, 54, 194, 90,          # Magicarpe, Poissirène, Ptitard, Psykokwak, Axoloto, Kokiyas
 		79, 116, 170, 341, 349, 458,        # Ramoloss, Hypotrempe, Loupio, Écrapince, Barpau, Babimanta
+		183, 98, 72, 550, 592, 131,         # Marill, Krabby, Tentacool, Bargantua, Viskuse, Lokhlass
 	],
 	# Marécage — Poison / Eau / Sol, vaseux et toxique.
 	MapGenerator.MapTheme.SWAMP: [
 		23, 41, 194, 270, 543, 316,         # Abo, Nosferapti, Axoloto, Nénupiot, Venipatte, Gloupti
 		88, 283, 453, 690, 109, 60,         # Tadmorv, Arakdo, Cradopaud, Vénalgue, Smogo, Ptitard
+		339, 211, 434, 568, 618, 336,       # Barloche, Qwilfish, Moufouette, Miamiasme, Limonde, Séviper
 	],
 	# Montagne — Roche / Sol / Combat, dur et lent.
 	MapGenerator.MapTheme.ROCKY: [
 		74, 27, 50, 296, 524, 744,          # Racaillou, Sabelette, Taupiqueur, Makuhita, Nodulithe, Rocabot
 		66, 304, 231, 95, 111, 246,         # Machoc, Galekid, Phanpy, Onix, Rhinocorne, Embrylex
+		438, 557, 837, 622, 236, 447,       # Manzaï, Crabicoque, Charbi, Gringolem, Debugant, Riolu
 	],
 	# Volcan — Feu / Sol / Roche, brûlant.
 	MapGenerator.MapTheme.VOLCANO: [
 		218, 37, 58, 77, 322, 240,          # Limagma, Goupix, Caninos, Ponyta, Chamallot, Magby
 		324, 126, 4, 607, 631, 111,         # Chartor, Magmar, Salamèche, Funécire, Aflamanoir, Rhinocorne
+		155, 255, 390, 850, 776, 636,       # Héricendre, Poussifeu, Ouisticram, Grillepattes, Boumata, Pyronille
 	],
 	# Village — faune urbaine / domestique, qui traîne autour des maisons.
 	MapGenerator.MapTheme.VILLAGE: [
 		19, 263, 16, 52, 509, 506,          # Rattata, Zigzaton, Roucool, Miaouss, Chacripan, Ponchiot
 		58, 431, 572, 293, 209, 83,         # Caninos, Chaglam, Chinchidou, Chuchmur, Snubbull, Canarticho
+		25, 300, 819, 924, 133, 674,        # Pikachu, Skitty, Rongourmand, Compagnol, Évoli, Pandespiègle
 	],
 }
 
