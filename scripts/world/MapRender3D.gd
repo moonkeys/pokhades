@@ -62,6 +62,7 @@ func build(map: Node2D) -> void:
 	_build_grass()
 	_build_pixel_grass()
 	_build_flowers()
+	_build_leaf_litter()
 	_build_berry_trees()
 	if _map.theme == MapGenerator.MapTheme.VILLAGE:
 		_build_village_houses()
@@ -485,12 +486,25 @@ func _bake_ground_plane() -> void:
 
 	_bake_layer(img, src, _map._ground, false, sz)
 	_bake_layer(img, src, _map._water, true, sz)
+	# Sol COMPOSITE : repeint les cases d'herbe en mélangeant les variantes du
+	# biome. À faire AVANT _blend_terrain_edges, qui recompose ensuite les
+	# frontières herbe/chemin/eau par-dessus.
+	_bake_ground_variants(img, src, sz)
 	# Transitions ORGANIQUES entre types de sol (herbe/chemin/eau) — retour
 	# joueurs : bords de tuiles "coupés au couteau". Appliqué APRÈS sol+eau
 	# mais AVANT les décors, qui doivent rester nets par-dessus.
 	_blend_terrain_edges(img, src, sz)
 	_bake_tall_grass_flat(img, src, sz)
 	_bake_flat_decors(img, src, sz)
+	_map.ground_avg_color = _average_color(img)
+	_map.path_avg_color   = _path_average_color(img, sz)
+	# DEBUG (-- dump_ground) : écrit la texture de sol bakée dans
+	# user://ground_dump.png — le seul moyen de juger le sol composite et les
+	# transitions sans lancer le jeu en fenêtré.
+	if OS.get_cmdline_user_args().has("dump_ground"):
+		img.save_png("user://ground_dump.png")
+		print("MapRender3D: sol baké écrit (thème=%s, palette=%s)" % [
+			MapGenerator.MapTheme.keys()[_map.theme], _map._ground_tiles])
 
 	var mesh_inst := MeshInstance3D.new()
 	mesh_inst.name = "GroundPlane"
@@ -508,8 +522,61 @@ func _bake_ground_plane() -> void:
 		g_ts   = 0.80
 	mesh_inst.material_override = GrassPatch.ground_material(
 		ImageTexture.create_from_image(img), 1.45, 0.88, 1.0, g_tint, g_ts, 1.0)
-	mesh_inst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON   # les collines portent maintenant une ombre
+	# Ombre portée ACTIVE : c'est elle qui donne son relief au sol (les collines
+	# du heightfield s'ombrent elles-mêmes ; sans ça le terrain se lit plat).
+	#
+	# Elle a un temps été coupée parce qu'elle dessinait une bande sombre
+	# RECTANGULAIRE tout autour de la zone. La cause réelle n'était pas l'ombre
+	# mais la marche de 1,2 u sous la dalle : le tablier de plaine était un plan
+	# géant glissé DESSOUS. Depuis qu'il est un anneau affleurant à y=-0.02 (cf.
+	# BiomeAmbiance._build_ground_apron), la dalle n'a plus de vide à ombrer et
+	# le cadre a disparu — on peut rendre le relief sans le rectangle.
+	mesh_inst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	add_child(mesh_inst)
+
+
+## Couleur moyenne d'une image, pondérée par l'alpha — les cases sans tuile
+## sont transparentes et tireraient la moyenne vers le noir si on les comptait.
+## Passe par une réduction 24×24 : moyenner les millions de pixels du bake à la
+## main coûterait une seconde à chaque génération, pour le même résultat.
+## Couleur moyenne des seules cases de CHEMIN, échantillonnée au centre de
+## chacune sur le bake. Sert au sentier de terre prolongé hors de la map (cf.
+## BiomeAmbiance._build_exit_trails) : il doit être exactement de la couleur du
+## chemin jouable pour se lire comme SON prolongement, pas comme un décor à
+## côté. Mesurée et non codée en dur — les variantes de tuile de chemin
+## changent d'un biome à l'autre (terre, pierre…).
+func _path_average_color(img: Image, sz: Vector2i) -> Color:
+	var acc := Vector3.ZERO
+	var n := 0
+	for r in sz.y:
+		for c in sz.x:
+			if _map._grid[r][c] != MapGenerator.Terrain.PATH:
+				continue
+			var px: Color = img.get_pixel(c * TILE_PX + TILE_PX / 2, r * TILE_PX + TILE_PX / 2)
+			if px.a < 0.5:
+				continue
+			acc += Vector3(px.r, px.g, px.b)
+			n += 1
+	if n == 0:
+		return _map.ground_avg_color   # arène/map sans chemin : pas de sentier à teinter
+	acc /= float(n)
+	return Color(acc.x, acc.y, acc.z)
+
+
+func _average_color(img: Image) -> Color:
+	var small := img.duplicate()
+	small.resize(24, 24, Image.INTERPOLATE_BILINEAR)
+	var acc := Vector3.ZERO
+	var wsum := 0.0
+	for y in 24:
+		for x in 24:
+			var px: Color = small.get_pixel(x, y)
+			acc  += Vector3(px.r, px.g, px.b) * px.a
+			wsum += px.a
+	if wsum <= 0.001:
+		return Color(0.42, 0.64, 0.32)
+	acc /= wsum
+	return Color(acc.x, acc.y, acc.z)
 
 
 ## Grille de sommets (W+1)×(H+1) déplacés verticalement selon le relief
@@ -734,6 +801,90 @@ const _EDGE_AMP_HI   := 0.22
 # au-delà d'un simple choix binaire net, un petit dégradé herbe↔sol.
 const _EDGE_COLOR_BAND := 0.20
 
+## ── SOL COMPOSITE ────────────────────────────────────────────────────────
+## Chaque biome déclare une PALETTE de sols (cf. MapGenerator._ground_tiles) au
+## lieu d'une tuile unique. On les fond PAR PIXEL selon un bruit basse fréquence :
+## de larges plaques d'herbe dense, d'herbe sèche, de sable… qui se fondent les
+## unes dans les autres.
+##
+## Par pixel et non par case : un tirage par case redonnerait des frontières
+## alignées sur la grille — exactement le défaut « damier » qu'on cherche à
+## éviter. Une 2e octave, plus fine, déchiquette la jointure pour qu'elle ne se
+## lise pas comme un dégradé mou.
+## Modèle : un sol de BASE (pal[0]) recouvert, pour chaque variante, d'un masque
+## de plaques tiré de son propre bruit. Chaque variante a donc son seuil et sa
+## propre répartition, indépendante des autres.
+##
+## Une première version répartissait les variantes le long d'UN seul bruit
+## (position continue dans la palette) : le simplex ne dépassant guère ±0.6, la
+## variante du MILIEU couvrait tout et la base n'apparaissait qu'aux extrêmes —
+## l'inverse du but. Avec des masques, "base + plaques" est explicite.
+const _VAR_NOISE_FREQ := 0.008   # plaques larges (≈ 8 cases)
+const _VAR_NOISE_FREQ_HI := 0.06 # 2e octave : déchiquette le contour des plaques
+const _VAR_AMP_HI := 0.30
+## Seuil d'apparition d'une plaque et largeur de son fondu. Seuil haut = plaques
+## rares et franches ; bande étroite = contour net plutôt que dégradé mou.
+const _VAR_TH   := 0.19
+const _VAR_BAND := 0.13
+
+var _var_noise: Array = []      # Array[FastNoiseLite] — un par variante (k ≥ 1)
+var _var_noise_hi: FastNoiseLite = null
+
+
+func _bake_ground_variants(img: Image, src: Image, sz: Vector2i) -> void:
+	if _map._ground_tiles.size() < 2:
+		return   # sol uni : rien à mélanger
+	var grid: Array = _map._grid
+	for r in sz.y:
+		var row: PackedByteArray = grid[r]
+		for c in sz.x:
+			# Seul le SOL est composite : les chemins et l'eau ont leurs propres
+			# tuiles, et leurs bords sont gérés par _blend_terrain_edges.
+			var t: int = row[c]
+			if t == MapGenerator.Terrain.PATH or t == MapGenerator.Terrain.WATER:
+				continue
+			for py in TILE_PX:
+				for px in TILE_PX:
+					img.set_pixel(c * TILE_PX + px, r * TILE_PX + py,
+						_ground_color_at(src, c * TILE_PX + px, r * TILE_PX + py, px, py))
+
+
+## Couleur du sol composite pour le pixel (gx,gy) de la texture bakée, (px,py)
+## étant sa position DANS sa tuile. Sert aussi à _blend_terrain_edges : sans
+## ça, les bords de chemin/eau seraient recomposés sur le sol de BASE et les
+## plaques de variantes s'y interrompraient net.
+func _ground_color_at(src: Image, gx: int, gy: int, px: int, py: int) -> Color:
+	var pal: Array = _map._ground_tiles
+	if pal.size() < 2:
+		var a: Vector2i = _map._ground_tile
+		return src.get_pixel(a.x * TILE_PX + px, a.y * TILE_PX + py)
+
+	if _var_noise.is_empty():
+		# Graine de la MAP (pas de la taille) : deux zones de mêmes dimensions
+		# doivent avoir des plaques différentes. Déterministe → identique sur
+		# tous les pairs en multijoueur.
+		for k in pal.size():
+			var nz := FastNoiseLite.new()
+			nz.frequency = _VAR_NOISE_FREQ
+			nz.seed = _map.map_seed ^ (0x5A17 + k * 0x9E37)   # décorrélées entre variantes
+			_var_noise.append(nz)
+		_var_noise_hi = FastNoiseLite.new()
+		_var_noise_hi.frequency = _VAR_NOISE_FREQ_HI
+		_var_noise_hi.seed = _map.map_seed ^ 0x2B93
+
+	var base: Vector2i = pal[0]
+	var col: Color = src.get_pixel(base.x * TILE_PX + px, base.y * TILE_PX + py)
+	var jitter := _var_noise_hi.get_noise_2d(float(gx), float(gy)) * _VAR_AMP_HI
+	for k in range(1, pal.size()):
+		var n: float = (_var_noise[k] as FastNoiseLite).get_noise_2d(float(gx), float(gy)) + jitter
+		var w := smoothstep(_VAR_TH, _VAR_TH + _VAR_BAND, n)
+		if w <= 0.0:
+			continue
+		var a: Vector2i = pal[k]
+		col = col.lerp(src.get_pixel(a.x * TILE_PX + px, a.y * TILE_PX + py), w)
+	return col
+
+
 func _blend_terrain_edges(img: Image, src: Image, sz: Vector2i) -> void:
 	var grid: Array = _map._grid
 	var noise_lo := FastNoiseLite.new()
@@ -742,7 +893,6 @@ func _blend_terrain_edges(img: Image, src: Image, sz: Vector2i) -> void:
 	var noise_hi := FastNoiseLite.new()
 	noise_hi.frequency = _EDGE_NOISE_FREQ_HI
 	noise_hi.seed = hash(sz) ^ 0x7ABC
-	var grass_atlas: Vector2i = _map._ground_tile
 
 	for r in range(1, sz.y - 1):
 		var row: PackedByteArray = grid[r]
@@ -772,8 +922,10 @@ func _blend_terrain_edges(img: Image, src: Image, sz: Vector2i) -> void:
 					# Bande de mélange de COULEUR autour du seuil (pas un choix
 					# binaire) : petit dégradé herbe↔sol qui adoucit la jointure.
 					var blend := smoothstep(0.5 - _EDGE_COLOR_BAND, 0.5 + _EDGE_COLOR_BAND, w)
-					var col_grass: Color = src.get_pixel(
-						grass_atlas.x * TILE_PX + px, grass_atlas.y * TILE_PX + py)
+					# Sol composite (cf. _ground_color_at) et non la tuile de base :
+					# sinon les plaques de variantes s'arrêteraient net le long
+					# des chemins et des rives, en liseré de sol d'origine.
+					var col_grass: Color = _ground_color_at(src, x0 + px, y0 + py, px, py)
 					var col_other: Color = src.get_pixel(
 						other_atlas.x * TILE_PX + px, other_atlas.y * TILE_PX + py)
 					img.set_pixel(x0 + px, y0 + py, col_grass.lerp(col_other, blend))
@@ -1046,6 +1198,35 @@ func _build_kit_flora_layer(atlas: Vector2i, pool: Array, scale_mult: float, tin
 
 	for file: String in by_file:
 		_build_flora_multimesh(file, by_file[file], scale_mult, tints)
+
+
+## TAPIS DE FEUILLES (biome Automne) — rendu des cases posées par
+## MapGenerator._gen_leaf_litter. Deux teintes (feuille tombée / feuille
+## pourrie) réparties par hachage de case : un tapis monochrome se lisait comme
+## un aplat orange plutôt que comme de la litière.
+##
+## Les cases PIÉGÉES ne sont volontairement PAS distinguées : tout l'intérêt est
+## qu'on ne puisse pas les repérer (cf. _gen_leaf_litter). Le mesh vient du kit
+## (`grass_leafs.glb`, matériau "grass" — nom relevé dans le glb, pas deviné).
+const _LEAF_TINTS: Array[Color] = [
+	Color(0.82, 0.42, 0.12),   # feuille tombée, orange franc
+	Color(0.58, 0.31, 0.14),   # feuille pourrie, brun
+]
+
+func _build_leaf_litter() -> void:
+	if not _map.has_method("get_leaf_cells"):
+		return
+	var cells: Array = _map.get_leaf_cells()
+	if cells.is_empty():
+		return
+	var by_tint: Array = [[], []]
+	for cell: Vector2i in cells:
+		by_tint[abs(hash(cell)) % 2].append(cell)
+	for i in 2:
+		if (by_tint[i] as Array).is_empty():
+			continue
+		_build_flora_multimesh("grass_leafs.glb", by_tint[i], 1.7,
+			{"grass": _LEAF_TINTS[i]})
 
 
 func _build_flora_multimesh(file: String, cells: Array, scale_mult: float, tints: Dictionary) -> void:

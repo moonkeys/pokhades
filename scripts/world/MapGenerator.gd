@@ -6,10 +6,12 @@ enum Terrain { GRASS = 0, PATH = 1, WATER = 2, TREE = 3 }
 enum GatingType { NONE = 0, SURF = 1, COUPE = 2, FORCE = 3 }
 enum MapTheme { FOREST = 0, SWAMP = 1, MEADOW = 2, ROCKY = 3, AUTUMN = 4, LAKE = 5, VOLCANO = 6, VILLAGE = 7 }
 ## Forme de la zone jouable — casse la silhouette rectangulaire par défaut.
-## RECT reste possible (tirage pondéré) pour ne pas perdre les grandes maps
-## ouvertes ; CIRCLE/L_SHAPE rognent les coins en forêt dense (cf.
-## _carve_shape_mask), appliqué APRÈS les chemins pour ne jamais les couper.
-enum MapShape { RECT = 0, CIRCLE = 1, L_SHAPE = 2 }
+## Chaque forme est un CHAMP DE DISTANCE SIGNÉ (cf. _shape_sdf) déformé par un
+## bruit (_shape_noise) : aucun bord n'est droit, même le "RECT" est une boîte
+## aux coins arrondis et au contour ondulant. Le masque est appliqué deux fois :
+## par _carve_border (avant les chemins, pour que ceux-ci puissent le percer) et
+## par _carve_shape_mask (après, en épargnant les chemins déjà tracés).
+enum MapShape { RECT = 0, CIRCLE = 1, L_SHAPE = 2, HOURGLASS = 3, CRESCENT = 4 }
 
 ## Couche physique dédiée à l'eau — séparée des autres obstacles pour que
 ## seule la CS Surf puisse l'ignorer (cf. CombatArena._apply_cs_unlocks).
@@ -65,6 +67,18 @@ const WATER_LAYER := 4
 @export var interior_style: String = "cave"
 @export var arena_size: Vector2i = Vector2i(32, 22)
 
+@export_group("Tiles Sol — Variantes")
+## Sols secondaires mélangés au sol principal du biome. Coordonnées relevées en
+## scannant le tileset (tuiles PLEINES, texture homogène, sans motif répétitif
+## visible au carrelage) — ne pas en inventer sans vérifier le rendu carrelé.
+## Le mélange se fait PAR PIXEL au bake (cf. MapRender3D._ground_color_at), pas
+## par case : les transitions serpentent au lieu de suivre la grille.
+@export var tile_herbe_dense: Vector2i = Vector2i(71, 33)  # vert soutenu
+@export var tile_herbe_pale:  Vector2i = Vector2i(14, 33)  # vert pâle
+@export var tile_herbe_seche: Vector2i = Vector2i(13, 20)  # herbe sèche / olive
+@export var tile_terre_seche: Vector2i = Vector2i(15, 20)  # kaki nu
+@export var tile_sable:       Vector2i = Vector2i(6,  45)  # sable
+
 @export_group("Tiles Thème — Forêt")
 @export var tile_sapin_origin:    Vector2i = Vector2i(1,  9)   # sapin 3×3 (centre 2,10)
 @export var tile_arbre_mort_orig: Vector2i = Vector2i(64, 9)   # arbre mort 3×3 (centre 65,10)
@@ -113,9 +127,78 @@ var _rng:  RandomNumberGenerator = RandomNumberGenerator.new()
 var _shallow_cells: Dictionary = {}
 var _water_mode: String = "deep"
 var _map_shape: MapShape = MapShape.RECT
+## Bruit qui déforme le contour de la forme (cf. _shape_sdf) — c'est LUI qui
+## enlève le côté "géométrique" : sans lui un cercle est un cercle parfait.
+var _shape_noise: FastNoiseLite = null
+## Paramètres de la forme courante, tirés une fois par génération dans
+## _init_shape (miroirs du L, côté du trou du croissant…).
+var _shape_flip_x: bool = false
+var _shape_flip_y: bool = false
 
 func is_shallow_cell(cell: Vector2i) -> bool:
 	return _shallow_cells.has(cell)
+
+
+## Mécanique de terrain du MARÉCAGE : la boue colle aux pattes.
+## Multiplicateur de vitesse pour un Pokémon situé en `pos` — 1.0 partout, sauf
+## dans les flaques marchables du marécage. Les mêmes cases `_shallow_cells`
+## existent aussi en forêt (simples flaques décoratives) : seul le marécage
+## ralentit, c'est SA signature (les corridors y sont larges, cf. path_width —
+## ils doivent peser, pas se traverser au sprint).
+##
+## Porté par la map (et pas par TeamMember) : la connaissance du terrain reste
+## d'un seul côté, joueur et IA n'ont qu'à multiplier (cf. TeamMember).
+const MUD_SPEED_MULT := 0.55
+
+func terrain_speed_mult(pos: Vector3) -> float:
+	if theme != MapTheme.SWAMP:
+		return 1.0
+	return MUD_SPEED_MULT if _shallow_cells.has(world3_to_cell(pos)) else 1.0
+
+
+## Cases de haute herbe de la zone (Prairie uniquement) — mémorisées à la
+## génération pour que l'IA puisse CHOISIR d'aller s'y embusquer (cf.
+## EnemyAI._pick_ambush_spot), au lieu de ne se cacher que par hasard.
+var _tg_cells: Array[Vector2i] = []
+
+func get_tall_grass_cells() -> Array[Vector2i]:
+	return _tg_cells
+
+## Case de haute herbe la plus proche de `pos` dans un rayon de `max_dist`
+## (unités monde), ou Vector3.INF s'il n'y en a pas.
+##
+## Balayage linéaire des nappes : elles se comptent en dizaines de cases, et
+## l'appelant met le résultat en cache (une fois par ennemi, pas par frame).
+func nearest_tall_grass(pos: Vector3, max_dist: float) -> Vector3:
+	var best := Vector3.INF
+	var best_d := max_dist * max_dist
+	for cell: Vector2i in _tg_cells:
+		var w := cell_to_world3(cell)
+		var d := Vector2(w.x - pos.x, w.z - pos.z).length_squared()
+		if d < best_d:
+			best_d = d
+			best = w
+	return best
+
+
+## Mécanique de terrain de la FORÊT : les troncs coupent la ligne de tir.
+## Un projectile qui traverse une case d'arbre est absorbé (cf. Projectile).
+## Le combat à distance y demande donc de se déplacer pour dégager son angle,
+## au lieu de tirer à travers le décor — c'est ce qui donne son sens à la
+## densité d'arbres élevée du biome.
+##
+## Vaut pour TOUS les tirs, joueur comme ennemis : c'est du couvert, pas un
+## malus de camp.
+func blocks_projectile(pos: Vector3) -> bool:
+	if theme != MapTheme.FOREST:
+		return false
+	var cell := world3_to_cell(pos)
+	if cell.y < 0 or cell.y >= _grid.size():
+		return false
+	var row: PackedByteArray = _grid[cell.y]
+	if cell.x < 0 or cell.x >= row.size():
+		return false
+	return row[cell.x] == Terrain.TREE
 
 ## Cellule d'eau (ou de LAVE en biome Volcan) — utilisé par CombatArena pour
 ## la brûlure au contact de la lave.
@@ -127,6 +210,19 @@ func is_water_cell(cell: Vector2i) -> bool:
 		return false
 	return row[cell.x] == Terrain.WATER
 var _flower_mat: ShaderMaterial = null
+
+## Couleur MOYENNE du sol effectivement baké (posée par MapRender3D.
+## _bake_ground_plane). Le tablier de plaine lointaine (cf. BiomeAmbiance.
+## _build_ground_apron) s'y accorde : la dalle jouable est un rectangle W×H, et
+## dès que sa teinte diffère un tant soit peu de la plaine autour, on lit son
+## contour rectangulaire au lieu de la silhouette organique (retour joueurs).
+## Mesurée plutôt que codée en dur dans les palettes : le sol baké mélange
+## herbe, chemins et décors plats, donc aucune constante ne peut suivre.
+var ground_avg_color: Color = Color(0.42, 0.64, 0.32)
+
+## Couleur MOYENNE des cases de chemin (posée par MapRender3D). Consommée par
+## BiomeAmbiance._build_exit_trails, qui prolonge le sentier hors de la map.
+var path_avg_color: Color = Color(0.62, 0.50, 0.34)
 
 
 ## Fisher-Yates seedé sur `_rng` — Array.shuffle() natif utilise TOUJOURS
@@ -175,6 +271,37 @@ func _cell_in_house(c: int, r: int) -> bool:
 			return true
 	return false
 
+## ── TAPIS DE FEUILLES (biome Automne) ────────────────────────────────────
+## Mécanique de terrain de l'Automne : le sol est jonché de feuilles, et
+## CERTAINES cachent un collet. Le tapis est dense (on en traverse tout le
+## temps) mais les pièges sont rares : c'est ce déséquilibre qui crée la
+## tension — on ne peut pas éviter les feuilles, seulement accepter le risque.
+## Le contraire (un piège sous chaque tas) n'aurait produit qu'un slalom.
+##
+## Pas de tuile de tilemap : les feuilles sont rendues directement en meshes
+## par MapRender3D._build_leaf_litter. Ça évite de polluer le layer TallGrass,
+## dont l'atlas sert à reconnaître les cachettes (cf. is_tall_grass_3d).
+var _leaf_cells: Dictionary = {}   # case → true
+var _leaf_traps: Dictionary = {}   # case → true tant que le piège n'a pas sauté
+
+## Proportion de cases de feuilles qui cachent un collet.
+const LEAF_TRAP_RATIO := 0.09
+
+func get_leaf_cells() -> Array:
+	return _leaf_cells.keys()
+
+func is_leaf_cell(cell: Vector2i) -> bool:
+	return _leaf_cells.has(cell)
+
+## Déclenche le piège de `cell` s'il y en a un — le CONSOMME et renvoie true.
+## Renvoie false s'il n'y a rien (ou plus rien) : un collet ne sert qu'une fois.
+func spring_trap(cell: Vector2i) -> bool:
+	if not _leaf_traps.has(cell):
+		return false
+	_leaf_traps.erase(cell)
+	return true
+
+
 ## Cases du pont du biome Lac (planches posées par MapRender3D au-dessus de
 ## l'eau) — cases marchables reliant la rive sud à l'île centrale.
 var _bridge_cells: Array = []   # Array[Vector2i]
@@ -192,6 +319,10 @@ var _editor_ambiance: BiomeAmbiance = null
 
 ## ── État du thème courant (rempli par _apply_theme) ──────────────
 var _ground_tile:  Vector2i = Vector2i(56, 33)
+## Palette de sol du biome courant — [principal, variante…]. Consommée par
+## MapRender3D._ground_color_at, qui les fond entre elles par bruit. Une seule
+## entrée = sol uni (comportement d'origine).
+var _ground_tiles: Array[Vector2i] = [Vector2i(56, 33)]
 var _water_tile:   Vector2i = Vector2i(46, 26)
 var _path_tiles:   Array[Vector2i] = [Vector2i(2, 16)]   # variantes — tirées au hasard par case
 var _tree_origins: Array    = [Vector2i(1, 0)]   # 3×3, tirés au hasard par arbre
@@ -300,12 +431,8 @@ func _generate() -> void:
 
 	_apply_theme()
 
-	# Silhouette de la zone : 1 chance sur 2 de garder le rectangle plein
-	# (grandes maps ouvertes), sinon cercle ou coin en L — casse la monotonie
-	# des zones toujours carrées/rectangulaires (retour joueurs).
-	var shape_roll := _rng.randf()
-	_map_shape = MapShape.RECT if shape_roll < 0.5 \
-		else (MapShape.CIRCLE if shape_roll < 0.75 else MapShape.L_SHAPE)
+	# Silhouette de la zone — tirée AVANT _carve_border, qui la consomme.
+	_init_shape()
 
 	_init_grid()
 	_shallow_cells.clear()
@@ -324,10 +451,13 @@ func _generate() -> void:
 	# Après les chemins : rogne la silhouette sans jamais couper une route
 	# déjà tracée (cf. _carve_shape_mask, qui épargne Terrain.PATH).
 	_carve_shape_mask()
+	# Après la forme ET le lac : les deux peuvent isoler des îlots marchables.
+	_seal_orphan_pockets()
 	if theme == MapTheme.VILLAGE:
 		_place_houses()
 	_apply_to_tilemap()
 	_gen_tall_grass()
+	_gen_leaf_litter()
 	_gen_decorations()
 	_place_chest_gated()
 	# Le placement du coffre peut creuser une nouvelle douve (île CS Surf) —
@@ -346,7 +476,26 @@ func _generate() -> void:
 	_objects.y_sort_enabled = true
 	_compute_height_field()
 	print("MapGenerator: génération terminée.")
+	if OS.get_cmdline_user_args().has("dump_map"):
+		_debug_dump_grid()
 	_refresh_render3d()
+
+
+## DEBUG (--  dump_map) : silhouette de la zone en ASCII dans la console.
+func _debug_dump_grid() -> void:
+	var walk := 0
+	var lines := "\nDUMP forme=%s taille=%s\n" % [MapShape.keys()[_map_shape], map_size]
+	for r in map_size.y:
+		var line := ""
+		for c in map_size.x:
+			match _grid[r][c]:
+				Terrain.TREE:  line += "#"
+				Terrain.WATER: line += "~"
+				Terrain.PATH:  line += "+"; walk += 1
+				_:             line += "."; walk += 1
+		lines += line + "\n"
+	print(lines + "marchable=%d/%d (%d%%)" % [
+		walk, map_size.x * map_size.y, walk * 100 / (map_size.x * map_size.y)])
 
 
 ## ─────────────────────────────────────────────────────────────────
@@ -437,6 +586,9 @@ func _apply_theme() -> void:
 			theme = [MapTheme.FOREST, MapTheme.SWAMP, MapTheme.MEADOW, MapTheme.ROCKY, MapTheme.AUTUMN, MapTheme.LAKE, MapTheme.VOLCANO, MapTheme.VILLAGE][_rng.randi() % 8]
 	var cfg := _theme_config(theme)
 	_ground_tile    = cfg["ground_tile"]
+	# Palette de sol : par défaut le seul sol principal (sol uni, comportement
+	# d'origine) — un biome n'a de sol composite que s'il déclare "ground_tiles".
+	_ground_tiles.assign(cfg.get("ground_tiles", [cfg["ground_tile"]]))
 	_water_tile     = cfg["water_tile"]
 	_path_tiles.assign(cfg["path_tiles"])   # Array générique → Array[Vector2i]
 	_tree_origins   = cfg["tree_origins"]
@@ -468,6 +620,7 @@ func _theme_config(t: MapTheme) -> Dictionary:
 		MapTheme.FOREST:
 			return {
 				"ground_tile": tile_grass,
+				"ground_tiles": [tile_grass, tile_herbe_dense, tile_herbe_pale],
 				"water_tile":   tile_water,
 				"path_tiles":   [tile_chemin_terre],
 				"tree_origins": [tile_sapin_origin, tile_tree_origin],
@@ -502,6 +655,7 @@ func _theme_config(t: MapTheme) -> Dictionary:
 		MapTheme.MEADOW:
 			return {
 				"ground_tile": tile_grass,
+				"ground_tiles": [tile_grass, tile_herbe_dense, tile_herbe_seche],
 				"water_tile":   tile_water,
 				"path_tiles":   [tile_chemin_terre],
 				"tree_origins": [tile_tree_origin],
@@ -517,6 +671,7 @@ func _theme_config(t: MapTheme) -> Dictionary:
 		MapTheme.ROCKY:
 			return {
 				"ground_tile": tile_grass,
+				"ground_tiles": [tile_grass, tile_terre_seche, tile_sable],
 				"water_tile":   tile_water,
 				# Chemin pierre — 8 variantes (bloc 2×4) tirées au hasard par
 				# case pour casser la répétition d'une tuile unique.
@@ -537,6 +692,7 @@ func _theme_config(t: MapTheme) -> Dictionary:
 				# du pack Kenney, cf. MapRender3D._kit_tree_pool), herbe dorée,
 				# lumière rasante — cf. le preset BiomeAmbiance assorti.
 				"ground_tile": tile_grass,
+				"ground_tiles": [tile_grass, tile_herbe_seche, tile_terre_seche],
 				"water_tile":   tile_water,
 				"path_tiles":   [tile_chemin_terre],
 				"tree_origins": [tile_tree_origin],
@@ -555,6 +711,9 @@ func _theme_config(t: MapTheme) -> Dictionary:
 				# herbeuses, île reliée par un pont. Peu d'arbres pour dégager
 				# la vue sur l'eau. Gating Surf (thématique).
 				"ground_tile": tile_grass,
+				# Sable dans la palette : les plages se forment naturellement là
+				# où le bruit de sol l'emporte, souvent près des rives.
+				"ground_tiles": [tile_grass, tile_herbe_pale, tile_sable],
 				"water_tile":   tile_water,
 				"path_tiles":   [tile_chemin_terre],
 				"tree_origins": [tile_tree_origin],
@@ -593,6 +752,8 @@ func _theme_config(t: MapTheme) -> Dictionary:
 				# arbres ornementaux. Pas d'eau. Routes larges pour circuler entre
 				# les bâtiments.
 				"ground_tile": tile_grass,
+				# Pelouses inégales + terre battue piétinée entre les maisons.
+				"ground_tiles": [tile_grass, tile_herbe_dense, tile_terre_seche],
 				"water_tile":   tile_water,
 				"path_tiles":   _stone_path_variants(),
 				"tree_origins": [tile_tree_origin],
@@ -760,13 +921,96 @@ func _compute_portals() -> void:
 ## 4 — BORDURE D'ARBRES
 ## ─────────────────────────────────────────────────────────────────
 
+## Mure tout ce qui est hors de la silhouette (cf. _outside_shape). Remplace
+## l'ancien cadre rectangulaire de 4 cases, qui donnait à TOUTES les zones un
+## contour extérieur parfaitement droit quelle que soit la forme tirée — le
+## masque de forme ne rognait alors que l'intérieur, et la silhouette réelle
+## restait un rectangle (retour joueurs : « trop carré »).
+## Appelé AVANT _carve_paths : les chemins percent ensuite le mur pour rejoindre
+## les portails, qui vivent sur le bord de la grille.
 func _carve_border() -> void:
-	var W := map_size.x
-	var H := map_size.y
-	for r in H:
-		for c in W:
-			if r < 4 or r >= H - 4 or c < 4 or c >= W - 4:
+	for r in map_size.y:
+		for c in map_size.x:
+			if _outside_shape(c, r):
 				_grid[r][c] = Terrain.TREE
+
+
+## Tire la silhouette de la zone et prépare le bruit qui en déformera le bord.
+## À appeler AVANT _carve_border (qui consomme _shape_sdf).
+func _init_shape() -> void:
+	# Le rectangle n'est plus qu'une silhouette parmi cinq (et même lui est
+	# arrondi + ondulé) — retour joueurs : les zones étaient trop carrées.
+	var roll := _rng.randf()
+	if roll < 0.20:   _map_shape = MapShape.RECT
+	elif roll < 0.45: _map_shape = MapShape.CIRCLE
+	elif roll < 0.70: _map_shape = MapShape.L_SHAPE
+	elif roll < 0.85: _map_shape = MapShape.HOURGLASS
+	else:             _map_shape = MapShape.CRESCENT
+	_shape_flip_x = _rng.randf() < 0.5
+	_shape_flip_y = _rng.randf() < 0.5
+
+	_shape_noise = FastNoiseLite.new()
+	_shape_noise.seed = _rng.randi()
+	_shape_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
+	# Basse fréquence = grandes ondulations (golfes et caps), pas un bord
+	# grignoté case par case qui ressemblerait juste à du bruit.
+	_shape_noise.frequency = 0.045
+	_shape_noise.fractal_octaves = 3
+	print("MapGenerator: forme=%s" % MapShape.keys()[_map_shape])
+
+
+## La case (c,r) est-elle EN DEHORS de la zone jouable ?
+## Deux conditions : le cadre dur de 3 cases (garantit qu'aucune case marchable
+## ne touche le bord de la grille, quel que soit le warp du bruit) et le champ
+## de distance de la forme.
+func _outside_shape(c: int, r: int) -> bool:
+	if c < 3 or c >= map_size.x - 3 or r < 3 or r >= map_size.y - 3:
+		return true
+	return _shape_sdf(c, r) > 0.0
+
+
+## Champ de distance signé de la silhouette, en coordonnées NORMALISÉES
+## (u,v ∈ [-1,1] aux bords de la grille) : < 0 dedans, > 0 dehors. Le bruit est
+## ajouté au résultat, ce qui décale le contour vers l'intérieur ou l'extérieur
+## selon l'endroit — d'où des bords sinueux plutôt que des arcs parfaits.
+func _shape_sdf(c: int, r: int) -> float:
+	var u := (float(c) + 0.5 - float(map_size.x) * 0.5) / (float(map_size.x) * 0.5)
+	var v := (float(r) + 0.5 - float(map_size.y) * 0.5) / (float(map_size.y) * 0.5)
+	if _shape_flip_x: u = -u
+	if _shape_flip_y: v = -v
+	var p := Vector2(u, v)
+
+	# Extents calibrés pour que le bord BRUITÉ tombe à l'intérieur du cadre dur
+	# de 3 cases. Si la forme déborde du cadre, c'est le cadre qu'on voit sur
+	# les flancs — donc une ligne parfaitement droite, exactement le défaut
+	# qu'on cherche à supprimer. Ne pas gonfler ces valeurs sans revérifier.
+	var d := 0.0
+	match _map_shape:
+		MapShape.RECT:
+			# Boîte aux coins TRÈS arrondis — plus proche du galet que du carré.
+			d = _round_box(p, Vector2(0.44, 0.36), 0.36)
+		MapShape.CIRCLE:
+			# Ellipse inscrite (la grille étant large, un "cercle" normalisé
+			# donne un disque étiré, ce qui remplit correctement la zone).
+			d = p.length() - 0.82
+		MapShape.L_SHAPE:
+			# Deux barres épaisses en équerre : l'union de leurs SDF donne un L
+			# dont l'angle rentrant est arrondi, pas un coin net.
+			d = minf(
+				_round_box(p - Vector2(-0.38, 0.0), Vector2(0.20, 0.52), 0.24),
+				_round_box(p - Vector2(0.0, 0.34), Vector2(0.52, 0.18), 0.24))
+		MapShape.HOURGLASS:
+			# Sablier : la demi-largeur croît avec |v| → étranglement au centre,
+			# qui force le joueur à passer par un goulet.
+			d = maxf(absf(u) - (0.28 + 0.52 * absf(v)), absf(v) - 0.78)
+		MapShape.CRESCENT:
+			# Disque moins un disque décalé sur le côté : un croissant. Le trou
+			# est latéral (jamais en haut/bas) pour ne pas isoler les portails,
+			# qui vivent sur les bords haut et bas de la grille.
+			d = maxf(p.length() - 0.84,
+				-(p - Vector2(0.58, 0.0)).length() + 0.46)
+
+	return d + _shape_noise.get_noise_2d(float(c), float(r)) * 0.16
 
 
 ## Dispose des MAISONS (biome Village) : rectangles posés sur des zones
@@ -826,38 +1070,60 @@ func _house_touches_road(rect: Rect2i) -> bool:
 	return false
 
 
-## Rogne les coins de la zone selon `_map_shape` (RECT = no-op). Épargne
-## systématiquement : les chemins déjà carvés (Terrain.PATH), l'eau, et un
-## rayon de sécurité autour de l'entrée/des sorties — la forme ne doit jamais
-## rendre un portail inaccessible, seulement casser le contour extérieur.
-func _carve_shape_mask() -> void:
-	if _map_shape == MapShape.RECT:
-		return
-	var W := map_size.x
-	var H := map_size.y
-	var cx := float(W) * 0.5
-	var cy := float(H) * 0.5
-	# Rayon du cercle inscrit, légèrement agrandi pour ne pas trop mordre.
-	var radius := minf(cx, cy) * 1.05
-	# Coin retiré pour le L : le plus loin du centre des sorties (haut) et de
-	# l'entrée (bas-centre) — bas-gauche ou bas-droite, tiré à la graine.
-	var l_left := _rng.randf() < 0.5
-	var l_x0: int = 4 if l_left else int(W * 0.62)
-	var l_x1: int = int(W * 0.38) if l_left else W - 4
-	var l_y0: int = int(H * 0.55)
-	var l_y1: int = H - 4
+## Mure les poches marchables coupées du reste de la zone. Les silhouettes
+## concaves (croissant surtout) découpent des îlots isolés dans les golfes du
+## bord bruité : sans ça, on voit des clairières inatteignables au loin, et
+## _get_walkable_cells pourrait y poser un coffre ou un obstacle CS.
+##
+## Le remplissage traverse l'EAU (elle n'est pas Terrain.TREE) : les îles
+## accessibles seulement à la nage sont VOULUES (gating CS Surf, cf. le biome
+## Lac) et ne doivent surtout pas être murées.
+func _seal_orphan_pockets() -> void:
+	var reached: Dictionary = {}
+	var stack: Array[Vector2i] = [entry_tile]
+	reached[entry_tile] = true
+	while not stack.is_empty():
+		var cur: Vector2i = stack.pop_back()
+		for d: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var nb: Vector2i = cur + d
+			if nb.x < 0 or nb.x >= map_size.x or nb.y < 0 or nb.y >= map_size.y:
+				continue
+			if reached.has(nb) or _grid[nb.y][nb.x] == Terrain.TREE:
+				continue
+			reached[nb] = true
+			stack.append(nb)
 
-	for r in H:
-		for c in W:
+	var sealed := 0
+	for r in map_size.y:
+		for c in map_size.x:
+			if _grid[r][c] == Terrain.TREE:
+				continue
+			if reached.has(Vector2i(c, r)):
+				continue
+			_grid[r][c] = Terrain.TREE
+			sealed += 1
+	if sealed > 0:
+		print("MapGenerator: %d cases de poches isolées murées." % sealed)
+
+
+## SDF d'une boîte aux coins arrondis (demi-extents `half`, rayon `rad`).
+## Formule standard : distance au rectangle rétréci de `rad`, moins `rad`.
+func _round_box(p: Vector2, half: Vector2, rad: float) -> float:
+	var q := Vector2(absf(p.x), absf(p.y)) - half
+	return Vector2(maxf(q.x, 0.0), maxf(q.y, 0.0)).length() \
+		+ minf(maxf(q.x, q.y), 0.0) - rad
+
+
+## Re-mure ce qui est hors silhouette APRÈS le tracé des chemins et le carvage
+## du lac, qui peuvent avoir rouvert des cases hors forme. Épargne les chemins
+## déjà tracés (sinon on couperait la route vers une sortie), l'eau, et un rayon
+## de sécurité autour des portails.
+func _carve_shape_mask() -> void:
+	for r in map_size.y:
+		for c in map_size.x:
 			if _grid[r][c] == Terrain.PATH or _grid[r][c] == Terrain.WATER: continue
 			if _is_near_portal(c, r, 6): continue
-			var cut := false
-			match _map_shape:
-				MapShape.CIRCLE:
-					cut = Vector2(c - cx, r - cy).length() > radius
-				MapShape.L_SHAPE:
-					cut = c >= l_x0 and c < l_x1 and r >= l_y0 and r < l_y1
-			if cut:
+			if _outside_shape(c, r):
 				_grid[r][c] = Terrain.TREE
 
 
@@ -877,17 +1143,33 @@ func _carve_paths() -> void:
 ## intermédiaires décalés PERPENDICULAIREMENT à l'axe — donne un tracé qui
 ## serpente naturellement au lieu d'un couloir droit. Tangentes Catmull-Rom
 ## (moyenne des voisins) pour une courbe continue sans cassure.
+## Longueur (en cases) du tronçon d'approche RECTILIGNE devant chaque portail.
+const PORTAL_APPROACH := 5.0
+
 func _build_path_curve(from: Vector2, to: Vector2) -> Curve2D:
-	var seg_len := from.distance_to(to)
-	var dir  := (to - from).normalized()
+	# ANCRES D'APPROCHE : le chemin doit aborder les portails perpendiculairement
+	# au bord de la map. Sans elles, le serpentin arrivait au portail sous un
+	# angle quelconque, alors que le sentier prolongé au-delà (cf.
+	# BiomeAmbiance._build_exit_trails) est une bande droite en Z : les deux ne
+	# se raccordaient pas, et l'allée se lisait comme cassée en deux (retour
+	# joueurs). Les portails sont sur les rangées 0 (sorties) et H-5 (entrée),
+	# d'où une approche verticale.
+	var from_a := from + Vector2(0.0, -PORTAL_APPROACH)   # on quitte l'entrée vers le nord
+	var to_a   := to   + Vector2(0.0,  PORTAL_APPROACH)   # on aborde la sortie par le sud
+
+	# Le serpentin ne court qu'ENTRE les ancres — les tronçons d'approche
+	# restent droits.
+	var seg_len := from_a.distance_to(to_a)
+	var dir  := (to_a - from_a).normalized()
 	var perp := Vector2(-dir.y, dir.x)
 	var n := clampi(int(seg_len / 12.0), 2, 5)   # + de waypoints = + sinueux
 
-	var pts: Array[Vector2] = [from]
+	var pts: Array[Vector2] = [from, from_a]
 	for i in range(1, n + 1):
 		var t := float(i) / float(n + 1)
 		var amp := _rng.randf_range(-1.0, 1.0) * seg_len * 0.16   # amplitude du serpentin
-		pts.append(from.lerp(to, t) + perp * amp)
+		pts.append(from_a.lerp(to_a, t) + perp * amp)
+	pts.append(to_a)
 	pts.append(to)
 
 	var curve := Curve2D.new()
@@ -1093,6 +1375,14 @@ func _stamp_tree(cx: int, cy: int) -> void:
 ## ─────────────────────────────────────────────────────────────────
 
 func _gen_tall_grass() -> void:
+	_tg_cells.clear()
+	# EXCLUSIVES À LA PRAIRIE : c'est SA mécanique de terrain. Avant, toutes les
+	# zones en avaient, ce qui n'avantageait que l'IA (ennemis embusqués) sans
+	# rien apporter au joueur, et privait la prairie de toute identité. Chaque
+	# biome a désormais sa propre mécanique (boue du marécage, troncs de la
+	# forêt, pièges sous les feuilles d'automne…).
+	if theme != MapTheme.MEADOW:
+		return
 	# PEU de nappes mais GROSSES (9-14 cases chacune) : des zones de
 	# furtivité franches et lisibles, pas un saupoudrage de touffes isolées.
 	# Croissance organique par frontière aléatoire depuis une graine.
@@ -1114,6 +1404,7 @@ func _gen_tall_grass() -> void:
 		var placed: Dictionary = {start: true}
 		var frontier: Array[Vector2i] = [start]
 		_tall_grass.set_cell(start, source_id, tile_tg)
+		_tg_cells.append(start)
 		while placed.size() < target and not frontier.is_empty():
 			var base: Vector2i = frontier[_rng.randi() % frontier.size()]
 			var dirs := [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
@@ -1126,10 +1417,48 @@ func _gen_tall_grass() -> void:
 				placed[nb] = true
 				frontier.append(nb)
 				_tall_grass.set_cell(nb, source_id, tile_tg)
+				_tg_cells.append(nb)
 				grown = true
 				break
 			if not grown:
 				frontier.erase(base)
+
+
+## Jonche le sol de feuilles (Automne) et arme un collet sous certaines.
+## Bruit basse fréquence plutôt que nappes en blob (cf. _gen_tall_grass) : on
+## veut un TAPIS étendu et irrégulier — des amas nets se contourneraient, ce qui
+## viderait la mécanique de son sens.
+func _gen_leaf_litter() -> void:
+	_leaf_cells.clear()
+	_leaf_traps.clear()
+	if theme != MapTheme.AUTUMN:
+		return
+
+	var noise := FastNoiseLite.new()
+	noise.seed = _rng.randi()
+	noise.frequency = 0.11
+	var candidates: Array[Vector2i] = []
+	for r in range(3, map_size.y - 3):
+		for c in range(3, map_size.x - 3):
+			if _grid[r][c] != Terrain.GRASS:
+				continue          # ni chemin (il doit rester lisible), ni eau, ni arbre
+			if _is_near_portal(c, r, 5):
+				continue          # pas de piège à l'arrivée/au départ : injouable
+			if noise.get_noise_2d(float(c), float(r)) < -0.05:
+				continue
+			var cell := Vector2i(c, r)
+			_leaf_cells[cell] = true
+			candidates.append(cell)
+
+	# Pièges tirés au sort dans le tapis, via le RNG SEEDÉ (et non .shuffle(),
+	# qui utilise le RNG global du moteur) : les mêmes collets doivent être aux
+	# mêmes cases sur tous les pairs en multijoueur.
+	_seeded_shuffle(candidates)
+	var n := int(float(candidates.size()) * LEAF_TRAP_RATIO)
+	for i in mini(n, candidates.size()):
+		_leaf_traps[candidates[i]] = true
+	print("MapGenerator: tapis de feuilles — %d cases, %d collets." % [
+		_leaf_cells.size(), _leaf_traps.size()])
 
 
 ## Une case peut-elle accueillir de la haute herbe ?
@@ -1250,10 +1579,12 @@ func _decor_swamp() -> void:
 
 
 func _decor_meadow() -> void:
-	var cells := _get_walkable_cells(6)
-	_seeded_shuffle(cells)
-	_place_cliff_outcrops(cells, 2, false, 3, 6, 2, 4)
+	# PAS de falaises : une prairie est une plaine. Les affleurements rocheux
+	# posés ici se lisaient comme de gros blocs beiges plantés au milieu de
+	# l'herbe (retour joueurs). Ils restent la signature du biome Rocailleux
+	# (cf. _decor_rocky) — c'est ce qui distingue les deux.
 	# Fleurs déjà denses via flower_density — pas d'autre décor thématique.
+	pass
 
 
 func _decor_rocky() -> void:
