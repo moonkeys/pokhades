@@ -4,7 +4,7 @@ extends Node
 ## VÉRIFIÉE à la connexion (cf. Net._register) pour éviter de faire jouer
 ## ensemble deux builds différents (bugs de sync garantis sinon). À
 ## incrémenter à chaque changement qui touche au gameplay/réseau.
-const VERSION := "0.4.0"
+const VERSION := "0.5.0"
 
 # ── Starters disponibles ─────────────────────────────────────────────
 const STARTER_IDS: Array = [25, 570, 359, 725, 656, 390, 674, 559, 447]
