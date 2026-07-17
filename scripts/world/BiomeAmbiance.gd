@@ -96,6 +96,11 @@ const _BASE_AMBIANCE := {
 	"exposure":       0.74,
 	"mist":           true,   # nappe discrète au ras du sol, partout
 	"mist_color":     Color(0.70, 0.72, 0.68, 0.05),
+	# Chaîne de montagnes à l'horizon. Vrai par défaut (rocailleux, volcan…),
+	# mais une PRAIRIE cernée de pics n'a aucun sens (retour joueurs) : les
+	# biomes qui la désactivent reçoivent à la place une forêt lointaine en
+	# anneaux (cf. _build_distant_forest).
+	"backdrop_mountains": true,
 	"cloud_alpha":    0.55,
 	"cloud_tint":     Color(1.0, 1.0, 1.0),
 }
@@ -194,6 +199,9 @@ const _MEADOW_PALETTE := {
 	"cloud_alpha":  0.62,
 	"butterflies":  6,
 	"ground_tint":  Color(0.42, 0.64, 0.32),
+	# Pas de montagnes en prairie : l'horizon est fermé par une forêt lointaine
+	# qui s'estompe dans la brume (cf. _build_distant_forest).
+	"backdrop_mountains": false,
 }
 
 const _VOLCANO_PALETTE := {
@@ -519,10 +527,134 @@ func _rebuild_backdrop(cfg: Dictionary, is_cave: bool) -> void:
 	var center := Vector3(_map_size.x * 0.5, 0, _map_size.y * 0.5)
 
 	_build_ground_apron(cfg, center)
+	_build_exit_trails(cfg, center)
 	_build_midground(cfg, rng, center)
-	_build_mountains(cfg, rng, center)
+	if cfg.get("backdrop_mountains", true):
+		_build_mountains(cfg, rng, center)
+	else:
+		_build_distant_forest(cfg, rng, center)
 	_build_clouds(cfg, rng, center)
 	_build_butterflies(cfg, rng)
+
+
+## Feuillage/écorce fondus vers la couleur de brouillard du biome, d'un facteur
+## `amount` (0 = net, 1 = noyé dans la brume). C'est notre PROFONDEUR DE CHAMP :
+## le projet tourne en GL Compatibility (cf. project.godot), où le vrai flou DOF
+## n'est pas rendu — comme le SSAO. On simule donc la distance par perspective
+## atmosphérique (le lointain se délave et perd son contraste), ce qui est de
+## toute façon plus proche du rendu peint HD-2D qu'un flou optique.
+##
+## `amount` doit rester DISCRET (une valeur par anneau, pas par arbre) :
+## KitProps.prepare_mesh met en cache par combinaison (fichier, teintes) — une
+## teinte continue créerait un mesh unique par arbre.
+func _haze_tints(cfg: Dictionary, amount: float) -> Dictionary:
+	var fog: Color = cfg["fog_color"]
+	return {
+		"leafsGreen": Color(0.22, 0.55, 0.16).lerp(fog, amount),
+		"leafsDark":  Color(0.14, 0.40, 0.14).lerp(fog, amount),
+		"woodBark":   Color(0.36, 0.30, 0.26).lerp(fog, amount),
+	}
+
+
+## FORÊT LOINTAINE — remplace la chaîne de montagnes pour les biomes qui n'en
+## veulent pas (prairie). Anneaux concentriques d'arbres de plus en plus hauts
+## et de plus en plus délavés vers la brume : c'est l'étagement des teintes qui
+## crée la sensation de distance, pas la taille seule. Ferme l'horizon sur 360°
+## — le joueur voit de la forêt partout où il ne peut pas marcher.
+func _build_distant_forest(cfg: Dictionary, rng: RandomNumberGenerator, center: Vector3) -> void:
+	var base_r := maxf(_map_size.x, _map_size.y) * 0.5
+	for layer in 4:
+		# Les anneaux se chevauchent (jitter de rayon > pas entre anneaux) :
+		# une haie régulière se lirait comme une palissade, pas comme une forêt.
+		var dist := base_r + 16.0 + layer * 24.0
+		var count := 90 + layer * 30
+		var positions: Array[Vector3] = []
+		var heights: Array[float] = []
+		for i in count:
+			var ang := TAU * (float(i) + rng.randf_range(-0.42, 0.42)) / float(count)
+			var r := dist + rng.randf_range(-9.0, 9.0)
+			positions.append(center + Vector3(cos(ang) * r, 0, sin(ang) * r))
+			# Plus loin = plus grand, pour rester visible par-dessus l'anneau
+			# précédent (sinon les rangs du fond sont entièrement masqués).
+			heights.append((6.5 + layer * 3.2) * rng.randf_range(0.72, 1.35))
+		_add_tree_batch(cfg, rng, positions, heights, _haze_tints(cfg, 0.28 + 0.19 * layer))
+
+
+## Pose un lot d'arbres en MULTIMESH — un seul draw call par (fichier, teinte),
+## quel que soit le nombre d'arbres. Indispensable ici : la ceinture + la forêt
+## lointaine dépassent le millier d'arbres, et autant de MeshInstance3D
+## individuels (l'ancienne approche, ~140 arbres) ne passerait pas à l'échelle.
+## C'est ce qui permet la densité demandée (retour joueurs : « plus d'arbres,
+## plus proches, plus condensés »).
+##
+## Effet de bord assumé : build_multimesh applique le shader de vent, calibré
+## pour l'herbe (height_ref = 0.22). Sur un arbre, tout ce qui dépasse cette
+## hauteur locale oscille en bloc — soit ~3 % de sa hauteur : ça se lit comme
+## une brise, pas comme une déformation.
+func _add_tree_batch(cfg: Dictionary, rng: RandomNumberGenerator, positions: Array[Vector3],
+		heights: Array[float], tints: Dictionary) -> void:
+	var pool: Array = KitProps.TREES_PINE if cfg.get("midground_cliffs", false) else KitProps.TREES_ROUND
+	var by_file: Dictionary = {}   # fichier -> {"t": Array[Transform3D], "p": Array[float]}
+	for i in positions.size():
+		var file: String = pool[rng.randi() % pool.size()]
+		var native_h: float = KitProps.TREE_NATIVE_HEIGHT.get(file, 1.7)
+		var basis := Basis(Vector3.UP, rng.randf_range(0.0, TAU)).scaled(
+			Vector3.ONE * (heights[i] / native_h))
+		if not by_file.has(file):
+			by_file[file] = {"t": [], "p": []}
+		by_file[file]["t"].append(Transform3D(basis, positions[i]))
+		by_file[file]["p"].append(rng.randf_range(0.0, TAU))   # déphasage du vent
+	for file: String in by_file:
+		_backdrop.add_child(
+			KitProps.build_multimesh(file, by_file[file]["t"], by_file[file]["p"], tints))
+
+
+const _GRASS_TEX_PATH := "res://assets/nature/grass.png"
+static var _grass_tex_cache: Texture2D = null
+static var _grass_lum: float = -1.0
+
+
+static func _grass_tex() -> Texture2D:
+	if _grass_tex_cache == null:
+		_grass_tex_cache = load(_GRASS_TEX_PATH)
+	return _grass_tex_cache
+
+
+## Teinte à passer au shader pour que le tablier SORTE effectivement à la
+## couleur `target`.
+##
+## Le shader de sol (cf. GrassPatch._GROUND_SHADER) ne peint pas `tint` tel
+## quel : à tint_strength=1 il calcule `luminance(grass.png) * tint * 1.7`.
+## Passer directement la couleur mesurée du sol jouable donnait donc un tablier
+## à `lum_moyenne * 1.7` fois cette couleur — proche mais JAMAIS égal, et l'œil
+## voit très bien ce résidu d'écart : la dalle rectangulaire ressortait encore
+## (retour joueurs : « les deux sols ne sont toujours pas de la même couleur »).
+## On divise par le facteur du shader pour annuler exactement sa transformation.
+static func _apron_tint(target: Color) -> Color:
+	if _grass_lum < 0.0:
+		var img := _grass_tex().get_image()
+		# grass.png est importée COMPRESSÉE (cf. import_etc2_astc dans
+		# project.godot) : sans décompression, get_pixel ne renvoie rien
+		# d'exploitable et la moyenne tombait à ~0 — la division donnait alors
+		# une teinte énorme, donc un tablier BLANC après clamp du shader.
+		if img.is_compressed():
+			img.decompress()
+		img.resize(16, 16, Image.INTERPOLATE_BILINEAR)
+		var sum := 0.0
+		for y in 16:
+			for x in 16:
+				var px: Color = img.get_pixel(x, y)
+				sum += 0.299 * px.r + 0.587 * px.g + 0.114 * px.b
+		_grass_lum = sum / 256.0
+	# Garde-fou : une luminance aberrante (texture illisible) doit dégrader vers
+	# "teinte telle quelle" plutôt que vers un tablier blanc.
+	if _grass_lum < 0.08:
+		push_warning("BiomeAmbiance: luminance de grass.png illisible (%.3f) — tablier non compensé." % _grass_lum)
+		return target
+	var k := _grass_lum * 1.7
+	# Pas de clamp à 1 : le shader clampe déjà l'ALBEDO final, et brider ici
+	# rendrait les sols clairs (prairie ≈ 0.75) impossibles à atteindre.
+	return Color(target.r / k, target.g / k, target.b / k, 1.0)
 
 
 ## Grand tablier de sol plat sous tout le décor lointain — comble le "vide"
@@ -530,56 +662,63 @@ func _rebuild_backdrop(cfg: Dictionary, is_cave: bool) -> void:
 ## voyait à travers, jusqu'au ciel). Teinté avec la couleur de collines du
 ## biome (déjà accordée au thème) pour se fondre dans l'horizon.
 func _build_ground_apron(cfg: Dictionary, center: Vector3) -> void:
-	var apron := MeshInstance3D.new()
-	apron.name = "GroundApron"
-	var plane := PlaneMesh.new()
 	# Large marge : le bord du tablier ne doit jamais être visible, même à la
 	# caméra dézoomée en éditeur — le brouillard (cfg["fog_density"]) fait
 	# disparaître le lointain avant qu'on puisse en voir la limite.
 	var span := maxf(_map_size.x, _map_size.y) * 16.0
-	plane.size = Vector2(span, span)
-	apron.mesh = plane
-	# NETTEMENT sous le sol jouable : le relief procédural descend jusqu'à
-	# ~-0,55 (MapGenerator.HEIGHT_AMPLITUDE) — à -0,08 le tablier transperçait
-	# les creux de collines en grandes taches sombres z-fightantes qui
-	# "respiraient" avec la caméra (bug "nuage qui grossit/rétrécit", forêt).
-	apron.position = Vector3(center.x, -1.2, center.z)
 	# Même texture d'herbe/shader que le sol jouable (cf. GrassPatch.
 	# ground_material) au lieu d'un aplat de couleur : le tablier lointain
 	# se lisait comme du vide/de la terre nue à côté du sol texturé de la
 	# map. Recoloré (tint_strength=1) exactement à la couleur d'herbe/sol
 	# du biome (`ground_tint`, cf. palettes) — pas un dérivé des couleurs
 	# de collines qui pouvait diverger du vert (ou de l'ocre, etc.) réel.
+	# Couleur MESURÉE sur le sol baké de la map courante quand elle est
+	# disponible (cf. MapGenerator.ground_avg_color) — la constante `ground_tint`
+	# de la palette ne suivait pas le sol réel (qui mêle herbe, chemins et
+	# décors), et le moindre écart faisait ressortir le contour RECTANGULAIRE de
+	# la dalle jouable sur la plaine. Repli sur la palette pour les scènes qui
+	# n'exposent pas la propriété (maps legacy).
 	var plain: Color = cfg.get("ground_tint", (cfg["hill_a"] as Color).lerp(cfg["hill_b"], 0.4))
-	apron.material_override = GrassPatch.ground_material(
-		load("res://assets/nature/grass.png"), 1.45, 0.88, span, plain, 1.0)
-	apron.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	_backdrop.add_child(apron)
+	if _terrain != null and "ground_avg_color" in _terrain:
+		plain = _terrain.ground_avg_color
+	var mat := GrassPatch.ground_material(
+		_grass_tex(), 1.45, 0.88, span, _apron_tint(plain), 1.0)
 
-	# Bosses de relief doux SUR la plaine (loin, au-delà des murs) — évite le
-	# tablier parfaitement plat qui « lisait » comme du vide entre la lisière
-	# et les montagnes.
-	var rng := RandomNumberGenerator.new()
-	rng.seed = hash(_map_size) * 5 + 71
-	var base_r := maxf(_map_size.x, _map_size.y) * 0.5
-	for i in 22:
-		var ang := rng.randf_range(0.0, TAU)
-		var rr := base_r + rng.randf_range(10.0, 40.0)
-		var mound := MeshInstance3D.new()
-		var sph := SphereMesh.new()
-		sph.radius = rng.randf_range(6.0, 13.0)
-		sph.height = sph.radius * 0.9
-		sph.radial_segments = 8
-		sph.rings = 4
-		mound.mesh = sph
-		mound.position = Vector3(center.x + cos(ang) * rr, -sph.radius * 0.62 - 1.0,
-			center.z + sin(ang) * rr)
-		var mm := StandardMaterial3D.new()
-		mm.albedo_color = plain.lerp(cfg["hill_b"], rng.randf_range(0.0, 0.4)) * rng.randf_range(0.9, 1.06)
-		mm.roughness = 1.0
-		mound.material_override = mm
-		mound.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		_backdrop.add_child(mound)
+	# ANNEAU de 4 quads qui ENTOURE la dalle, au lieu d'un unique plan géant
+	# glissé DESSOUS à y=-1.2. Ce plan créait une marche de 1,2 u tout autour du
+	# rectangle jouable (le champ de hauteur verrouille à plat, y=0, toutes les
+	# cases occupées — donc TOUT le pourtour de la map est exactement à 0), et
+	# les arbres de la ceinture, posés à y=0, FLOTTAIENT au-dessus de lui.
+	# En anneau, on peut affleurer le bord (y=-0.02) sans jamais recouvrir les
+	# creux du relief intérieur (qui descendent à -0.55) : c'était la raison
+	# d'être du -1.2, et elle disparaît puisqu'on ne passe plus sous la dalle.
+	var hx := _map_size.x * 0.5
+	var hz := _map_size.y * 0.5
+	var s := span * 0.5
+	for band: Dictionary in [
+		{"size": Vector2(2.0 * s, s - hz), "at": Vector2(0.0, -(s + hz) * 0.5)},   # nord
+		{"size": Vector2(2.0 * s, s - hz), "at": Vector2(0.0,  (s + hz) * 0.5)},   # sud
+		{"size": Vector2(s - hx, 2.0 * hz), "at": Vector2(-(s + hx) * 0.5, 0.0)},  # ouest
+		{"size": Vector2(s - hx, 2.0 * hz), "at": Vector2( (s + hx) * 0.5, 0.0)},  # est
+	]:
+		var band_size: Vector2 = band["size"]
+		var at: Vector2 = band["at"]
+		var quad := MeshInstance3D.new()
+		quad.name = "GroundApron"
+		var plane := PlaneMesh.new()
+		plane.size = band_size
+		quad.mesh = plane
+		# -0.06 : sous le sentier de sortie (-0.03), lui-même sous la dalle (0).
+		# Cf. _build_exit_trails pour l'étagement des trois plans de sol.
+		quad.position = Vector3(center.x + at.x, -0.06, center.z + at.y)
+		quad.material_override = mat
+		quad.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_backdrop.add_child(quad)
+	# NB : plus de "bosses de relief" (sphères) sur la plaine. Elles étaient là
+	# pour meubler un tablier trop plat, mais lisaient comme de grosses boules
+	# vertes posées dans l'herbe (retour joueurs). C'est la CEINTURE D'ARBRES
+	# dense (cf. _build_midground) qui remplit désormais ce rôle — un décor
+	# lisible plutôt qu'une géométrie abstraite.
 
 
 ## Papillons qui voltigent au-dessus de la map (prairie, automne) — enfants
@@ -597,6 +736,101 @@ func _build_butterflies(cfg: Dictionary, rng: RandomNumberGenerator) -> void:
 		_backdrop.add_child(b)
 
 
+## SENTIER DE TERRE prolongé au-delà de chaque portail, dans la trouée ouverte
+## par _in_portal_gap. Le chemin carvé s'arrêtait NET au bord de la map : on
+## voyait une allée qui butait sur de l'herbe, ce qui ne disait pas « la suite
+## est par là » (retour joueurs). Il file maintenant vers le lointain et se perd
+## dans le brouillard.
+##
+## Teinté avec la couleur MESURÉE du chemin jouable (cf.
+## MapRender3D._path_average_color) et compensé comme le tablier : il doit se
+## lire comme le PROLONGEMENT du chemin, donc aucun écart de teinte n'est
+## admissible.
+const TRAIL_WIDTH := 4.2
+const TRAIL_LEN   := 26.0
+
+func _build_exit_trails(cfg: Dictionary, center: Vector3) -> void:
+	if _terrain == null or not ("path_avg_color" in _terrain):
+		return
+	var trail_col: Color = _terrain.path_avg_color
+	var mat := GrassPatch.ground_material(
+		_grass_tex(), 1.45, 0.88, TRAIL_LEN, _apron_tint(trail_col), 1.0)
+	for g: Vector3 in _portal_gaps():
+		# Direction SORTANTE : les portails sont sur les bords nord/sud (cf.
+		# _in_portal_gap), donc le sentier file vers l'extérieur en Z.
+		var dir := -1.0 if g.z < center.z else 1.0
+		var strip := MeshInstance3D.new()
+		strip.name = "ExitTrail"
+		var plane := PlaneMesh.new()
+		plane.size = Vector2(TRAIL_WIDTH, TRAIL_LEN)
+		strip.mesh = plane
+		# Chevauche légèrement la map (départ 1 u AVANT le bord) pour qu'aucun
+		# liseré d'herbe ne s'intercale entre le chemin carvé et son prolongement.
+		# Étagement des 3 plans de sol : dalle jouable à 0, sentier à -0.03,
+		# tablier à -0.06. Assez serré pour rester invisible à l'œil, assez
+		# écarté pour ne pas z-fighter.
+		strip.position = Vector3(g.x, -0.03, g.z + dir * (TRAIL_LEN * 0.5 - 1.0))
+		strip.material_override = mat
+		strip.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_backdrop.add_child(strip)
+
+
+## Positions monde des portails (entrée + 3 sorties) de la map courante.
+## La ceinture d'arbres doit S'ÉCARTER devant eux : sinon elle referme un mur
+## opaque juste derrière chaque porte, et l'arche de sortie se noie dedans — on
+## ne comprend plus que c'est par là qu'on continue (retour joueurs : « c'est
+## dur de voir que c'est une allée pour aller à la suite »). Le trou perce une
+## trouée dans la forêt, qui prolonge visuellement le chemin.
+func _portal_gaps() -> Array[Vector3]:
+	var out: Array[Vector3] = []
+	if _terrain == null or not _terrain.has_method("cell_to_world3"):
+		return out
+	for prop: String in ["entry_tile", "exit_A", "exit_B", "exit_C"]:
+		if prop in _terrain:
+			out.append(_terrain.cell_to_world3(_terrain.get(prop)))
+	return out
+
+
+## Demi-largeur et profondeur (unités monde) de la trouée devant un portail.
+## C'est un COULOIR, pas un disque : il doit traverser les 5 rangs de la
+## ceinture (le plus lointain est à ~11 u du bord) pour qu'on voie la forêt
+## s'ouvrir et le chemin filer au loin. Un disque assez large pour ça aurait
+## rasé tout le côté nord d'un coup — les 3 sorties y sont alignées.
+const PORTAL_GAP_HALF_W := 4.0
+const PORTAL_GAP_DEPTH  := 14.0
+
+## Suppose que les portails sont sur les bords NORD/SUD (cf.
+## MapGenerator._compute_portals : entrée en bas-centre, sorties sur la rangée
+## 0) — d'où un couloir étiré sur Z. À revoir si des sorties latérales arrivent.
+func _in_portal_gap(gaps: Array[Vector3], pos: Vector3) -> bool:
+	for g: Vector3 in gaps:
+		var dx := (pos.x - g.x) / PORTAL_GAP_HALF_W
+		var dz := (pos.z - g.z) / PORTAL_GAP_DEPTH
+		if dx * dx + dz * dz < 1.0:
+			return true
+	return false
+
+
+## Point du périmètre d'un rectangle centré (demi-extents `hx`/`hz`), paramétré
+## par `t` ∈ [0,1) : 0 = coin haut-gauche, puis sens horaire. Sert à poser un
+## décor qui LONGE la dalle jouable au lieu de la cercler.
+func _rect_perimeter_point(center: Vector3, hx: float, hz: float, t: float) -> Vector3:
+	var w := 2.0 * hx
+	var h := 2.0 * hz
+	var p := t * 2.0 * (w + h)
+	var x := 0.0
+	var z := 0.0
+	if p < w:                 # bord nord, vers l'est
+		x = -hx + p;            z = -hz
+	elif p < w + h:           # bord est, vers le sud
+		x = hx;                 z = -hz + (p - w)
+	elif p < 2.0 * w + h:     # bord sud, vers l'ouest
+		x = hx - (p - w - h);   z = hz
+	else:                     # bord ouest, vers le nord
+		x = -hx;                z = hz - (p - 2.0 * w - h)
+	return center + Vector3(x, 0, z)
+
+
 ## Second plan tout autour de la map, juste au-delà des murs de bordure —
 ## mélange d'arbres (silhouette hazy) et de falaises étagées selon le thème,
 ## pour qu'on ne voie jamais le vide entre le bord jouable et les collines
@@ -604,23 +838,50 @@ func _build_butterflies(cfg: Dictionary, rng: RandomNumberGenerator) -> void:
 func _build_midground(cfg: Dictionary, rng: RandomNumberGenerator, center: Vector3) -> void:
 	# Proportion de falaises étagées vs arbres — le rocailleux est surtout
 	# fait de falaises, les thèmes végétaux surtout d'arbres.
-	var cliff_ratio := 0.75 if cfg.get("midground_cliffs", false) else 0.12
+	# 0 hors biomes rocheux : la lisière d'une PRAIRIE ne contient aucune
+	# falaise. L'ancien 0.12 en semait quand même une sur huit un peu partout
+	# (retour joueurs : « dans la prairie tu peux enlever les falaises »).
+	var cliff_ratio := 0.75 if cfg.get("midground_cliffs", false) else 0.0
 	var base_r := maxf(_map_size.x, _map_size.y) * 0.5
-	# CEINTURE DENSE d'arbres sur 3 anneaux entrelacés, juste au-delà des murs
-	# de bordure — plus de trou entre la zone jouable et l'horizon. Un
-	# anneau SUPPLÉMENTAIRE, très proche (presque collé au mur), lit comme
-	# une VRAIE lisière infranchissable plutôt qu'un simple décor (retour
-	# joueurs : le mur invisible se sentait trop).
-	for ring in 3:
-		var n := 52 - ring * 8
+	# CEINTURE DENSE qui épouse le RECTANGLE de la dalle jouable, et non plus un
+	# cercle de rayon max(W,H)/2 : sur une map large (ex. 56×35), ce cercle
+	# collait au bord sur l'axe long mais laissait ~10 unités de plaine NUE sur
+	# l'axe court — le bord rectangulaire de la dalle restait donc à découvert
+	# sur deux côtés, et c'est précisément lui qu'on lisait comme « la zone est
+	# un rectangle » (retour joueurs). En suivant le périmètre, les arbres
+	# masquent la jointure dalle/plaine sur les quatre côtés.
+	var gaps := _portal_gaps()
+	for ring in 5:
+		var inflate := 1.0 + ring * 2.6
+		var hx := _map_size.x * 0.5 + inflate
+		var hz := _map_size.y * 0.5 + inflate
+		# Espacement serré (~1.7 u) : c'est la DENSITÉ qui rend la lisière
+		# opaque — un anneau clairsemé laisse voir la plaine au travers.
+		var n := int(4.0 * (hx + hz) / 1.7)
+		var positions: Array[Vector3] = []
+		var heights: Array[float] = []
 		for i in n:
-			var ang := (TAU / float(n)) * i + rng.randf_range(-0.08, 0.08)
-			var r := base_r + 0.8 + ring * 5.0 + rng.randf_range(-1.2, 3.0)
-			var pos := center + Vector3(cos(ang) * r, 0, sin(ang) * r)
+			var t := (float(i) + rng.randf_range(-0.35, 0.35)) / float(n)
+			var pos := _rect_perimeter_point(center, hx, hz, fposmod(t, 1.0))
+			pos += Vector3(rng.randf_range(-1.3, 1.3), 0, rng.randf_range(-1.3, 1.3))
+			# Trouée devant les portails : la forêt doit s'ouvrir là où le chemin
+			# sort, sinon l'arche est plaquée contre un mur d'arbres opaque.
+			if _in_portal_gap(gaps, pos):
+				continue
 			if ring == 1 and rng.randf() < cliff_ratio:
-				_add_cliff_tier(cfg, rng, pos, ang)
-			else:
-				_add_backdrop_tree(cfg, rng, pos, ring == 0)
+				_add_cliff_tier(cfg, rng, pos, atan2(pos.z - center.z, pos.x - center.x))
+				continue
+			positions.append(pos)
+			# L'anneau collé au bord reste BAS (sous-bois/lisière) ; les grands
+			# arbres commencent au rang suivant, sinon ils masquent la map.
+			heights.append(rng.randf_range(2.2, 4.2) if ring == 0 \
+				else rng.randf_range(3.5, 7.0))
+		# Estompage progressif dès la lisière (0 → 0.24), qui enchaîne avec
+		# _build_distant_forest (reprend à 0.28). Le rang 0 partage la teinte
+		# exacte des arbres de la map (cf. MapRender3D._kit_tree_config) : la
+		# jointure dalle/plaine doit être invisible, donc pas de rupture de
+		# feuillage non plus.
+		_add_tree_batch(cfg, rng, positions, heights, _haze_tints(cfg, ring * 0.06))
 
 	# ROCKY : contreforts bas entre la lisière et les vrais pics lointains
 	# (cf. _build_mountains) — comble le "vide" entre le sol jouable et la
@@ -675,24 +936,6 @@ func _add_cliff_tier(cfg: Dictionary, rng: RandomNumberGenerator, pos: Vector3, 
 		s *= 0.78
 	_disable_shadows(root)   # décor lointain : pas d'ombre intrusive
 
-
-## Arbre lointain — vrai mesh 3D du kit nature (mêmes assets que le premier
-## plan, cf. KitProps), pas d'ombre portée pour rester léger en second plan.
-## Le brouillard de la scène (cf. _apply_environment) assure à lui seul la
-## perspective atmosphérique — pas besoin de teinter/désaturer à la main.
-func _add_backdrop_tree(cfg: Dictionary, rng: RandomNumberGenerator, pos: Vector3, close: bool = false) -> void:
-	var pool: Array = KitProps.TREES_PINE if cfg.get("midground_cliffs", false) else KitProps.TREES_ROUND
-	var file: String = pool[rng.randi() % pool.size()]
-	var native_h: float = KitProps.TREE_NATIVE_HEIGHT.get(file, 1.7)
-	var tree := KitProps.instance(file)
-	# L'anneau le plus proche (`close`) reste plus BAS/dense (lisière/
-	# sous-bois) — les grands arbres attendent le second plan.
-	var target_h := rng.randf_range(2.2, 4.2) if close else rng.randf_range(3.5, 7.0)
-	tree.scale       = Vector3.ONE * (target_h / native_h)
-	tree.rotation.y  = rng.randf_range(0.0, TAU)
-	tree.position    = pos
-	_backdrop.add_child(tree)
-	_disable_shadows(tree)
 
 
 ## Désactive récursivement les ombres portées d'un sous-arbre — pour le

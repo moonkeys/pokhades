@@ -25,10 +25,9 @@ const C_DOOR := Color(0.14, 0.10, 0.06)
 var _data:      Dictionary = {}
 var _triggered: bool       = false
 var _active:    bool       = false   # une porte FERMÉE ne déclenche rien
-var _pulse:     float      = 0.0
 
-var _glow:     MeshInstance3D     = null
-var _glow_mat: StandardMaterial3D = null
+var _glow:     GPUParticles3D     = null   # motes lumineuses dans le passage
+static var _mote_tex: GradientTexture2D = null
 var _door:     MeshInstance3D     = null   # battant (sombre = fermé)
 var _is_tunnel: bool = false
 var _is_toll:   bool = false
@@ -67,24 +66,14 @@ func setup(data: Dictionary) -> void:
 	elif style == "toll":
 		_is_toll = true
 		_build_toll_gate()
+	elif style == "arch":
+		_build_hedge_arch()
 	else:
 		_build_gate_building()
 
 	# Léger halo au sol devant la porte, pulsé — indique l'interactivité.
 	# Masqué tant que la porte est fermée.
-	_glow = MeshInstance3D.new()
-	var disc := CylinderMesh.new()
-	disc.top_radius    = 0.85
-	disc.bottom_radius = 0.85
-	disc.height        = 0.03
-	_glow.mesh = disc
-	_glow.position = Vector3(0, 0.02, WALL_D * 0.5 + 0.9)
-	_glow_mat = StandardMaterial3D.new()
-	_glow_mat.albedo_color = Color(0.4, 1.0, 0.6, 0.35)
-	_glow_mat.transparency  = BaseMaterial3D.TRANSPARENCY_ALPHA
-	_glow_mat.shading_mode  = BaseMaterial3D.SHADING_MODE_UNSHADED
-	_glow.material_override = _glow_mat
-	_glow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_glow = _make_motes()
 	_glow.visible = _active
 	add_child(_glow)
 
@@ -98,10 +87,14 @@ func setup(data: Dictionary) -> void:
 		lbl_b.no_depth_test = true
 		lbl_b.font_size = 46
 		lbl_b.pixel_size = 0.009
-		lbl_b.modulate = Color(0.5, 1.0, 0.55) if _active else Color(0.70, 0.72, 0.62)
+		lbl_b.modulate = Color(0.5, 1.0, 0.55)
 		lbl_b.outline_size = 13
 		lbl_b.outline_modulate = Color(0.05, 0.12, 0.05)
 		lbl_b.name = "BonusLabel"
+		# La récompense ne se dévoile qu'une fois la zone NETTOYÉE (cf. open) :
+		# l'annoncer pendant les vagues gâchait le choix de sortie, qui n'est
+		# de toute façon pas encore possible (retour joueurs).
+		lbl_b.visible = _active
 		add_child(lbl_b)
 
 	body_entered.connect(_on_body_entered)
@@ -122,12 +115,15 @@ func open() -> void:
 		tw.tween_property(_toll_arm, "rotation:z", deg_to_rad(78.0), 0.6) \
 			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	elif is_instance_valid(_door):
+		# NB : l'arche (style "arch") ne pose PAS de `_door` — elle n'a aucun
+		# obstacle à écarter, son ouverture se lit aux motes et au libellé.
 		if _is_tunnel:
 			_door.visible = false
 		else:
 			(_door.material_override as StandardMaterial3D).albedo_color = C_DOOR
 	var lbl := get_node_or_null("BonusLabel")
 	if lbl is Label3D:
+		(lbl as Label3D).visible  = true
 		(lbl as Label3D).modulate = Color(0.5, 1.0, 0.55)
 
 
@@ -193,6 +189,64 @@ func _build_tunnel() -> void:
 	seal.visible = not _active
 	add_child(seal)
 	_door = seal
+
+
+## Style "prairie" : ARCHE DE FEUILLAGE — deux grands arbres qui se rejoignent
+## au-dessus du passage, encadrés de haies qui se resserrent en entonnoir vers
+## un sentier qui s'enfonce. Une porte de maison plantée au milieu d'un champ
+## (le style "house" par défaut) n'avait aucun sens en prairie (retour joueurs).
+##
+## Tant que la zone n'est pas nettoyée, le passage est bouché par un rideau de
+## feuillage dense, retiré par open() — même rôle que le battant de la maison
+## ou le voile de la grotte, mais lu comme "les buissons barrent le chemin".
+const C_HEDGE      := Color(0.20, 0.44, 0.18)
+const C_HEDGE_DARK := Color(0.13, 0.31, 0.13)
+const ARCH_HALF_W  := 1.5   # demi-largeur du passage libre
+## Buissons réellement importés (cf. KitProps.KIT_DIR — le dossier wiré ne
+## contient qu'un sous-ensemble du pack Kenney, pas plant_bushLarge & co.).
+const HEDGE_MESHES: Array[String] = [
+	"plant_bush.glb", "plant_bushDetailed.glb", "plant_bushTriangle.glb",
+]
+
+func _build_hedge_arch() -> void:
+	# Graine tirée de la POSITION (posée par le caller avant setup) : en
+	# multijoueur, chaque pair doit voir exactement la même arche — le projet
+	# proscrit le RNG global pour tout ce qui est généré par zone. Deux portes
+	# d'une même salle sont à des cases différentes, donc restent distinctes.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(position)
+
+	var leaf := {"leafsGreen": C_HEDGE, "leafsDark": C_HEDGE_DARK}
+
+	# Les deux montants : de vrais arbres du kit, penchés VERS le passage pour
+	# que leurs frondaisons se rejoignent en voûte au-dessus du joueur.
+	for sx: float in [-1.0, 1.0]:
+		var trunk := KitProps.instance("tree_default.glb", leaf)
+		trunk.scale    = Vector3.ONE * 2.6
+		trunk.position = Vector3(sx * (ARCH_HALF_W + 0.35), 0, 0)
+		trunk.rotation = Vector3(0, rng.randf() * TAU, sx * -0.22)   # incliné vers l'axe
+		add_child(trunk)
+
+	# Haies latérales en entonnoir : VRAIS buissons du kit (la première version
+	# empilait des BoxMesh — ça se lisait comme des cubes verts posés là).
+	# Elles se resserrent vers l'axe à mesure qu'on avance, ce qui cadre le
+	# regard sur le sentier au lieu de laisser l'œil filer sur les côtés.
+	for sx: float in [-1.0, 1.0]:
+		for i in 5:
+			var bush := KitProps.instance(HEDGE_MESHES[rng.randi() % HEDGE_MESHES.size()], leaf)
+			bush.scale      = Vector3.ONE * rng.randf_range(1.5, 2.3)
+			bush.position   = Vector3(
+				sx * (ARCH_HALF_W + 0.5 - i * 0.10) + rng.randf_range(-0.15, 0.15),
+				0.0, -(0.7 + i * 1.05))
+			bush.rotation.y = rng.randf() * TAU
+			add_child(bush)
+
+	# PAS de massif barrant le passage. Il y en a eu un (rôle du battant de la
+	# maison / du voile de la grotte), mais il bouchait la vue sur le sentier
+	# qui file au loin — or c'est LUI qui dit « la suite est par là », toute la
+	# raison d'être de l'arche (retour joueurs). L'état fermé se lit désormais
+	# à l'absence de motes et de libellé de récompense (cf. setup/open), pas à
+	# un obstacle physique.
 
 
 ## Style "village" : PÉAGE — deux poteaux + un bras de barrière rayé rouge/
@@ -268,13 +322,64 @@ func _add_roof_pitch(half_span: float, side: float) -> void:
 	add_child(mi)
 
 
-func _process(delta: float) -> void:
-	_pulse += delta * 3.0
-	if is_instance_valid(_glow):
-		var p := sin(_pulse) * 0.5 + 0.5   # 0..1
-		_glow_mat.albedo_color = Color(0.4, 1.0, 0.6, 0.25 + p * 0.25)
-		var s := 1.0 + p * 0.12
-		_glow.scale = Vector3(s, 1.0, s)
+## Signal d'interactivité de la porte : une colonne de MOTES lumineuses qui
+## montent lentement dans le passage. Remplace le disque vert translucide posé
+## au sol, qui se lisait comme un aplat de gameplay collé sur le décor (retour
+## joueurs). Les motes se fondent dans l'ambiance (pollen/lucioles), attirent
+## l'œil par le MOUVEMENT plutôt que par la couleur, et marquent le passage
+## lui-même au lieu d'une zone au sol.
+##
+## Pas de _process ici : les particules s'animent seules sur le GPU.
+func _make_motes() -> GPUParticles3D:
+	if _mote_tex == null:
+		var grad := Gradient.new()
+		grad.set_color(0, Color(1.0, 1.0, 0.85, 1.0))
+		grad.set_color(1, Color(1.0, 0.95, 0.6, 0.0))   # bord fondu = point de lumière
+		_mote_tex = GradientTexture2D.new()
+		_mote_tex.gradient = grad
+		_mote_tex.fill = GradientTexture2D.FILL_RADIAL
+		_mote_tex.fill_from = Vector2(0.5, 0.5)
+		_mote_tex.fill_to   = Vector2(1.0, 0.5)
+		_mote_tex.width  = 32
+		_mote_tex.height = 32
+
+	var p := GPUParticles3D.new()
+	p.amount   = 22
+	p.lifetime = 3.2
+	p.preprocess = 2.0        # déjà "en régime" à l'apparition, pas de bouffée initiale
+	p.position = Vector3(0, 0.1, WALL_D * 0.5 + 0.5)
+
+	var m := ParticleProcessMaterial.new()
+	m.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	m.emission_box_extents = Vector3(1.1, 0.05, 0.5)
+	m.direction = Vector3(0, 1, 0)
+	m.spread    = 12.0
+	m.initial_velocity_min = 0.5
+	m.initial_velocity_max = 1.1
+	m.gravity   = Vector3(0, 0.12, 0)    # légère poussée vers le haut, pas de chute
+	m.scale_min = 0.06
+	m.scale_max = 0.14
+	var alpha := Curve.new()             # apparition/disparition en fondu
+	alpha.add_point(Vector2(0.0, 0.0))
+	alpha.add_point(Vector2(0.25, 1.0))
+	alpha.add_point(Vector2(1.0, 0.0))
+	var ac := CurveTexture.new()
+	ac.curve = alpha
+	m.alpha_curve = ac
+	p.process_material = m
+
+	var draw := QuadMesh.new()
+	draw.size = Vector2(1, 1)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = _mote_tex
+	mat.transparency   = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.shading_mode   = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	mat.vertex_color_use_as_albedo = true   # requis pour que alpha_curve s'applique
+	draw.material = mat
+	p.draw_pass_1 = draw
+	p.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return p
 
 
 func _on_body_entered(body: Node) -> void:
