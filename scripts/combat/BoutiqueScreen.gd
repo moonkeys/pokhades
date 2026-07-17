@@ -15,7 +15,7 @@ signal learn_move(member_index: int, option_index: int, replace_index: int)  # -
 signal buy_berries(price: int, amount: int)
 signal buy_cs(cs_id: String)
 signal buy_potion(member_index: int, item_id: String)
-signal boon_stat(stat_id: String)
+signal boon_stat(stat_id: String, member_index: int)   # tout se choisit sur un seul écran
 signal closed
 
 ## Conversion ₽ → Baies. Taux VOLONTAIREMENT ingrat (≈0.25 baie/₽ au lieu de
@@ -148,27 +148,144 @@ func _rebuild() -> void:
 		MenuNav.focus_first(_panel)
 
 
-# ── Don « stats » : grille 2×2 (mockup 1) ─────────────────────────────
+# ── Don « stats » — UN SEUL écran ─────────────────────────────────────
+## Le choix se faisait en DEUX fenêtres : la grille des stats ici, puis un
+## ItemRewardScreen par-dessus pour désigner le Pokémon. On enchaînait deux
+## panneaux pour une seule décision, et le second masquait le premier — d'où
+## le "j'ai pas vu ce choix" (retour joueurs).
+##
+## Tout tient maintenant sur un écran : le Pokémon EN HAUT, le bonus en
+## dessous. La sélection suit le FOCUS (flèches) — pas besoin de valider le
+## Pokémon avant de descendre : le libellé rappelle en permanence à qui le
+## bonus s'appliquera, et Entrée sur un bonus conclut.
+var _stat_hint: Label = null
+var _stat_boon_btns: Array = []   # boutons "Choisir" des 4 stats (cible du focus)
+
 func _build_stat_boon() -> void:
 	UiKit.banner(_panel, "Bonus de stats")
-	var cw := 380.0; var ch := 120.0
+	_stat_boon_btns.clear()
+	_build_stat_member_row()
+
+	var cw := 380.0; var ch := 108.0
 	for i in STAT_BOONS.size():
 		var boon: Dictionary = STAT_BOONS[i]
 		var px := 40.0 + (i % 2) * (cw + 40.0)
-		var py := 96.0 + (i / 2) * (ch + 26.0)
+		var py := 300.0 + (i / 2) * (ch + 20.0)
 		var card := UiKit.card(_panel, Vector2(px, py), Vector2(cw, ch))
-		UiKit.icon_square(card, Vector2(18, 30), boon["sym"], 58.0)
-		UiKit.label(card, boon["label"], Vector2(96, 44), 22, UiKit.TEXT_DARK, 270)
-		var btn := UiKit.button("Choisir", Vector2(110, 40))
-		btn.position = Vector2(cw - 128, ch - 54)
+		UiKit.icon_square(card, Vector2(16, 24), boon["sym"], 54.0)
+		UiKit.label(card, boon["label"], Vector2(90, 36), 21, UiKit.TEXT_DARK, 270)
+		var btn := UiKit.button("Choisir", Vector2(110, 38))
+		btn.position = Vector2(cw - 126, ch - 50)
 		var sid: String = boon["id"]
-		btn.pressed.connect(func() -> void: boon_stat.emit(sid))
+		btn.pressed.connect(func() -> void: boon_stat.emit(sid, _sel_member))
 		card.add_child(btn)
+		_stat_boon_btns.append(btn)
 
-	var info := UiKit.dark_card(_panel, Vector2(40, 402), Vector2(800, 74))
-	UiKit.label(info, "Choisis un bonus, puis à QUEL Pokémon l'associer",
-		Vector2(0, 24), 20, UiKit.CREAM, 800, HORIZONTAL_ALIGNMENT_CENTER)
-	_add_continue(520)
+	_add_continue(556)
+
+
+## Rangée de sélection du Pokémon (haut de l'écran). Les membres K.O. et, en
+## multijoueur, les copies des AUTRES joueurs (remote_peer != 0) sont
+## désactivés : on ne buffe que ses propres Pokémon valides.
+func _build_stat_member_row() -> void:
+	_tabs.clear()
+	var live: Array = []
+	for m in _team:
+		if is_instance_valid(m) and m.pokemon_instance != null:
+			live.append(m)
+	if live.is_empty():
+		return
+
+	# Le membre présélectionné doit être ÉLIGIBLE : _sel_member vaut 0 par
+	# défaut, or le 1er membre peut être K.O. ou appartenir à un autre joueur.
+	if not _stat_member_ok(_team[_sel_member] if _sel_member < _team.size() else null):
+		for m in live:
+			if _stat_member_ok(m):
+				_sel_member = m.team_index
+				break
+
+	var cw := 128.0
+	var pad := (880.0 - live.size() * cw) / float(live.size() + 1)
+	for i in live.size():
+		var m = live[i]
+		var inst: PokemonInstance = m.pokemon_instance
+		var px := pad + i * (cw + pad)
+		var card := UiKit.card(_panel, Vector2(px, 84), Vector2(cw, 150))
+
+		if is_instance_valid(inst.portrait_texture):
+			var tex := TextureRect.new()
+			tex.texture        = inst.portrait_texture
+			tex.stretch_mode   = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			tex.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+			tex.position       = Vector2((cw - 56) * 0.5, 6)
+			tex.size           = Vector2(56, 56)
+			tex.modulate.a     = 0.45 if inst.is_fainted() else 1.0
+			tex.mouse_filter   = Control.MOUSE_FILTER_IGNORE   # le clic doit atteindre le bouton
+			card.add_child(tex)
+
+		UiKit.label(card, inst.data.name_fr.capitalize(), Vector2(4, 64), 13,
+			UiKit.RED_SOFT if inst.is_fainted() else UiKit.TEXT_DARK,
+			cw - 8, HORIZONTAL_ALIGNMENT_CENTER)
+		UiKit.label(card, "Niv. %d" % inst.level, Vector2(4, 82), 11,
+			UiKit.TEXT_DARK.lightened(0.25), cw - 8, HORIZONTAL_ALIGNMENT_CENTER)
+
+		var ok := _stat_member_ok(m)
+		var btn := UiKit.button("K.O." if inst.is_fainted() else "Choisir", Vector2(cw - 16, 34), ok)
+		btn.position = Vector2(8, 106)
+		btn.disabled = not ok
+		var idx: int = m.team_index
+		if ok:
+			# Sélection au FOCUS : les flèches parcourent la rangée et le Pokémon
+			# visé devient la cible, sans validation intermédiaire.
+			btn.focus_entered.connect(func() -> void: _set_stat_member(idx))
+			# Entrée sur un Pokémon = "c'est celui-là" → on descend aux bonus.
+			btn.pressed.connect(func() -> void:
+				_set_stat_member(idx)
+				if not _stat_boon_btns.is_empty():
+					(_stat_boon_btns[0] as Button).grab_focus()
+			)
+		card.add_child(btn)
+		_tabs.append(btn)
+		# Focus initial sur le Pokémon RETENU, et via sa position dans _tabs.
+		# _rebuild indexe _tabs par _sel_member, qui est un team_index : les deux
+		# ne coïncident pas dès qu'un membre manque, et le bouton visé pourrait
+		# être désactivé (K.O. / autre joueur) — grab_focus y échouerait en
+		# silence et les flèches resteraient inertes.
+		if ok and idx == _sel_member:
+			_focus_tab = _tabs.size() - 1
+
+	var info := UiKit.dark_card(_panel, Vector2(40, 244), Vector2(800, 46))
+	_stat_hint = UiKit.label(info, "", Vector2(0, 12), 18, UiKit.CREAM, 800,
+		HORIZONTAL_ALIGNMENT_CENTER)
+	_refresh_stat_hint()
+
+
+func _stat_member_ok(m) -> bool:
+	if m == null or not is_instance_valid(m) or m.pokemon_instance == null:
+		return false
+	if m.pokemon_instance.is_fainted():
+		return false
+	return m.remote_peer == 0   # multi : pas les Pokémon des autres joueurs
+
+
+func _set_stat_member(idx: int) -> void:
+	if _sel_member == idx:
+		return
+	_sel_member = idx
+	_refresh_stat_hint()
+
+
+## Rappel permanent de la cible — c'est LUI qui remplace la seconde fenêtre :
+## sans lui, on choisirait un bonus sans savoir à qui il va.
+func _refresh_stat_hint() -> void:
+	if not is_instance_valid(_stat_hint):
+		return
+	var nm := "?"
+	if _sel_member >= 0 and _sel_member < _team.size():
+		var m = _team[_sel_member]
+		if is_instance_valid(m) and m.pokemon_instance != null:
+			nm = m.pokemon_instance.data.name_fr.capitalize()
+	_stat_hint.text = "Bonus pour :  %s" % nm
 
 
 # ── Parchemin d'attaque (mockup 2) — un seul écran ────────────────────
