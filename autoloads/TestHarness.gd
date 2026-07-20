@@ -29,6 +29,8 @@ func _ready() -> void:
 			_run_scenario(_scenario_run.bind(0))
 		elif arg.begins_with("smoke_run_room="):
 			_run_scenario(_scenario_run.bind(int(arg.substr(15))))
+		elif arg == "download_all":
+			_run_scenario(_scenario_download_all)
 		elif arg == "smoke_hub":
 			_run_scenario(_scenario_hub)
 		elif arg == "smoke_pokedex":
@@ -269,3 +271,65 @@ func _scenario_mp_join(code: String) -> void:
 		return
 	_pass("mp_join", "team=%d" % team)
 
+
+## ── Téléchargement complet pour EMBARQUER dans le build (res://data/) ─────
+## Réutilise PokemonAPI.prefetch_all() (fiches Pokémon + attaques) et pousse
+## PMDSprites.get_walk_sprites() sur TOUTE l'espèce référencée par le jeu
+## (walk + Attack/Hurt/Shoot/Charge/Sleep, chargées en arrière-plan par
+## PMDSprites lui-même). Une fois le cache utilisateur rempli, on le COPIE
+## vers res://data/ — le dossier embarqué que PokemonAPI/PMDSprites lisent en
+## PRIORITÉ (cf. _BUNDLED_DIR). Outil de build, pas un test : invoqué à la main
+## (`-- download_all`), jamais par tests/smoke.sh.
+func _scenario_download_all() -> void:
+	print("DL: préchargement fiches Pokémon + attaques…")
+	var done := [false]
+	PokemonAPI.prefetch_finished.connect(func() -> void: done[0] = true, CONNECT_ONE_SHOT)
+	PokemonAPI.prefetch_all()
+	var waited := 0.0
+	while not done[0] and waited < 180.0:
+		await get_tree().create_timer(0.5).timeout
+		waited += 0.5
+	print("DL: fiches OK (%.0fs)" % waited)
+
+	var ids: Array[int] = PokemonAPI._all_species_ids()
+	print("DL: %d espèces — sprites PMD (marche + actions)…" % ids.size())
+	const BATCH := 6
+	for i in range(0, ids.size(), BATCH):
+		var chunk: Array = ids.slice(i, mini(i + BATCH, ids.size()))
+		var remaining := [chunk.size()]
+		for id in chunk:
+			PMDSprites.get_walk_sprites(id, self, func(_r: Dictionary) -> void: remaining[0] -= 1)
+		var w2 := 0.0
+		while remaining[0] > 0 and w2 < 20.0:
+			await get_tree().create_timer(0.3).timeout
+			w2 += 0.3
+		# Grâce : Attack/Hurt/Shoot/Charge/Sleep sont lancées en ARRIÈRE-PLAN
+		# par PMDSprites dès la marche résolue (pas de signal de fin) — on
+		# laisse le temps aux requêtes parallèles de retomber avant la copie.
+		await get_tree().create_timer(1.5).timeout
+		print("DL: sprites %d/%d" % [mini(i + BATCH, ids.size()), ids.size()])
+
+	print("DL: copie user:// → res://data/ …")
+	_copy_dir_recursive("user://cache/pokeapi", "res://data/pokeapi")
+	_copy_dir_recursive("user://cache/pmd", "res://data/pmd")
+	print("DL: terminé.")
+	_pass("download_all", "res://data/ peuplé")
+
+
+func _copy_dir_recursive(src: String, dst: String) -> void:
+	DirAccess.make_dir_recursive_absolute(dst)
+	var d := DirAccess.open(src)
+	if d == null:
+		return
+	d.list_dir_begin()
+	var fname := d.get_next()
+	while fname != "":
+		if fname != "." and fname != "..":
+			var s_path := src + "/" + fname
+			var t_path := dst + "/" + fname
+			if d.current_is_dir():
+				_copy_dir_recursive(s_path, t_path)
+			else:
+				DirAccess.copy_absolute(s_path, t_path)
+		fname = d.get_next()
+	d.list_dir_end()

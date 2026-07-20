@@ -2,6 +2,11 @@ extends Node
 
 const BASE_URL := "https://pokeapi.co/api/v2"
 const _CACHE_DIR := "user://cache/pokeapi/"
+## Cache EMBARQUÉ (res://, dans le .pck à l'export) — rempli une fois par
+## tools/download_all_assets.gd et committé. Lu AVANT le cache utilisateur :
+## hors ligne dès le premier lancement. res:// est en lecture seule à
+## l'export, les écritures continuent de cibler _CACHE_DIR.
+const _BUNDLED_DIR := "res://data/pokeapi/"
 
 var _cache:      Dictionary = {}
 var _move_cache: Dictionary = {}
@@ -86,7 +91,7 @@ func get_pokemon(id_or_name: Variant, callback: Callable) -> void:
 		if callback.is_valid(): callback.call(_cache[key])
 		return
 
-	var disk := _read_json_cache(_disk_path("pokemon", key))
+	var disk := _read_json_cache(_disk_read_path("pokemon", key))
 	# Invalide les caches d'avant l'ajout du movepool complet (learnable_moves)
 	if not disk.is_empty() and disk.has("learnable_moves"):
 		_cache[key] = disk
@@ -179,12 +184,14 @@ func get_move(move_name: String, callback: Callable) -> void:
 		if callback.is_valid(): callback.call(_move_cache[move_name])
 		return
 
-	var disk := _read_json_cache(_disk_path("move", move_name))
+	var disk := _read_json_cache(_disk_read_path("move", move_name))
 	# Invalidation : les caches d'avant l'ajout de name_fr, puis de desc_fr/
 	# accuracy/pp (popup d'infos du Pokédex), n'ont pas ces clés — on les
 	# re-télécharge une fois.
 	if not disk.is_empty() and disk.has("name_fr") and disk.has("desc_fr"):
 		_move_cache[move_name] = disk
+		var dpw: Variant = disk.get("power")
+		GameManager.note_move_power(move_name, int(dpw) if dpw != null else 0)
 		if callback.is_valid(): callback.call(disk)
 		return
 
@@ -227,6 +234,10 @@ func get_move(move_name: String, callback: Callable) -> void:
 			"desc_fr":      desc_fr,
 		}
 		_move_cache[move_name] = move_data
+		# Alimente le cache de puissance du build : le poids d'une capacité en
+		# dépend et doit se calculer SYNCHRONEMENT (cf. GameManager.move_weight).
+		var pw_v: Variant = move_data.get("power")
+		GameManager.note_move_power(move_name, int(pw_v) if pw_v != null else 0)
 		_write_json_cache(_disk_path("move", move_name), move_data)
 		if callback.is_valid(): callback.call(move_data)
 		http.queue_free()
@@ -239,7 +250,7 @@ func get_item(api_name: String, callback: Callable) -> void:
 		if callback.is_valid(): callback.call(_item_cache[api_name])
 		return
 
-	var disk := _read_json_cache(_disk_path("item", api_name))
+	var disk := _read_json_cache(_disk_read_path("item", api_name))
 	if not disk.is_empty():
 		_item_cache[api_name] = disk
 		if callback.is_valid(): callback.call(disk)
@@ -337,6 +348,16 @@ func _build_data(json: Dictionary, name_fr: String, is_base_form: bool = true) -
 func _disk_path(subdir: String, key: String) -> String:
 	var safe_key := key.replace("/", "_").replace("\\", "_")
 	return "%s%s/%s.json" % [_CACHE_DIR, subdir, safe_key]
+
+
+## Chemin à LIRE : le bundle embarqué s'il a cette fiche, sinon le cache
+## utilisateur (l'appelant retombe sur le réseau si ni l'un ni l'autre).
+func _disk_read_path(subdir: String, key: String) -> String:
+	var safe_key := key.replace("/", "_").replace("\\", "_")
+	var bundled := "%s%s/%s.json" % [_BUNDLED_DIR, subdir, safe_key]
+	if FileAccess.file_exists(bundled):
+		return bundled
+	return _disk_path(subdir, key)
 
 
 func _read_json_cache(path: String) -> Dictionary:

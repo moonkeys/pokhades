@@ -2,6 +2,13 @@ extends Node
 
 const _BASE_URL := "https://raw.githubusercontent.com/PMDCollab/SpriteCollab/master/sprite"
 const _CACHE_DIR := "user://cache/pmd/"
+## Cache EMBARQUÉ dans le build (res://, donc dans le .pck à l'export) —
+## rempli une fois pour toutes par tools/download_all_assets.gd et committé au
+## dépôt. Lu AVANT le cache utilisateur : le jeu tourne hors ligne dès le
+## premier lancement, sans passer par le réseau ni écrire sur le disque de
+## l'utilisateur pour ce qui est déjà fourni. res:// est en lecture seule à
+## l'export — toutes les ÉCRITURES continuent de cibler _CACHE_DIR.
+const _BUNDLED_DIR := "res://data/pmd/"
 
 # Rangées de la feuille par direction (cardinales d'abord — source de
 # fallback — puis diagonales). Générique : préfixé par l'action ("walk_down",
@@ -50,7 +57,7 @@ func get_walk_sprites(dex_id: int, _node: Node, callback: Callable) -> void:
 # ── Chargement en deux étapes : XML puis PNG (avec cache disque) ──
 
 func _load_xml(dex_id: int) -> void:
-	var path := _cache_path(dex_id, "AnimData.xml")
+	var path := _read_path(dex_id, "AnimData.xml")
 	if FileAccess.file_exists(path):
 		var f := FileAccess.open(path, FileAccess.READ)
 		var xml_text := f.get_as_text()
@@ -80,7 +87,7 @@ func _load_xml(dex_id: int) -> void:
 
 
 func _load_png(dex_id: int, info: Dictionary) -> void:
-	var path := _cache_path(dex_id, "Walk-Anim.png")
+	var path := _read_path(dex_id, "Walk-Anim.png")
 	if FileAccess.file_exists(path):
 		var f := FileAccess.open(path, FileAccess.READ)
 		var bytes := f.get_buffer(f.get_length())
@@ -149,6 +156,16 @@ func _cache_path(dex_id: int, filename: String) -> String:
 	return "%s%04d/%s" % [_CACHE_DIR, dex_id, filename]
 
 
+## Chemin à LIRE : le bundle embarqué (res://) s'il a ce fichier, sinon le
+## cache utilisateur (user://, éventuellement vide → l'appelant retombera sur
+## le réseau).
+func _read_path(dex_id: int, filename: String) -> String:
+	var bundled := "%s%04d/%s" % [_BUNDLED_DIR, dex_id, filename]
+	if FileAccess.file_exists(bundled):
+		return bundled
+	return _cache_path(dex_id, filename)
+
+
 func _write_cache_text(path: String, text: String) -> void:
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
 	var f := FileAccess.open(path, FileAccess.WRITE)
@@ -186,7 +203,7 @@ func _load_extra_actions(dex_id: int) -> void:
 	if _actions_loaded.has(key):
 		return
 	_actions_loaded[key] = true
-	var xml_path := _cache_path(dex_id, "AnimData.xml")
+	var xml_path := _read_path(dex_id, "AnimData.xml")
 	if not FileAccess.file_exists(xml_path):
 		return
 	var f := FileAccess.open(xml_path, FileAccess.READ)
@@ -208,7 +225,7 @@ func _load_action(dex_id: int, xml: String, action: String, prefix: String) -> v
 		if info.is_empty():
 			return
 
-	var path := _cache_path(dex_id, "%s-Anim.png" % sheet_action)
+	var path := _read_path(dex_id, "%s-Anim.png" % sheet_action)
 	if FileAccess.file_exists(path):
 		var fp := FileAccess.open(path, FileAccess.READ)
 		var bytes := fp.get_buffer(fp.get_length())
