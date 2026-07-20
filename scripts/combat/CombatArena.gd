@@ -2674,20 +2674,32 @@ func _spawn_exit_doors_closed() -> void:
 	var room  := RunManager.inst().rooms_cleared
 	var count := 1 if RunManager.inst().is_shop_room(room + 1) else 2
 	var biome := RunManager.inst().current_biome()
+	# CHAQUE biome a sa porte (retour joueurs — la maison générique restait
+	# plantée au Marécage, au Lac et au Volcan) :
+	#   Montagne/Volcan → bouche de grotte ; Village → péage ; Lac → portique
+	#   de ponton ; biomes végétaux → arche de feuillage DÉCLINÉE (verte,
+	#   rousse d'automne, morte + roseaux au marécage).
 	var style := "house"
-	if biome == MapGenerator.MapTheme.ROCKY:
-		style = "tunnel"          # Montagne : bouche de grotte
+	var arch_kind := "green"
+	if biome == MapGenerator.MapTheme.ROCKY or biome == MapGenerator.MapTheme.VOLCANO:
+		style = "tunnel"
 	elif biome == MapGenerator.MapTheme.VILLAGE:
-		style = "toll"            # Village : barrière de péage qui se lève au clear
-	elif biome == MapGenerator.MapTheme.MEADOW or biome == MapGenerator.MapTheme.FOREST \
-			or biome == MapGenerator.MapTheme.AUTUMN:
-		# Biomes végétaux : arche de feuillage + sentier entre deux haies. Une
-		# porte de maison au milieu d'un champ n'avait aucun sens (retour joueurs).
+		style = "toll"
+	elif biome == MapGenerator.MapTheme.LAKE:
+		style = "pier"
+	elif biome == MapGenerator.MapTheme.MEADOW or biome == MapGenerator.MapTheme.FOREST:
 		style = "arch"
+	elif biome == MapGenerator.MapTheme.AUTUMN:
+		style = "arch"
+		arch_kind = "fall"
+	elif biome == MapGenerator.MapTheme.SWAMP:
+		style = "arch"
+		arch_kind = "swamp"
 	var exits_data := RunManager.inst().get_exits(count)
 	for e: Dictionary in exits_data:
-		e["active"] = false
-		e["style"]  = style
+		e["active"]    = false
+		e["style"]     = style
+		e["arch_kind"] = arch_kind
 	if _mp and multiplayer.is_server():
 		_net_exits.rpc(exits_data)
 	_spawn_exit_portals_from(exits_data)

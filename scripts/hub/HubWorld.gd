@@ -146,14 +146,53 @@ func _build_backdrop() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 99
 	var center := Vector3(MAP_W * 0.5, 0, MAP_H * 0.5)
+	var fog := Color(0.68, 0.66, 0.60)   # cf. _build_environment (fog_light_color)
 
-	# MUR DE FORÊT DENSE tout autour de la map — plusieurs anneaux d'arbres,
-	# de plus en plus hauts vers le fond, pour un horizon "on est au cœur des
-	# bois". Plus de montagnes/collines à l'extérieur (retour joueurs).
-	for ring in 5:
-		var n := 64 + ring * 10
-		var rx := MAP_W * 0.5 + 2.0 + ring * 4.2
-		var rz := MAP_H * 0.5 + 1.6 + ring * 3.8
+	# TABLIER DE SOL sous le mur et jusqu'à l'horizon — avant, on voyait le
+	# CIEL sous les troncs dès que la caméra plongeait : la clairière flottait
+	# dans le vide. Anneau de 4 quads (pas un plan sous la map, cf. la leçon
+	# des biomes : un plan dessous fait une marche), teinté à l'herbe du hub
+	# via la compensation de shader mesurée (BiomeAmbiance._apron_tint).
+	var hub_grass := Color(0.74, 0.84, 0.55)
+	var span := maxf(MAP_W, MAP_H) * 14.0
+	var apron_mat := GrassPatch.ground_material(
+		BiomeAmbiance._grass_tex(), 1.45, 0.88, span,
+		BiomeAmbiance._apron_tint(hub_grass), 1.0)
+	var hx := MAP_W * 0.5
+	var hz := MAP_H * 0.5
+	var hs := span * 0.5
+	for band: Dictionary in [
+		{"size": Vector2(2.0 * hs, hs - hz), "at": Vector2(0.0, -(hs + hz) * 0.5)},
+		{"size": Vector2(2.0 * hs, hs - hz), "at": Vector2(0.0,  (hs + hz) * 0.5)},
+		{"size": Vector2(hs - hx, 2.0 * hz), "at": Vector2(-(hs + hx) * 0.5, 0.0)},
+		{"size": Vector2(hs - hx, 2.0 * hz), "at": Vector2( (hs + hx) * 0.5, 0.0)},
+	]:
+		var quad := MeshInstance3D.new()
+		var plane := PlaneMesh.new()
+		plane.size = band["size"]
+		quad.mesh = plane
+		quad.position = Vector3(center.x + (band["at"] as Vector2).x, -0.06,
+			center.z + (band["at"] as Vector2).y)
+		quad.material_override = apron_mat
+		quad.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(quad)
+
+	# MUR DE FORÊT — même recette que les biomes : anneaux BATCHÉS en
+	# MultiMesh (l'ancienne version posait ~370 MeshInstance3D individuels,
+	# 370 draw calls) et ESTOMPÉS progressivement vers le brouillard — c'est
+	# l'étagement des teintes qui donne la profondeur, un mur uniforme lit
+	# comme un décor de théâtre. Plus dense aussi : on est au cœur des bois.
+	for ring in 7:
+		var n := 96 + ring * 18
+		var rx := MAP_W * 0.5 + 2.0 + ring * 4.4
+		var rz := MAP_H * 0.5 + 1.6 + ring * 4.0
+		var haze := minf(0.85, ring * 0.13)
+		var tints := {
+			"leafsGreen": Color(0.22, 0.55, 0.16).lerp(fog, haze),
+			"leafsDark":  Color(0.14, 0.40, 0.14).lerp(fog, haze),
+			"woodBark":   Color(0.36, 0.30, 0.26).lerp(fog, haze),
+		}
+		var by_file: Dictionary = {}   # fichier -> {"t": transforms, "p": phases}
 		for i in n:
 			var ang := (TAU / float(n)) * i + rng.randf_range(-0.05, 0.05)
 			var pos := center + Vector3(
@@ -163,12 +202,15 @@ func _build_backdrop() -> void:
 			var pool: Array = KitProps.TREES_ROUND if rng.randf() < 0.6 else KitProps.TREES_PINE
 			var file: String = pool[rng.randi() % pool.size()]
 			var native_h: float = KitProps.TREE_NATIVE_HEIGHT.get(file, 1.7)
-			var tree := KitProps.instance(file)
-			tree.scale = Vector3.ONE * (rng.randf_range(3.4, 5.8) + ring * 0.5) / native_h
-			tree.rotation.y = rng.randf_range(0.0, TAU)
-			tree.position = pos
-			add_child(tree)
-			_disable_shadows(tree)   # décor lointain : pas d'ombre intrusive
+			var sc := (rng.randf_range(3.4, 5.8) + ring * 0.6) / native_h
+			var basis := Basis(Vector3.UP, rng.randf_range(0.0, TAU)).scaled(Vector3.ONE * sc)
+			if not by_file.has(file):
+				by_file[file] = {"t": [], "p": []}
+			by_file[file]["t"].append(Transform3D(basis, pos))
+			by_file[file]["p"].append(rng.randf_range(0.0, TAU))
+		for file: String in by_file:
+			var mmi := KitProps.build_multimesh(file, by_file[file]["t"], by_file[file]["p"], tints)
+			add_child(mmi)
 
 	# 3) Nuages dérivants — HAUTS, petits et discrets pour ne pas former de
 	# grande bande translucide au premier plan (et pas de scintillement de tri

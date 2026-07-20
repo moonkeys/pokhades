@@ -628,6 +628,8 @@ func _apply_theme() -> void:
 	# rythme hors du biome Lac.
 	_water_mode = cfg.get("water_mode", "deep")
 	pool_radius = cfg.get("pool_radius", Vector2i(3, 2))
+	height_amplitude = cfg.get("height_amp", 0.55)
+	height_terrace   = cfg.get("height_terrace", 0.0)
 	# VARIATION intra-biome : un acte enchaîne 5+ salles du MÊME biome —
 	# chaque salle jitterle ses densités (par graine) pour que deux forêts
 	# consécutives ne se ressemblent pas (clairsemée, touffue, marécageuse…).
@@ -658,6 +660,7 @@ func _theme_config(t: MapTheme) -> Dictionary:
 				"tg_threshold":    0.42,
 				"flower_density":  0.03,
 				"path_width":      3,
+				"height_amp":      0.80,   # sous-bois vallonné
 				"gating":          GatingType.COUPE,
 				"water_mode":      "shallow",
 			}
@@ -682,6 +685,7 @@ func _theme_config(t: MapTheme) -> Dictionary:
 				"path_width":      4,   # corridors plus larges — marécage plus praticable
 				# Plus d'eau profonde en marécage (flaques marchables) → CS Surf
 				# n'a plus lieu d'être ; Coupe-Brindille reste thématique.
+				"height_amp":      0.18,   # plaine d'eau quasi étale
 				"gating":          GatingType.COUPE,
 				"water_mode":      "shallow",
 			}
@@ -698,6 +702,7 @@ func _theme_config(t: MapTheme) -> Dictionary:
 				"tg_threshold":    0.40,
 				"flower_density":  0.16,
 				"path_width":      3,
+				"height_amp":      0.95,   # collines franches — LE biome des prairies ondulantes
 				"gating":          GatingType.FORCE,
 				"water_mode":      "none",
 			}
@@ -716,6 +721,8 @@ func _theme_config(t: MapTheme) -> Dictionary:
 				"tg_threshold":    0.55,
 				"flower_density":  0.02,
 				"path_width":      3,
+				"height_amp":      1.35,   # le plus accidenté, assorti aux falaises
+				"height_terrace":  0.42,   # mesas — le lissage compresse la plage, pas plus de ±0.9 réel
 				"gating":          GatingType.FORCE,
 				"water_mode":      "none",
 			}
@@ -735,6 +742,8 @@ func _theme_config(t: MapTheme) -> Dictionary:
 				"tg_threshold":    0.46,
 				"flower_density":  0.06,
 				"path_width":      3,
+				"height_amp":      0.90,   # coteaux boisés
+				"height_terrace":  0.30,   # coteaux en terrasses douces
 				"gating":          GatingType.COUPE,
 				"water_mode":      "none",
 			}
@@ -756,6 +765,7 @@ func _theme_config(t: MapTheme) -> Dictionary:
 				"tg_threshold":    0.50,
 				"flower_density":  0.05,
 				"path_width":      3,
+				"height_amp":      0.30,   # rives basses : l'eau doit rester le sujet
 				"gating":          GatingType.SURF,
 				"water_mode":      "deep",
 			}
@@ -778,6 +788,8 @@ func _theme_config(t: MapTheme) -> Dictionary:
 				"tg_threshold":    0.65,   # quasi pas de haute herbe
 				"flower_density":  0.0,
 				"path_width":      3,
+				"height_amp":      1.15,   # flancs de volcan
+				"height_terrace":  0.38,   # coulées en gradins
 				"gating":          GatingType.FORCE,
 				"water_mode":      "deep",
 			}
@@ -799,6 +811,7 @@ func _theme_config(t: MapTheme) -> Dictionary:
 				"tg_threshold":    0.62,
 				"flower_density":  0.10,
 				"path_width":      4,       # rues larges
+				"height_amp":      0.40,   # on bâtit sur du plat
 				"gating":          GatingType.FORCE,
 				"water_mode":      "none",
 			}
@@ -2059,7 +2072,18 @@ func _compute_reachable() -> void:
 ## ne touche pas à la grille Terrain ni au pathfinding (toujours en 2D X/Z).
 ## ─────────────────────────────────────────────────────────────────
 
-const HEIGHT_AMPLITUDE     := 0.55   # amplitude brute avant lissage (unités monde)
+## Amplitude de relief PAR BIOME (clé "height_amp" du _theme_config, repli sur
+## la valeur historique 0.55). Chaque région a son modelé : la Montagne ondule
+## fort, le marécage est une plaine d'eau quasi étale, le Lac garde des rives
+## basses pour que l'eau reste lisible (retour joueurs : « plus de relief,
+## sauf lac, plus ou moins selon le biome »).
+var height_amplitude: float = 0.55
+## Hauteur d'un PALIER de terrasse (0 = collines lisses, pas de paliers).
+## Quantifie le relief en PLATEAUX plats reliés par de courtes rampes — le
+## modelé "mesa" de la Montagne/du Volcan (retour joueurs : « du relief qui
+## fait des plateformes en hauteur »). Les rampes restent franchissables :
+## les personnages se collent au sol, pas de saut requis.
+var height_terrace: float = 0.0
 const HEIGHT_NOISE_FREQ    := 0.045  # basse fréquence → collines larges et douces
 const HEIGHT_SMOOTH_PASSES := 2
 
@@ -2084,7 +2108,7 @@ func _compute_height_field() -> void:
 		row.resize(W)
 		for c in W:
 			row[c] = 0.0 if _is_height_flat_cell(c, r) else \
-				noise.get_noise_2d(float(c), float(r)) * HEIGHT_AMPLITUDE
+				noise.get_noise_2d(float(c), float(r)) * height_amplitude
 		field[r] = row
 
 	# Lissage (moyenne 3×3) — pentes douces façon collines, pas de bruit
@@ -2092,12 +2116,31 @@ func _compute_height_field() -> void:
 	# portails : jamais de dénivelé sous un obstacle ou une zone de passage.
 	for i in HEIGHT_SMOOTH_PASSES:
 		field = _smooth_height_field(field, W, H)
+	# TERRASSEMENT (après lissage — avant, la moyenne 3×3 refondrait les
+	# marches en pentes) : chaque hauteur est rabattue sur un palier, avec une
+	# étroite bande de transition en S entre deux niveaux — plateaux plats,
+	# rampes courtes et franchissables.
+	if height_terrace > 0.0:
+		for r in H:
+			var row2: PackedFloat32Array = field[r]
+			for c in W:
+				var lvl := floorf(row2[c] / height_terrace)
+				var frac := row2[c] / height_terrace - lvl
+				row2[c] = (lvl + smoothstep(0.30, 0.70, frac)) * height_terrace
 	for r in H:
 		for c in W:
 			if _is_height_flat_cell(c, r):
 				field[r][c] = 0.0
 
 	_height_grid = field
+	if OS.get_cmdline_user_args().has("dump_map"):
+		var levels: Dictionary = {}
+		for r2 in H:
+			for c2 in W:
+				levels[snappedf(field[r2][c2], 0.05)] = levels.get(snappedf(field[r2][c2], 0.05), 0) + 1
+		var ks := levels.keys()
+		ks.sort()
+		print("PROBE relief: %d niveaux distincts, min=%.2f max=%.2f" % [ks.size(), ks[0], ks[ks.size()-1]])
 
 
 ## Toute case occupée par un objet (falaise, arbre, rocher, chest…), sous
@@ -2105,8 +2148,19 @@ func _compute_height_field() -> void:
 func _is_height_flat_cell(c: int, r: int) -> bool:
 	if _grid[r][c] == Terrain.WATER:
 		return true
-	if _objects.get_cell_source_id(Vector2i(c, r)) != -1:
-		return true
+	# PLUS de verrou générique sur les cases d'objet : il poinçonnait un
+	# CRATÈRE à zéro sous chaque arbre/rocher — discret à amplitude 0.55,
+	# il criblait les collines de trous dès qu'on l'a montée (retour joueurs :
+	# « les collines ne sont pas lisses, on ne peut pas aller dessus »).
+	# Les décors sont désormais POSÉS à la hauteur du terrain (cf. MapRender3D).
+	# Restent plats : les FALAISES (architecture massive à parois verticales)
+	# et les MAISONS du village (on ne bâtit pas sur un dévers).
+	for f: Dictionary in _cliff_formations:
+		if (f["rect"] as Rect2i).grow(1).has_point(Vector2i(c, r)):
+			return true
+	for hr: Rect2i in _village_houses:
+		if hr.grow(1).has_point(Vector2i(c, r)):
+			return true
 	if _is_near_portal(c, r, 5):
 		return true
 	# Marge d'une case autour de l'eau : berge plate pour un raccord propre
@@ -2152,6 +2206,19 @@ func get_height_at_cell(cell: Vector2i) -> float:
 
 # Override de MapBase.get_height_at_world — interpolation bilinéaire pour un
 # suivi fluide du relief (acteurs/caméra), pas de "marches" entre les cases.
+## Hauteur pour ANCRER un sprite billboard sans que le sol le rogne : max
+## entre le sol sous les pieds et le sol vers la caméra (+Z), échantillonné sur
+## ~1,4 u. Sur une pente montant vers la caméra, le mesh de sol devant le
+## personnage passait DEVANT le bas du sprite (depth test) et le coupait
+## (retour joueurs). En posant les pieds au niveau du sol le plus haut visible,
+## le bas ne s'enfonce plus. Plat = identique à get_height_at_world (0 lift).
+func ground_anchor_y(pos: Vector3) -> float:
+	var h := get_height_at_world(pos)
+	for dz in [0.7, 1.4]:
+		h = maxf(h, get_height_at_world(pos + Vector3(0, 0, dz)))
+	return h
+
+
 func get_height_at_world(pos: Vector3) -> float:
 	if _height_grid.is_empty(): return 0.0
 	var H := _height_grid.size()

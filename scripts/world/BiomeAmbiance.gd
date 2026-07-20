@@ -145,7 +145,10 @@ const _SWAMP_PALETTE := {
 	"ground_tint":  Color(0.36, 0.40, 0.28),
 	# Marécage : plat et embrumé jusqu'à l'horizon — la forêt lointaine se noie
 	# dans le brouillard dense (fog_density 0.014), pas de chaîne de montagnes.
+	# Feuillages OLIVE moribonds, pas le vert franc générique.
 	"backdrop_mountains": false,
+	"backdrop_leaf_a": Color(0.36, 0.40, 0.24),
+	"backdrop_leaf_b": Color(0.26, 0.30, 0.18),
 }
 
 const _ROCKY_PALETTE := {
@@ -160,6 +163,10 @@ const _ROCKY_PALETTE := {
 	"hill_b":       Color(0.44, 0.40, 0.36),
 	"cloud_tint":   Color(1.0, 0.98, 0.94),
 	"midground_cliffs": true,
+	# ENCERCLEMENT : un anneau de pics colle au périmètre de la map, en plus
+	# des chaînes lointaines — on est DANS la montagne, pas devant (retour
+	# joueurs : « des montagnes proches du terrain, qu'on en soit entourés »).
+	"mountains_close": true,
 	"ground_tint":  Color(0.44, 0.48, 0.34),
 }
 
@@ -177,6 +184,11 @@ const _AUTUMN_PALETTE := {
 	"leaves_color": Color(0.85, 0.45, 0.12, 0.9),
 	"butterflies":  3,
 	"ground_tint":  Color(0.72, 0.56, 0.24),
+	# Bois d'automne à perte de vue, ROUX — pas des pics ni la forêt verte
+	# générique (cf. _haze_tints).
+	"backdrop_mountains": false,
+	"backdrop_leaf_a": Color(0.80, 0.45, 0.12),
+	"backdrop_leaf_b": Color(0.62, 0.30, 0.10),
 }
 
 const _LAKE_PALETTE := {
@@ -248,6 +260,8 @@ const _VILLAGE_PALETTE := {
 	"cloud_alpha":  0.60,
 	"butterflies":  4,
 	"ground_tint":  Color(0.44, 0.60, 0.36),
+	# Un bourg niché dans la campagne : forêt lointaine, pas de chaîne de pics.
+	"backdrop_mountains": false,
 }
 
 const _HOUSE_PALETTE := {
@@ -555,9 +569,14 @@ func _rebuild_backdrop(cfg: Dictionary, is_cave: bool) -> void:
 ## teinte continue créerait un mesh unique par arbre.
 func _haze_tints(cfg: Dictionary, amount: float) -> Dictionary:
 	var fog: Color = cfg["fog_color"]
+	# Feuillages du BIOME (cf. palettes) : la forêt lointaine d'un bois
+	# d'automne est rousse, celle d'un marécage olive — pas le même vert
+	# partout (retour joueurs : « adapter la vue au loin »).
+	var leaf_a: Color = cfg.get("backdrop_leaf_a", Color(0.22, 0.55, 0.16))
+	var leaf_b: Color = cfg.get("backdrop_leaf_b", Color(0.14, 0.40, 0.14))
 	return {
-		"leafsGreen": Color(0.22, 0.55, 0.16).lerp(fog, amount),
-		"leafsDark":  Color(0.14, 0.40, 0.14).lerp(fog, amount),
+		"leafsGreen": leaf_a.lerp(fog, amount),
+		"leafsDark":  leaf_b.lerp(fog, amount),
 		"woodBark":   Color(0.36, 0.30, 0.26).lerp(fog, amount),
 	}
 
@@ -959,6 +978,27 @@ func _disable_shadows(node: Node) -> void:
 ## la distance (perspective atmosphérique). C'est LE point de fuite qui
 ## comble le vide de l'horizon.
 func _build_mountains(cfg: Dictionary, rng: RandomNumberGenerator, center: Vector3) -> void:
+	# Anneau RAPPROCHÉ (biome Montagne) : des pics moyens qui longent le
+	# RECTANGLE de la dalle — même logique que la ceinture d'arbres, un cercle
+	# laisserait les flancs courts à découvert. Les trouées de portails restent
+	# ouvertes : le chemin doit filer entre deux pics, pas dans un mur.
+	if cfg.get("mountains_close", false):
+		var gaps := _portal_gaps()
+		var ground_tint2: Color = cfg.get("ground_tint", cfg["hill_b"])
+		var rock2: Color = (ground_tint2 as Color).darkened(0.30).lerp(cfg["hill_b"], 0.25)
+		var hx := _map_size.x * 0.5 + 7.0
+		var hz := _map_size.y * 0.5 + 7.0
+		var n := int(4.0 * (hx + hz) / 6.5)
+		for i in n:
+			var t := (float(i) + rng.randf_range(-0.3, 0.3)) / float(n)
+			var pos := _rect_perimeter_point(center, hx, hz, fposmod(t, 1.0))
+			pos += Vector3(rng.randf_range(-2.0, 2.0), 0, rng.randf_range(-2.0, 2.0))
+			if _in_portal_gap(gaps, pos):
+				continue
+			var hgt := rng.randf_range(7.0, 15.0)
+			_add_mountain(pos, hgt, hgt * rng.randf_range(0.55, 0.8),
+				rock2.lerp(cfg["fog_color"], 0.04), hgt > 12.5)
+
 	# Roche de base ASSOMBRIE à partir de la couleur de sol du biome
 	# (`ground_tint`) — les montagnes doivent trancher sur le ciel pâle tout
 	# en restant dans la même famille de teinte que l'herbe/le sol (avant :

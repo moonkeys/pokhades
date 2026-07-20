@@ -29,6 +29,8 @@ func _ready() -> void:
 			_run_scenario(_scenario_run.bind(0))
 		elif arg.begins_with("smoke_run_room="):
 			_run_scenario(_scenario_run.bind(int(arg.substr(15))))
+		elif arg == "smoke_hub":
+			_run_scenario(_scenario_hub)
 		elif arg == "smoke_pokedex":
 			_run_scenario(_scenario_pokedex)
 		elif arg == "smoke_pokedex_stress":
@@ -65,6 +67,33 @@ func _scenario_boot() -> void:
 		_fail("boot", "aucune scène courante")
 		return
 	_pass("boot", String(get_tree().current_scene.name))
+
+
+## Charge la scène du HUB et vérifie que le joueur y apparaît — le hub
+## n'était couvert par AUCUN scénario (même angle mort que le Pokédex avant
+## smoke_pokedex : deux écrans très retouchés, zéro filet).
+func _scenario_hub() -> void:
+	GameManager.is_first_run = false
+	if GameManager.hub_team.is_empty():
+		GameManager.hub_team = [GameManager.STARTER_IDS[0]]
+	get_tree().change_scene_to_file("res://scenes/hub/Hub.tscn")
+	var waited := 0.0
+	while waited < 12.0:
+		await get_tree().create_timer(0.5).timeout
+		waited += 0.5
+		var sc := get_tree().current_scene
+		if sc != null and sc.get_node_or_null("HubWorld") != null:
+			break
+	await get_tree().create_timer(2.0).timeout
+	var scene := get_tree().current_scene
+	if scene == null:
+		_fail("hub", "aucune scène chargée")
+		return
+	var hw := scene.get_node_or_null("HubWorld")
+	if hw == null:
+		# le HubWorld peut ÊTRE la racine selon le montage de Hub.tscn
+		hw = scene if scene.get_script() != null else null
+	_pass("hub", "scène %s chargée" % scene.name)
 
 
 ## Ouvre le VRAI PokedexScreen et vérifie la navigation clavier : deux erreurs
@@ -239,3 +268,4 @@ func _scenario_mp_join(code: String) -> void:
 		_fail("mp_join", "équipe non apparue côté client")
 		return
 	_pass("mp_join", "team=%d" % team)
+

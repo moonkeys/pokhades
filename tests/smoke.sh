@@ -43,6 +43,7 @@ run_scenario() {  # nom, timeout, args...
 echo "── Smoke-tests Pokhades ──"
 
 run_scenario boot        20 smoke_boot
+run_scenario hub         25 smoke_hub
 run_scenario pokedex     20 smoke_pokedex
 run_scenario pokedex_stress 30 smoke_pokedex_stress
 run_scenario run_solo    25 smoke_run

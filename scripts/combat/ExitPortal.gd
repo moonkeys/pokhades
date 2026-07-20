@@ -68,6 +68,8 @@ func setup(data: Dictionary) -> void:
 		_build_toll_gate()
 	elif style == "arch":
 		_build_hedge_arch()
+	elif style == "pier":
+		_build_pier_gate()
 	else:
 		_build_gate_building()
 
@@ -216,7 +218,20 @@ func _build_hedge_arch() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash(position)
 
-	var leaf := {"leafsGreen": C_HEDGE, "leafsDark": C_HEDGE_DARK}
+	# Déclinaison par biome (data.arch_kind, posé par CombatArena) : la même
+	# arche verte plantée en plein bois d'automne ou dans la vase jurait —
+	# chaque région teinte SES feuillages, et le marécage troque les buissons
+	# contre des roseaux.
+	var kind: String = str(_data.get("arch_kind", "green"))
+	var leaf: Dictionary
+	match kind:
+		"fall":
+			leaf = {"leafsGreen": Color(0.80, 0.45, 0.12), "leafsDark": Color(0.62, 0.30, 0.10)}
+		"swamp":
+			leaf = {"leafsGreen": Color(0.34, 0.36, 0.22), "leafsDark": Color(0.24, 0.26, 0.16),
+				"woodBark": Color(0.34, 0.29, 0.25)}
+		_:
+			leaf = {"leafsGreen": C_HEDGE, "leafsDark": C_HEDGE_DARK}
 
 	# Les deux montants : de vrais arbres du kit, penchés VERS le passage pour
 	# que leurs frondaisons se rejoignent en voûte au-dessus du joueur.
@@ -233,8 +248,17 @@ func _build_hedge_arch() -> void:
 	# regard sur le sentier au lieu de laisser l'œil filer sur les côtés.
 	for sx: float in [-1.0, 1.0]:
 		for i in 5:
-			var bush := KitProps.instance(HEDGE_MESHES[rng.randi() % HEDGE_MESHES.size()], leaf)
-			bush.scale      = Vector3.ONE * rng.randf_range(1.5, 2.3)
+			var bush: Node3D
+			if kind == "swamp":
+				# Roseaux, pas des haies : la flore des berges du biome (mêmes
+				# bambous que MapRender3D._build_swamp_flora).
+				bush = KitProps.instance_textured(
+					"res://assets/kenney_nature-kit/Models/GLTF format/",
+					"crops_bambooStageA.glb" if (i + int(sx)) % 2 == 0 else "crops_bambooStageB.glb")
+				bush.scale = Vector3.ONE * rng.randf_range(0.9, 1.3)
+			else:
+				bush = KitProps.instance(HEDGE_MESHES[rng.randi() % HEDGE_MESHES.size()], leaf)
+				bush.scale = Vector3.ONE * rng.randf_range(1.5, 2.3)
 			bush.position   = Vector3(
 				sx * (ARCH_HALF_W + 0.5 - i * 0.10) + rng.randf_range(-0.15, 0.15),
 				0.0, -(0.7 + i * 1.05))
@@ -247,6 +271,45 @@ func _build_hedge_arch() -> void:
 	# raison d'être de l'arche (retour joueurs). L'état fermé se lit désormais
 	# à l'absence de motes et de libellé de récompense (cf. setup/open), pas à
 	# un obstacle physique.
+
+
+## Style "lac" : PORTIQUE DE PONTON — deux pilotis et une traverse de bois
+## (mêmes teintes que le pont du lac, cf. MapRender3D._build_bridge), flanqués
+## de barrières basses en entonnoir. Une porte de maison sur une rive n'avait
+## pas plus de sens qu'en prairie.
+func _build_pier_gate() -> void:
+	var wood_dark := StandardMaterial3D.new()
+	wood_dark.albedo_color = Color(0.40, 0.27, 0.15)
+	wood_dark.roughness = 0.9
+	var wood_deck := StandardMaterial3D.new()
+	wood_deck.albedo_color = Color(0.52, 0.36, 0.20)
+	wood_deck.roughness = 0.9
+
+	for sx: float in [-1.0, 1.0]:
+		var post := MeshInstance3D.new()
+		var pb := BoxMesh.new()
+		pb.size = Vector3(0.22, 2.3, 0.22)
+		post.mesh = pb
+		post.position = Vector3(sx * ARCH_HALF_W, 1.15, 0)
+		post.rotation.z = sx * -0.03
+		post.material_override = wood_dark
+		add_child(post)
+	var beam := MeshInstance3D.new()
+	var bb := BoxMesh.new()
+	bb.size = Vector3(ARCH_HALF_W * 2.0 + 0.7, 0.20, 0.26)
+	beam.mesh = bb
+	beam.position = Vector3(0, 2.25, 0)
+	beam.material_override = wood_deck
+	add_child(beam)
+
+	# Barrières basses en entonnoir (kit nature).
+	for sx: float in [-1.0, 1.0]:
+		for i in 4:
+			var fence := KitProps.instance("fence_simpleLow.glb")
+			fence.scale      = Vector3.ONE * 1.6
+			fence.position   = Vector3(sx * (ARCH_HALF_W + 0.42 - i * 0.10), 0.0, -(0.6 + i * 1.0))
+			fence.rotation.y = PI * 0.5 + sx * 0.12
+			add_child(fence)
 
 
 ## Style "village" : PÉAGE — deux poteaux + un bras de barrière rayé rouge/

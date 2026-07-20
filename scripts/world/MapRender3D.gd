@@ -1462,7 +1462,8 @@ func _add_rock_box(top_left: Vector2i, w: int, d: int, cells: Array) -> void:
 	var rock := KitProps.instance(file)
 	rock.scale = Vector3.ONE * KIT_ROCK_LARGE_SCALE * lerpf(0.85, 1.15, jitter)
 	rock.rotation.y = jitter * TAU
-	rock.position = Vector3(top_left.x + w * 0.5, 0.0, top_left.y + d * 0.5)
+	rock.position = Vector3(top_left.x + w * 0.5,
+		_map.get_height_at_cell(top_left), top_left.y + d * 0.5)
 	add_child(rock)
 
 	for c: Vector2i in cells:
@@ -1580,7 +1581,12 @@ func _block_cells(top_left: Vector2i, w: int, h: int) -> Array:
 func _add_prop_sprite(origin: Vector2i, top_left: Vector2i, cw: int, ch: int,
 		cells: Array, breakable: bool = false) -> void:
 	var spr := Billboard3D.make_tile_sprite(TILESET_PATH, origin, cw, ch, 1.0)
-	var anchor := Vector3(top_left.x + cw * 0.5, 0.0, top_left.y + ch - 0.5)
+	# Ancré à la HAUTEUR du terrain : le champ de hauteur n'aplatit plus le
+	# sol sous les objets (cf. MapGenerator._is_height_flat_cell) — un prop à
+	# y=0 sur une colline serait enterré.
+	var anchor := Vector3(top_left.x + cw * 0.5,
+		_map.get_height_at_cell(Vector2i(top_left.x + cw / 2, top_left.y + ch - 1)),
+		top_left.y + ch - 0.5)
 	var node: Node3D = spr
 	if breakable:
 		var wrap := BreakableProp.new()
@@ -1642,7 +1648,8 @@ func _add_dead_tree(top_left: Vector2i) -> void:
 	mat.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
 
 	var tree := Node3D.new()
-	tree.position = Vector3(top_left.x + 1.5, 0.0, top_left.y + 2.5)
+	tree.position = Vector3(top_left.x + 1.5,
+		_map.get_height_at_cell(Vector2i(top_left.x + 1, top_left.y + 2)), top_left.y + 2.5)
 	tree.rotation.y = rng.randf() * TAU
 
 	var trunk_h := rng.randf_range(2.6, 3.8)
@@ -1697,7 +1704,8 @@ func _add_kit_tree(top_left: Vector2i, pool: Array, tints: Dictionary = {}) -> v
 	var native_h: float = KitProps.TREE_NATIVE_HEIGHT.get(file, 1.5)
 	var target_h := KIT_TREE_TARGET_HEIGHT * lerpf(0.82, 1.18, jitter)
 	tree.scale = Vector3.ONE * (target_h / native_h)
-	tree.position = Vector3(top_left.x + 1.5, 0.0, top_left.y + 2.5)
+	tree.position = Vector3(top_left.x + 1.5,
+		_map.get_height_at_cell(Vector2i(top_left.x + 1, top_left.y + 2)), top_left.y + 2.5)
 	tree.rotation.y = jitter * TAU
 	add_child(tree)
 
