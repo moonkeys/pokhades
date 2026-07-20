@@ -213,7 +213,7 @@ func _refresh_team_strip() -> void:
 			var pw := GameManager.pokemon_weight(pid)
 			if GameManager.get_assigned_item(pid) != "":
 				pw += GameManager.ITEM_WEIGHT
-			pw += GameManager.get_move_loadout(pid).size() * GameManager.MOVE_WEIGHT
+			pw += _pokemon_move_weight(pid)
 			var wl := Label.new()
 			wl.text = str(pw)
 			wl.position = Vector2(0, sw - 15)
@@ -626,6 +626,54 @@ func _open_item_picker(pid: int) -> void:
 	MenuNav.focus_first(panel)
 
 
+## Liste UNIFIÉE des capacités équipables par `pid` : attaques de base (déjà
+## sues au niveau de départ) + CT achetées apprenables — fusionnées au même
+## niveau, plus de section séparée « auto vs achat » (retour joueurs). Chaque
+## entrée : {api, label, type, source: "base"/"ct", desc (effet maison, CT
+## seulement)}. Ordre : base d'abord (les plus récemment apprises), puis CT.
+func _move_options(pid: int, pd: PokemonData) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	var start_lv: int = int(GameManager.get_effective_start(pid, 10).get("level", 10))
+	var base_moves: Array = []
+	for lm: Dictionary in pd.level_up_moves:
+		if int(lm.get("level", 1)) <= start_lv:
+			base_moves.append(lm)
+	base_moves.reverse()
+	for lm: Dictionary in base_moves:
+		var api := str(lm.get("name", ""))
+		out.append({"api": api, "label": api.replace("-", " ").capitalize(),
+			"type": "", "source": "base", "desc": ""})
+	for m: Dictionary in MoveShopScreen.MOVE_LIST:
+		var api2: String = str(m.get("api", ""))
+		if not api2 in GameManager.purchased_move_names:
+			continue
+		if not pd.can_learn(api2):
+			continue
+		out.append({"api": api2, "label": str(m.get("label", api2)),
+			"type": str(m.get("type", "")), "source": "ct",
+			"desc": _move_house_effect(api2)})
+	return out
+
+
+## Poids RÉEL des capacités équipées de `pid` — utilise les données déjà
+## chargées si possible (loadout effectif exact), sinon retombe sur le
+## loadout brut (0 tant que rien n'est configuré, car les defaults sont
+## toujours les capacités les plus faibles → poids 0 dans l'immense majorité
+## des cas).
+func _pokemon_move_weight(pid: int) -> int:
+	if _loaded_data.has(pid):
+		var pd: PokemonData = _loaded_data[pid]
+		var available: Array = []
+		for opt: Dictionary in _move_options(pid, pd):
+			available.append(opt["api"])
+		var eq := GameManager.effective_loadout(pid, available)
+		var total := 0
+		for api in eq:
+			total += GameManager.move_weight(str(api))
+		return total
+	return GameManager.loadout_weight(pid)
+
+
 func _refresh_detail() -> void:
 	_refresh_progress()   # CT équipée / objet tenu → le poids bouge en direct
 	call_deferred("_ensure_focus_alive")
@@ -677,19 +725,19 @@ func _refresh_detail() -> void:
 		_refresh_detail_locked(pd)
 		return
 
-	# Nom + types + POIDS de ce Pokémon (espèce + objet + slots), recalculé à
-	# chaque _refresh_detail — donc en direct après tout changement d'objet ou
-	# de slots (retour joueurs : le poids était figé).
+	# Nom + types + POIDS de ce Pokémon (espèce + objet + capacités), recalculé
+	# à chaque _refresh_detail — donc en direct après tout changement (retour
+	# joueurs : le poids était figé).
 	_detail_root.add_child(_lbl_node("#%d  %s" % [_selected_pid, pd.name_fr.to_upper()],
 		122, 14, 300, 30, 20, C_GOLD))
 	var w_species := GameManager.pokemon_weight(_selected_pid)
 	var w_item := GameManager.ITEM_WEIGHT if GameManager.get_assigned_item(_selected_pid) != "" else 0
-	var w_slots := (GameManager.get_move_slots(_selected_pid) - 1) * GameManager.MOVE_WEIGHT
-	_detail_root.add_child(_lbl_node("⚖ %d" % (w_species + w_item + w_slots),
+	var w_moves := _pokemon_move_weight(_selected_pid)
+	_detail_root.add_child(_lbl_node("⚖ %d" % (w_species + w_item + w_moves),
 		428, 14, 70, 24, 15, C_GOLD_LT))
 	# Décomposition : chaque source de poids a sa valeur (retour joueurs :
 	# « afficher la valeur de chaque poids partout »).
-	_detail_root.add_child(_lbl_node("esp. %d · obj. %d · slots %d" % [w_species, w_item, w_slots],
+	_detail_root.add_child(_lbl_node("esp. %d · obj. %d · att. %d" % [w_species, w_item, w_moves],
 		370, 38, 130, 16, 9, C_DIM))
 
 	var type_row := Control.new()
@@ -764,172 +812,104 @@ func _refresh_detail() -> void:
 	sep.color    = C_BORDER
 	_detail_root.add_child(sep)
 
-	var loadout := GameManager.get_move_loadout(_selected_pid)
-	var slots := GameManager.get_move_slots(_selected_pid)
-
-	# ── ATTAQUES DE BASE ──────────────────────────────────────────────
-	# Celles que le Pokémon connaît DÉJÀ à son niveau de départ (montée en
-	# niveau PokéAPI). Avant, on n'affichait que les CT achetées : sans CT, le
-	# joueur lisait « aucune capacité » alors que son Pokémon sait se battre.
-	# Les slots libres sont remplis automatiquement par ces attaques
-	# (cf. PokemonInstance.init_moves) — d'où l'indication "auto".
-	var start_lv: int = int(GameManager.get_effective_start(_selected_pid, 10).get("level", 10))
-	var base_moves: Array = []
-	for lm: Dictionary in pd.level_up_moves:
-		if int(lm.get("level", 1)) <= start_lv:
-			base_moves.append(lm)
-	base_moves.reverse()   # les plus récemment apprises d'abord (les plus fortes)
+	# ── CAPACITÉS — grille UNIFIÉE (retour joueurs : « base et CT au même
+	# niveau ») ─────────────────────────────────────────────────────────
+	# Plus de section séparée « auto » vs « achetées » : les 4 emplacements
+	# sont acquis d'office (cf. GameManager.MOVE_SLOTS) et chaque capacité,
+	# base ou CT, se choisit sur un pied d'égalité — seul son POIDS (fonction
+	# de sa puissance, cf. GameManager.move_weight) diffère.
+	var options := _move_options(_selected_pid, pd)
+	var available: Array = []
+	for opt: Dictionary in options:
+		available.append(opt["api"])
+	var equipped: Array = GameManager.effective_loadout(_selected_pid, available)
 
 	_detail_root.add_child(_lbl_node(
-		"── ATTAQUES DE BASE (niv. %d) — remplissent les slots libres ──" % start_lv,
+		"── CAPACITÉS — %d / %d équipées  ·  [I] détails ──" % [equipped.size(), GameManager.MOVE_SLOTS],
 		16, 280, 544, 20, 13, C_DIM))
-	if base_moves.is_empty():
-		_detail_root.add_child(_lbl_node("Aucune (données d'attaques non chargées)",
+
+	if options.is_empty():
+		_detail_root.add_child(_lbl_node("Aucune capacité disponible (données non chargées)",
 			16, 302, 544, 20, 12, C_DIM))
-	else:
-		var free_slots := maxi(0, slots - loadout.size())
-		var bx := 16
-		for i in mini(base_moves.size(), 4):
-			var lm: Dictionary = base_moves[i]
-			var nm := str(lm.get("name", "")).replace("-", " ").capitalize()
-			var auto := i < free_slots   # sera équipée d'office au départ
-			# Button : atteignable aux flèches, [I] ou Entrée = popup d'infos.
-			var bcard := Button.new()
-			bcard.position = Vector2(bx, 302)
-			bcard.size     = Vector2(130, 44)
-			bcard.focus_mode = Control.FOCUS_ALL
-			_style_move_card(bcard, auto)
-			var cap_api_b := str(lm.get("name", ""))
-			var cap_nm_b  := nm
-			bcard.pressed.connect(func() -> void: _open_move_info(cap_api_b, cap_nm_b))
-			bcard.gui_input.connect(func(event: InputEvent) -> void:
-				if event is InputEventKey and (event as InputEventKey).pressed \
-						and (event as InputEventKey).keycode == KEY_I:
-					_open_move_info(cap_api_b, cap_nm_b)
-					get_viewport().set_input_as_handled()
-			)
-			_detail_root.add_child(bcard)
-			bcard.add_child(_lbl_node(nm, 5, 3, 120, 18, 11, C_TEXT))
-			# Type + puissance RÉELS, chargés en async (PokéAPI, cache disque) —
-			# `level_up_moves` ne contient que {level, name}, il n'y a donc rien
-			# à afficher tant que la fiche du move n'est pas résolue. L'ancien
-			# libellé "auto" n'apprenait rien au joueur (retour joueurs) : la
-			# bordure verte suffit à signaler l'équipement d'office.
-			var pow_lbl := _lbl_node("…", 62, 24, 64, 16, 10, C_DIM)
-			bcard.add_child(pow_lbl)
-			var w_card: WeakRef = weakref(bcard)
-			var w_pow: WeakRef = weakref(pow_lbl)
-			PokemonAPI.get_move(str(lm.get("name", "")), func(md: Dictionary) -> void:
-				var c2: Control = w_card.get_ref()
-				if md.is_empty() or c2 == null:
-					return
-				var t := str(md.get("type", ""))
-				if t != "":
-					UiKit.type_badge(c2, Vector2(5, 23), t, 16.0)
-				var p2: Label = w_pow.get_ref()
-				if p2 != null:
-					var pv: Variant = md.get("power")
-					p2.text = ("%d pui." % int(pv)) if pv != null else "statut"
-			)
-			bx += 136
-
-	# ── CT ACHETÉES ───────────────────────────────────────────────────
-	_detail_root.add_child(_lbl_node(
-		"── CT ACHETÉES — %d / %d équipées  ·  [I] détails ──" % [loadout.size(), slots],
-		16, 350, 430, 20, 13, C_DIM))
-
-	# Réglage du nombre de SLOTS de CE Pokémon (− / +). Chaque slot au-delà du
-	# premier pèse MOVE_WEIGHT sur le build (cf. GameManager.compute_team_weight)
-	# — moins de slots = un Pokémon plus léger. Borné par l'achat global du hub.
-	var slot_pid := _selected_pid
-	for d: Array in [["−", -1, 448], ["+", 1, 522]]:
-		var sb := Button.new()
-		sb.text     = str(d[0])
-		sb.position = Vector2(int(d[2]), 346)
-		sb.size     = Vector2(28, 26)
-		sb.add_theme_font_size_override("font_size", UiKit.scaled_font(14))
-		var delta: int = d[1]
-		sb.disabled = (delta < 0 and slots <= 1) \
-			or (delta > 0 and slots >= GameManager.move_slot_count)
-		_style_button(sb, Color(0.34, 0.28, 0.16), C_GOLD_LT)
-		sb.pressed.connect(func() -> void:
-			GameManager.set_move_slots(slot_pid, GameManager.get_move_slots(slot_pid) + delta)
-			_refresh_detail()
-			_refresh_team_strip()   # le poids du carré d'équipe bouge aussi
-		)
-		_detail_root.add_child(sb)
-	_detail_root.add_child(_lbl_node("%d slot%s (⚖%d)" % [slots, "s" if slots > 1 else "",
-		(slots - 1) * GameManager.MOVE_WEIGHT], 478, 350, 44, 20, 11, C_GOLD_LT))
-
-	# On n'affiche QUE ce que CE Pokémon peut apprendre. Les CT hors movepool
-	# étaient listées grisées avec "✗ Hors movepool" : elles remplissaient la
-	# grille de cartes inutilisables et noyaient les vraies options (retour
-	# joueurs). `_hidden_ct` sert juste à l'expliquer plutôt qu'à les faire
-	# disparaître sans un mot.
-	var purchasable: Array = []
-	var hidden_ct := 0
-	for m: Dictionary in MoveShopScreen.MOVE_LIST:
-		if not str(m.get("api", "")) in GameManager.purchased_move_names:
-			continue
-		if pd.can_learn(str(m.get("api", ""))):
-			purchasable.append(m)
-		else:
-			hidden_ct += 1
-
-	if purchasable.is_empty():
-		var why := "Aucune CT achetée — direction le Tuteur de capacités ! (les attaques de base ci-dessus suffisent pour partir)"
-		if hidden_ct > 0:
-			why = "Aucune de tes %d CT n'est apprenable par ce Pokémon (hors movepool)." % hidden_ct
-		_detail_root.add_child(_lbl_node(why, 16, 374, 544, 34, 12, C_DIM))
+		_detail_root.custom_minimum_size.y = 340.0
 		return
 
 	var mx := 16
-	var my := 374
+	var my := 302
 	var col_w := 178
-	for m: Dictionary in purchasable:
-		var api: String   = str(m.get("api", ""))
-		var label: String = str(m.get("label", api))
-		var mtype: String  = str(m.get("type", "normal"))
-		var equipped := api in loadout
+	for opt: Dictionary in options:
+		var api: String   = str(opt["api"])
+		var label: String = str(opt["label"])
+		var mtype: String = str(opt["type"])
+		var is_base: bool = opt["source"] == "base"
+		var house_fx: String = str(opt["desc"])
+		var is_equipped := api in equipped
 
-		# Button focalisable (flèches + Entrée), comme la grille — et support de
-		# la touche [I] pour la popup d'infos (cf. _open_move_info).
+		# Button focalisable (flèches + Entrée) — [I] ouvre la fiche complète.
 		var card := Button.new()
 		card.position = Vector2(mx, my)
 		card.size     = Vector2(col_w - 6, 66)
 		card.focus_mode = Control.FOCUS_ALL
-		_style_move_card(card, equipped)
+		_style_move_card(card, is_equipped)
 		_detail_root.add_child(card)
 
-		var tpill := TypeIcon.make_pill(mtype, 70.0, 16.0, 8)
-		tpill.position = Vector2(4, 4)
-		tpill.mouse_filter = Control.MOUSE_FILTER_IGNORE   # le clic doit atteindre le bouton
-		card.add_child(tpill)
+		if mtype != "":
+			var tpill := TypeIcon.make_pill(mtype, 70.0, 16.0, 8)
+			tpill.position = Vector2(4, 4)
+			tpill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			card.add_child(tpill)
+		# Repère visuel discret "attaque de base" quand le type n'est pas
+		# encore chargé — évite une carte vide en haut à gauche.
+		var src_lbl := _lbl_node("" if mtype != "" else ("base" if is_base else "CT"),
+			4, 4, 70, 14, 9, C_DIM)
+		if mtype == "":
+			card.add_child(src_lbl)
 
-		var full := loadout.size() >= GameManager.get_move_slots(_selected_pid)
 		card.add_child(_lbl_node(label, 4, 24, col_w - 14, 18, 11, C_TEXT))
-		# L'EFFET visible sur la carte même (retour joueurs) : effet maison
-		# s'il existe, sinon puissance réelle chargée en async. L'action
-		# (équiper/retirer/remplacer) reste sur la ligne du dessous.
-		var fx_line := _move_house_effect(api)
-		var fx_lbl := _lbl_node(fx_line if fx_line != "" else "…", 4, 38, col_w - 14, 13, 9, C_GOLD_LT)
+
+		# EFFET/puissance visible sur la carte — effet maison pour une CT,
+		# puissance/précision réelle sinon (chargée en async pour les deux :
+		# une attaque de base n'a que {level, name} dans level_up_moves).
+		var fx_lbl := _lbl_node(house_fx if house_fx != "" else "…", 4, 38, col_w - 14, 13, 9, C_GOLD_LT)
 		card.add_child(fx_lbl)
-		if fx_line == "":
+		# Poids affiché dès que la puissance est connue (retour joueurs :
+		# « ça vaut une valeur dans le poids »).
+		var w_lbl := _lbl_node("", col_w - 34, 4, 30, 14, 9, C_GOLD_LT)
+		w_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		card.add_child(w_lbl)
+		var known_power := GameManager.move_power_cache.has(api)
+		if known_power:
+			w_lbl.text = "⚖%d" % GameManager.move_weight(api)
+		if house_fx == "" or not known_power:
+			var w_card2: WeakRef = weakref(card)
 			var w_fx: WeakRef = weakref(fx_lbl)
+			var w_w: WeakRef = weakref(w_lbl)
+			var w_src: WeakRef = weakref(src_lbl)
 			PokemonAPI.get_move(api, func(md: Dictionary) -> void:
-				var l2: Label = w_fx.get_ref()
-				if md.is_empty() or l2 == null:
+				if md.is_empty():
 					return
-				var pv2: Variant = md.get("power")
-				var av2: Variant = md.get("accuracy")
-				l2.text = "pui. %s · préc. %s" % [
-					str(int(pv2)) if pv2 != null else "—",
-					("%d%%" % int(av2)) if av2 != null else "—"]
+				var c2: Control = w_card2.get_ref()
+				var t := str(md.get("type", ""))
+				if t != "" and c2 != null:
+					var s2: Label = w_src.get_ref()
+					if s2 != null and is_instance_valid(s2):
+						s2.visible = false
+					UiKit.type_badge(c2, Vector2(4, 4), t, 16.0)
+				var f2: Label = w_fx.get_ref()
+				if f2 != null and house_fx == "":
+					var pv: Variant = md.get("power")
+					var av: Variant = md.get("accuracy")
+					f2.text = "pui. %s · préc. %s" % [
+						str(int(pv)) if pv != null else "—",
+						("%d%%" % int(av)) if av != null else "—"]
+				var w2: Label = w_w.get_ref()
+				if w2 != null:
+					w2.text = "⚖%d" % GameManager.move_weight(api)
 			)
-		if equipped:
+
+		if is_equipped:
 			card.add_child(_lbl_node("✓ Équipée · Entrée : retirer", 4, 50, col_w - 14, 13, 9, C_GOOD))
-		elif full:
-			# Slots pleins : Entrée ouvre le CHOIX de la capacité à remplacer.
+		elif equipped.size() >= GameManager.MOVE_SLOTS:
 			card.add_child(_lbl_node("Entrée : remplacer…", 4, 50, col_w - 14, 13, 9, C_DIM))
 		else:
 			card.add_child(_lbl_node("Entrée : équiper", 4, 50, col_w - 14, 13, 9, C_DIM))
@@ -937,12 +917,13 @@ func _refresh_detail() -> void:
 		var move_pid := _selected_pid
 		var capture_api := api
 		var capture_lbl := label
+		var capture_avail := available
 		card.pressed.connect(func() -> void:
-			if not (capture_api in GameManager.get_move_loadout(move_pid)) \
-					and GameManager.get_move_loadout(move_pid).size() >= GameManager.get_move_slots(move_pid):
-				_open_replace_picker(move_pid, capture_api, capture_lbl)
+			var cur := GameManager.effective_loadout(move_pid, capture_avail)
+			if not (capture_api in cur) and cur.size() >= GameManager.MOVE_SLOTS:
+				_open_replace_picker(move_pid, capture_api, capture_lbl, capture_avail)
 			else:
-				GameManager.toggle_move_in_loadout(move_pid, capture_api)
+				GameManager.toggle_move_in_loadout(move_pid, capture_api, capture_avail)
 				_refresh_detail()
 		)
 		card.gui_input.connect(func(event: InputEvent) -> void:
@@ -959,6 +940,8 @@ func _refresh_detail() -> void:
 
 	# Hauteur du contenu → le ScrollContainer sait jusqu'où défiler.
 	_detail_root.custom_minimum_size.y = maxf(484.0, my + 66.0)
+
+
 
 
 ## Effet MAISON d'une CT (MoveShopScreen.MOVE_LIST) en toutes lettres — c'est
@@ -997,7 +980,7 @@ func _style_move_card(card: Button, equipped: bool) -> void:
 ## Échap tant qu'elle est ouverte.
 var _replace_picker: CanvasLayer = null
 
-func _open_replace_picker(pid: int, new_api: String, new_label: String) -> void:
+func _open_replace_picker(pid: int, new_api: String, new_label: String, available: Array) -> void:
 	if is_instance_valid(_replace_picker):
 		_replace_picker.queue_free()
 	var pick := CanvasLayer.new()
@@ -1016,7 +999,7 @@ func _open_replace_picker(pid: int, new_api: String, new_label: String) -> void:
 	veil.set_anchors_preset(Control.PRESET_FULL_RECT)
 	pick.add_child(veil)
 
-	var equipped: Array = GameManager.get_move_loadout(pid)
+	var equipped: Array = GameManager.effective_loadout(pid, available)
 	var ph := 110.0 + equipped.size() * 50.0
 	var panel := UiKit.main_panel(Vector2(400, maxf(40.0, 340.0 - ph * 0.5)), Vector2(480, ph))
 	pick.add_child(panel)
@@ -1054,7 +1037,7 @@ func _open_replace_picker(pid: int, new_api: String, new_label: String) -> void:
 		)
 		var cap_old := old_api
 		btn.pressed.connect(func() -> void:
-			GameManager.replace_move_in_loadout(pid, cap_old, new_api)
+			GameManager.replace_move_in_loadout(pid, cap_old, new_api, available)
 			close_pick.call()
 		)
 		panel.add_child(btn)

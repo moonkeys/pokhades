@@ -92,24 +92,23 @@ func init_moves() -> void:
 		if md.level_learned <= level:
 			learned_moves.append(md)
 
-	var slots := GameManager.move_slot_count
+	# LE BUILD FAIT FOI. On applique exactement la règle du Pokédex
+	# (GameManager.effective_loadout) sur les mêmes capacités disponibles :
+	# avant, seules les CT du loadout étaient honorées et les attaques de base
+	# recomplétées dans l'ordre interne — le build affiché n'était pas celui
+	# joué (retour joueurs). Le cache de puissance étant persistant, le tri de
+	# repli donne le même résultat des deux côtés.
+	var available: Array = []
+	for md: MoveData in learned_moves:
+		GameManager.note_move_power(md.api_name, md.power)
+		if not md.api_name in available:
+			available.append(md.api_name)
 
-	# Équipe d'abord les capacités explicitement choisies dans le Pokédex
-	for api_name in GameManager.get_move_loadout(data.id):
-		if equipped_moves.size() >= slots:
-			break
+	for api_name in GameManager.effective_loadout(data.id, available):
 		for md: MoveData in learned_moves:
 			if md.api_name == api_name and md not in equipped_moves:
 				equipped_moves.append(md)
 				break
-
-	# Complète les emplacements restants automatiquement
-	var i := 0
-	while equipped_moves.size() < slots and i < learned_moves.size():
-		var md: MoveData = learned_moves[i]
-		if md not in equipped_moves:
-			equipped_moves.append(md)
-		i += 1
 
 
 func add_move(md: MoveData) -> void:

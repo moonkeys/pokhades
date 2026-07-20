@@ -351,7 +351,11 @@ func get_start_level_bonus(pid: int) -> int:
 	return int(start_level_bonus.get(pid, 0))
 
 # ── Améliorations permanentes achetées au hub ─────────────────────────
-var move_slot_count:       int           = 1   # emplacements capacités (1-4)
+## 4 emplacements de capacités DÉBLOQUÉS D'OFFICE (retour joueurs). Le poids
+## d'un build ne vient plus du NOMBRE de slots mais de la PUISSANCE des
+## attaques qu'on y met (cf. move_weight) : emmener 4 attaques faibles ne coûte
+## rien, empiler 4 grosses frappes coûte cher.
+var move_slot_count:       int           = MOVE_SLOTS   # emplacements capacités
 var team_slot_count:       int           = 1   # taille équipe (1-6)
 var dash_charges_bought:   int           = 0   # charges de Dash (0-3) — 0 au départ
 var purchased_move_names:  Array[String] = []  # capacités achetées chez le tuteur
@@ -360,24 +364,79 @@ var purchased_move_names:  Array[String] = []  # capacités achetées chez le tu
 # pid:int -> Array[String] (api_name des capacités équipées, ordre = slots)
 var move_loadouts: Dictionary = {}
 
-# Nombre de SLOTS de capacités choisi PAR Pokémon (pid:int -> int). Chaque slot
-# pèse sur le build (cf. compute_team_weight) : en prendre moins allège le
-# Pokémon, en prendre plus coûte. Borné par move_slot_count (achat global au
-# hub) — le réglage par Pokémon ne peut pas dépasser ce qu'on a payé.
-var move_slot_choices: Dictionary = {}
+const MOVE_SLOTS := 4   # tous les Pokémon ont 4 emplacements, d'office
 
-func get_move_slots(pid: int) -> int:
-	return clampi(int(move_slot_choices.get(pid, move_slot_count)), 1, move_slot_count)
+## Cache api_name -> puissance, alimenté par PokemonAPI dès qu'une fiche est
+## résolue. Le poids d'un build doit se calculer SYNCHRONEMENT (affichage du
+## Pokédex, blocage du lancement de run) alors que les puissances arrivent en
+## asynchrone : sans ce cache, le poids sauterait au fil des réponses réseau.
+var move_power_cache: Dictionary = {}
+
+func note_move_power(api_name: String, power: int) -> void:
+	if api_name != "" and not move_power_cache.has(api_name):
+		move_power_cache[api_name] = power
 
 
-func set_move_slots(pid: int, n: int) -> void:
-	move_slot_choices[pid] = clampi(n, 1, move_slot_count)
-	# Rétrécir peut rendre le loadout trop grand : on retire par la FIN (les
-	# derniers équipés partent d'abord), jamais silencieusement au lancement.
-	var arr: Array = get_move_loadout(pid)
-	while arr.size() > get_move_slots(pid):
-		arr.pop_back()
-	move_loadouts[pid] = arr
+## Poids d'UNE capacité selon sa puissance : les attaques faibles (celles qu'on
+## a d'office) sont GRATUITES, les grosses frappes coûtent jusqu'à 3.
+## Puissance inconnue (fiche pas encore chargée) -> 0 : on n'invente pas un coût.
+func move_weight(api_name: String) -> int:
+	var p := int(move_power_cache.get(api_name, 0))
+	if p <= 40:  return 0
+	if p <= 70:  return 1
+	if p <= 90:  return 2
+	return 3
+
+
+## Poids total des capacités équipées par `pid`.
+func loadout_weight(pid: int) -> int:
+	var total := 0
+	for api in get_move_loadout(pid):
+		total += move_weight(str(api))
+	return total
+
+
+## LOADOUT EFFECTIF — la règle UNIQUE partagée par le Pokédex (build) et la run
+## (PokemonInstance.init_moves). Avant, le Pokédex ne mémorisait que les CT et
+## la run recomplétait les attaques de base dans son propre ordre : le build
+## affiché n'était pas celui joué (retour joueurs : « les attaques choisies ne
+## sont pas les mêmes quand je lance la run »).
+##
+## `available` : toutes les capacités que CE Pokémon peut équiper (base + CT),
+## en api_name. Si un loadout est enregistré, on le respecte à la lettre (filtré
+## de ce qui n'est plus disponible) ; sinon on pré-équipe les 4 attaques les
+## moins puissantes — les « gratuites », pour partir d'un build à poids nul que
+## le joueur fait ensuite monter par choix.
+func effective_loadout(pid: int, available: Array) -> Array:
+	var out: Array = []
+	for api in get_move_loadout(pid):
+		if str(api) in available and not str(api) in out:
+			out.append(str(api))
+		if out.size() >= MOVE_SLOTS:
+			break
+	# COMPLÈTE jusqu'à 4 avec les attaques les plus FAIBLES encore disponibles.
+	# Les emplacements sont gratuits (seule la puissance pèse) : laisser un slot
+	# vide ne rapporterait rien au joueur, et un ancien loadout de 3 CT aurait
+	# perdu un emplacement en silence. Tri STABLE (départage par nom) pour que
+	# le Pokédex et la run choisissent exactement les mêmes.
+	var pool: Array = available.duplicate()
+	pool.sort_custom(func(a, b) -> bool:
+		var pa := int(move_power_cache.get(str(a), 0))
+		var pb := int(move_power_cache.get(str(b), 0))
+		if pa == pb:
+			return str(a) < str(b)
+		return pa < pb)
+	for api in pool:
+		if out.size() >= MOVE_SLOTS:
+			break
+		if not str(api) in out:
+			out.append(str(api))
+	return out
+
+## Les 4 emplacements sont acquis d'office — le coût d'un build passe par la
+## PUISSANCE des attaques (cf. move_weight), pas par le nombre de slots.
+func get_move_slots(_pid: int) -> int:
+	return MOVE_SLOTS
 
 const MOVE_SLOT_COSTS: Array[int] = [100, 200, 400]  # coût pour passer à 2, 3, 4 slots
 const TEAM_SLOT_COSTS: Array[int] = [80, 120, 180, 250, 350]  # pour chaque slot ajouté
@@ -433,10 +492,10 @@ func compute_team_weight() -> int:
 		total += pokemon_weight(pid)
 		if get_assigned_item(pid) != "":
 			total += ITEM_WEIGHT
-		# Les SLOTS choisis pèsent, équipés ou non : c'est la CAPACITÉ à porter
-		# des CT qu'on paie, pas leur usage — sinon vider ses slots juste avant
-		# de partir allégerait "gratuitement" le build.
-		total += (get_move_slots(pid) - 1) * MOVE_WEIGHT
+		# Les CAPACITÉS pèsent selon leur PUISSANCE (0 pour les faibles, jusqu'à
+		# 3 pour une grosse frappe) — le build se paie en force de frappe, pas
+		# en nombre d'emplacements.
+		total += loadout_weight(pid)
 	return total
 
 
@@ -449,8 +508,19 @@ func get_move_loadout(pid: int) -> Array:
 ## C'est le chemin « slots pleins » du Pokédex : le joueur choisit explicitement
 ## quelle capacité céder sa place (avant, il fallait deviner qu'on devait
 ## d'abord retirer, puis équiper — retour joueurs).
-func replace_move_in_loadout(pid: int, old_api: String, new_api: String) -> void:
-	var arr: Array = get_move_loadout(pid)
+## Loadout BRUT (get_move_loadout) tant que rien n'est sauvegardé est vide —
+## mais l'écran affiche effective_loadout (les 4 attaques par défaut). Sans ce
+## seed, retirer une carte affichée comme équipée partirait d'un tableau vide
+## et ne ferait rien d'observable. `available` = toutes les capacités que ce
+## Pokémon peut équiper (fourni par l'appelant, qui les a déjà sous la main).
+func _seeded_loadout(pid: int, available: Array) -> Array:
+	if move_loadouts.has(pid):
+		return get_move_loadout(pid)
+	return effective_loadout(pid, available)
+
+
+func replace_move_in_loadout(pid: int, old_api: String, new_api: String, available: Array) -> void:
+	var arr: Array = _seeded_loadout(pid, available)
 	var idx := arr.find(old_api)
 	if idx == -1 or new_api in arr:
 		return
@@ -458,12 +528,12 @@ func replace_move_in_loadout(pid: int, old_api: String, new_api: String) -> void
 	move_loadouts[pid] = arr
 
 
-## Équipe/déséquipe une capacité pour un Pokémon précis — respecte move_slot_count.
-func toggle_move_in_loadout(pid: int, api_name: String) -> void:
-	var arr: Array = get_move_loadout(pid)
+## Équipe/déséquipe une capacité pour un Pokémon précis — 4 slots toujours.
+func toggle_move_in_loadout(pid: int, api_name: String, available: Array) -> void:
+	var arr: Array = _seeded_loadout(pid, available)
 	if api_name in arr:
 		arr.erase(api_name)
-	elif arr.size() < get_move_slots(pid):
+	elif arr.size() < MOVE_SLOTS:
 		arr.append(api_name)
 	move_loadouts[pid] = arr
 
@@ -715,7 +785,7 @@ func save_game() -> void:
 		"dash_charges_bought": dash_charges_bought,
 		"purchased_move_names": purchased_move_names,
 		"move_loadouts":       _stringify_keys(move_loadouts),
-		"move_slot_choices":   _stringify_keys(move_slot_choices),
+		"move_power_cache":    move_power_cache,
 		"cs_holders":          cs_holders,
 		"owned_cs":            owned_cs,
 		"defeat_counts":       _stringify_keys(defeat_counts),
@@ -763,7 +833,8 @@ func load_game() -> void:
 	dash_charges_bought  = int(d.get("dash_charges_bought", dash_charges_bought))
 	purchased_move_names.assign(d.get("purchased_move_names", []))
 	move_loadouts        = _intify_keys(d.get("move_loadouts", {}))
-	move_slot_choices    = _intify_keys(d.get("move_slot_choices", {}))
+	move_power_cache     = d.get("move_power_cache", {})
+	move_slot_count      = maxi(move_slot_count, MOVE_SLOTS)   # 4 slots d'office
 	cs_holders           = d.get("cs_holders", {})
 	owned_cs.assign(d.get("owned_cs", []))
 	defeat_counts        = _intify_keys(d.get("defeat_counts", {}))
@@ -797,3 +868,37 @@ func _intify_keys(d: Dictionary) -> Dictionary:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_APPLICATION_PAUSED:
 		save_game()
+
+
+## Efface la sauvegarde et remet toute la progression à zéro (équivalent
+## d'une toute première partie). Utilisé par le bouton "Réinitialiser" des
+## Paramètres — le joueur doit ensuite être renvoyé à l'écran titre pour
+## repasser par le choix du starter.
+func reset_save() -> void:
+	if FileAccess.file_exists(SAVE_PATH):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(SAVE_PATH))
+
+	selected_starter_id  = 25
+	gold                  = 200
+	run_count             = 0
+	is_first_run          = true
+	unlocked_pokemon      = []
+	hub_team              = []
+	owned_items           = []
+	item_inventory        = {}
+	pokemon_item          = {}
+	start_level_bonus     = {}
+	berry_magnet          = false
+	move_slot_count       = MOVE_SLOTS
+	team_slot_count       = 1
+	dash_charges_bought   = 0
+	purchased_move_names  = []
+	move_loadouts         = {}
+	move_power_cache      = {}
+	cs_holders            = {}
+	owned_cs              = []
+	defeat_counts         = {}
+	champion_badges       = []
+	champion_shards       = 0
+	build_weight_cap      = 24
+	key_bindings          = {}

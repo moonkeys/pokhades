@@ -148,6 +148,64 @@ func _rebuild() -> void:
 		MenuNav.focus_first(_panel)
 
 
+## Fiche complète d'une attaque ([I]) — nom FR, type, puissance/précision/PP,
+## effet maison et description officielle. Charge le détail via PokemonAPI ;
+## son MenuNav (ajouté après celui de l'écran) capte Échap en premier.
+var _move_info: CanvasLayer = null
+
+func _open_move_info(mv: Dictionary) -> void:
+	if is_instance_valid(_move_info):
+		_move_info.queue_free()
+	var pop := CanvasLayer.new()
+	pop.layer = 30
+	_move_info = pop
+	add_child(pop)
+	var close_pop := func() -> void:
+		pop.queue_free()
+		_move_info = null
+	pop.add_child(MenuNav.make(close_pop))
+	var veil := ColorRect.new()
+	veil.color = Color(0.02, 0.02, 0.01, 0.55)
+	veil.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	pop.add_child(veil)
+	var panel := UiKit.main_panel(Vector2(360, 150), Vector2(600, 400))
+	pop.add_child(panel)
+	UiKit.banner(panel, str(mv.get("label", "Attaque")))
+	UiKit.type_badge(panel, Vector2(32, 84), str(mv.get("type", "normal")), 24.0)
+	var body := UiKit.label(panel, "Chargement…", Vector2(32, 128), 14, UiKit.CREAM, 536, HORIZONTAL_ALIGNMENT_LEFT, true)
+	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	var house := str(mv.get("desc", ""))
+	var api := str(mv.get("api", ""))
+	var w_body: WeakRef = weakref(body)
+	PokemonAPI.get_move(api, func(md: Dictionary) -> void:
+		var bd: Label = w_body.get_ref()
+		if bd == null: return
+		var lines: Array[String] = []
+		var pv: Variant = md.get("power")
+		var av: Variant = md.get("accuracy")
+		var ppv: Variant = md.get("pp")
+		var kl: String = {"physical": "Physique", "special": "Spéciale", "status": "Statut"} \
+			.get(str(md.get("damage_class", str(mv.get("damage_class", "")))), "?")
+		lines.append("Puissance : %s      Précision : %s      PP : %s" % [
+			str(int(pv)) if pv != null else str(int(mv.get("power", 0))),
+			("%d %%" % int(av)) if av != null else "—",
+			str(int(ppv)) if ppv != null else "—"])
+		lines.append("Classe : %s" % kl)
+		if house != "":
+			lines.append("")
+			lines.append("★ Effet dans Pokhades : %s" % house)
+		var d := str(md.get("desc_fr", ""))
+		if d != "":
+			lines.append("")
+			lines.append(d)
+		bd.text = "\n".join(lines))
+	var ok := UiKit.button("Fermer  (Échap)", Vector2(220, 40), false)
+	ok.position = Vector2(190, 340)
+	ok.pressed.connect(close_pop)
+	panel.add_child(ok)
+	MenuNav.focus_first(panel)
+
+
 # ── Don « stats » — UN SEUL écran ─────────────────────────────────────
 ## Le choix se faisait en DEUX fenêtres : la grille des stats ici, puis un
 ## ItemRewardScreen par-dessus pour désigner le Pokémon. On enchaînait deux
@@ -410,12 +468,21 @@ func _build_attack_scroll() -> void:
 		UiKit.icon_square(ocard, Vector2(10, 14), UiKit.type_sym(str(mv.get("type", ""))), 48.0)
 		UiKit.label(ocard, str(mv.get("label", "")), Vector2(68, 7), 17, UiKit.TEXT_DARK, 210)
 		UiKit.type_badge(ocard, Vector2(68, 34), str(mv.get("type", "")), 21.0)
-		UiKit.label(ocard, "Puiss. %d%s" % [int(mv.get("power", 0)),
+		UiKit.label(ocard, "Puiss. %d%s  ·  [I] détails" % [int(mv.get("power", 0)),
 			("  ·  %d ₽" % price) if price > 0 else ""],
-			Vector2(152, 38), 13, UiKit.TEXT_DARK.lightened(0.25), 130)
+			Vector2(152, 38), 13, UiKit.TEXT_DARK.lightened(0.25), 220)
 		var learn := UiKit.button("Apprendre", Vector2(104, 40))
 		learn.position = Vector2(392 - 116, 18)
 		learn.disabled = not afford
+		# [I] sur le bouton (focalisable) ouvre la fiche complète de l'attaque —
+		# on choisit une capacité en run sans la connaître par cœur (retour
+		# joueurs). Même geste que dans le Pokédex.
+		var mv_capture := mv
+		learn.gui_input.connect(func(ev: InputEvent) -> void:
+			if ev is InputEventKey and (ev as InputEventKey).pressed \
+					and (ev as InputEventKey).keycode == KEY_I:
+				_open_move_info(mv_capture)
+				get_viewport().set_input_as_handled())
 		var oi := i; var mi := _sel_member
 		learn.pressed.connect(func() -> void:
 			if _team[mi].pokemon_instance.equipped_moves.size() < GameManager.move_slot_count:
