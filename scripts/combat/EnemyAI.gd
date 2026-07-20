@@ -23,7 +23,7 @@ var is_demi_boss: bool = false  # demi-boss de grotte : aura rouge, débloque un
 ## À 0 PV, s'il reste une barre, le Pokémon se recharge à fond et entame la
 ## suivante (façon phases de boss) — son endurance effective est ×hp_bars. Des
 ## pastilles au-dessus de la barre indiquent combien il en reste. Assigné en
-## fonction du rôle dans setup() (demi-boss/boss d'as = 3, autres leads = 2).
+## fonction du rôle dans setup() (boss d'as = 5, demi-boss = 4, élites = 2).
 var hp_bars:    int = 1
 var _bars_left: int = 1
 var _bar_pips:  Array = []
@@ -37,7 +37,7 @@ var _bar_pips:  Array = []
 #   CHARGER    : télégraphe long puis RUÉE rapide (esquivable)
 #   SKIRMISHER : frappe puis se replie brièvement (harcèlement)
 # Boss/champions restent CHASER : lisibles et prévisibles.
-enum Behavior { CHASER, KITER, CHARGER, SKIRMISHER }
+enum Behavior { CHASER, KITER, CHARGER, SKIRMISHER, SUPPORT }
 var behavior: int = Behavior.CHASER
 
 const KITE_MIN := 5.0            # le tireur recule en deçà de cette distance
@@ -63,6 +63,80 @@ var _sprite_base_pos: Vector3 = Vector3.ZERO
 const KNOCKBACK_BASE := 9.0
 var _knockback_vel:   Vector3 = Vector3.ZERO
 var _knockback_timer: float   = 0.0
+
+## TÉNACITÉ anti-étourdissement : un ennemi n'encaisse qu'UN recul par fenêtre
+## de POISE_TIME. Sans ça, plusieurs attaquants qui enchaînent le bousculaient
+## en continu — le recul suspend l'anticipation d'attaque, donc il ne frappait
+## JAMAIS (retour joueurs : « quand on bourrine à plusieurs, il n'a pas le
+## temps de nous attaquer, trop facile »).
+const POISE_TIME := 1.1
+var _poise_cd: float = 0.0
+
+## ── BOOSTS DE STATS ─────────────────────────────────────────────────
+## Registre des bonus actifs (stat -> {mult, t}) ; t < 0 = permanent (boosts
+## innés de boss), sinon compte à rebours puis RETRAIT (division du mult).
+## Une étiquette au-dessus de la barre de PV affiche le cumul (« +35% ATT ·
+## +20% VIT ») — le joueur doit VOIR pourquoi cet ennemi cogne plus fort
+## (retour joueurs).
+var _buffs: Dictionary = {}
+var _buff_lbl: Label3D = null
+const _BUFF_NAMES := {"atk": "ATT", "def": "DÉF", "spd": "VIT"}
+
+func apply_buff(stat: String, mult: float, dur: float) -> void:
+	if _buffs.has(stat):
+		# Déjà boosté sur cette stat : on RAFRAÎCHIT la durée sans empiler —
+		# l'empilement infini d'un soutien ferait boule de neige.
+		(_buffs[stat] as Dictionary)["t"] = dur
+		return
+	_buffs[stat] = {"mult": mult, "t": dur}
+	match stat:
+		"atk": pokemon_instance.attack_mult  *= mult
+		"def": pokemon_instance.defense_mult *= mult
+		"spd": pokemon_instance.speed_mult   *= mult
+	_refresh_buff_label()
+
+
+func _tick_buffs(delta: float) -> void:
+	var changed := false
+	for stat: String in _buffs.keys():
+		var b: Dictionary = _buffs[stat]
+		if float(b["t"]) < 0.0:
+			continue   # permanent
+		b["t"] = float(b["t"]) - delta
+		if float(b["t"]) <= 0.0:
+			match stat:
+				"atk": pokemon_instance.attack_mult  /= float(b["mult"])
+				"def": pokemon_instance.defense_mult /= float(b["mult"])
+				"spd": pokemon_instance.speed_mult   /= float(b["mult"])
+			_buffs.erase(stat)
+			changed = true
+	if changed:
+		_refresh_buff_label()
+
+
+func _refresh_buff_label() -> void:
+	if _buffs.is_empty():
+		if is_instance_valid(_buff_lbl):
+			_buff_lbl.visible = false
+		return
+	if not is_instance_valid(_buff_lbl):
+		_buff_lbl = Label3D.new()
+		_buff_lbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		_buff_lbl.no_depth_test = true
+		_buff_lbl.font_size  = 30
+		_buff_lbl.pixel_size = 0.006
+		_buff_lbl.modulate   = Color(1.0, 0.85, 0.35)
+		_buff_lbl.outline_size = 10
+		_buff_lbl.outline_modulate = Color(0.10, 0.07, 0.02)
+		_buff_lbl.position = Vector3(0, 2.75, 0)   # au-dessus de la barre + pastilles
+		add_child(_buff_lbl)
+	var parts: Array[String] = []
+	for stat: String in _buffs:
+		parts.append("+%d%% %s" % [roundi((float(_buffs[stat]["mult"]) - 1.0) * 100.0),
+			_BUFF_NAMES.get(stat, stat)])
+	_buff_lbl.text = " · ".join(parts)
+	_buff_lbl.visible = true
+
 
 # Pathfinding (contournement d'obstacles)
 var _map:               MapBase = null
@@ -174,13 +248,27 @@ func setup(instance: PokemonInstance, champion: bool = false, boss: bool = false
 	is_boss = boss
 	is_demi_boss = demi_boss
 
-	# Barres de vie : demi-boss & as de champion = 3 ; autres leads/élites = 2.
-	if is_boss or is_demi_boss:
-		hp_bars = 3
+	# Barres de vie (retour joueurs : « plus de barres pour demi-boss et
+	# boss ») : as de champion = 5, demi-boss de grotte = 4, élites = 2.
+	if is_boss:
+		hp_bars = 5
+	elif is_demi_boss:
+		hp_bars = 4
 	elif champion:
 		hp_bars = 2
 	_bars_left = hp_bars
 	_create_bar_pips()
+
+	# Boosts INNÉS des têtes d'affiche — affichés en clair au-dessus de la
+	# barre : la menace se lit, elle ne se devine pas.
+	if is_boss:
+		apply_buff("atk", 1.35, -1.0)
+		apply_buff("def", 1.30, -1.0)
+	elif is_demi_boss:
+		apply_buff("atk", 1.25, -1.0)
+		apply_buff("def", 1.20, -1.0)
+	elif champion:
+		apply_buff("atk", 1.15, -1.0)
 
 	# Archétype : les tireurs kitent ; les boss/champions restent des CHASER
 	# lisibles ; le reste se répartit chasseur / chargeur / harceleur (tiré par
@@ -190,9 +278,13 @@ func setup(instance: PokemonInstance, champion: bool = false, boss: bool = false
 	elif is_champion:
 		behavior = Behavior.CHASER
 	else:
-		match abs(hash(instance.data.id)) % 5:
+		# Tiré par ESPÈCE (stable, apprenable) : ~1 espèce sur 6 est un SOUTIEN
+		# qui booste ses alliés au lieu de cogner (retour joueurs : « des poke
+		# qui se boostent entre eux dans les biomes »).
+		match abs(hash(instance.data.id)) % 6:
 			0: behavior = Behavior.CHARGER
 			1: behavior = Behavior.SKIRMISHER
+			2: behavior = Behavior.SUPPORT
 			_: behavior = Behavior.CHASER
 
 	if is_champion:
@@ -365,6 +457,8 @@ func _physics_process(delta: float) -> void:
 
 	_attack_timer = max(0.0, _attack_timer - delta)
 	_action_lock  = max(0.0, _action_lock - delta)
+	_poise_cd     = max(0.0, _poise_cd - delta)
+	_tick_buffs(delta)
 
 	# Altération de statut : dégâts sur la durée + blocage (sommeil/gel)
 	if _tick_status(delta):
@@ -381,7 +475,7 @@ func _physics_process(delta: float) -> void:
 		velocity = _knockback_vel
 		move_and_slide()
 		_knockback_vel = _knockback_vel.lerp(Vector3.ZERO, minf(1.0, delta * 12.0))
-		position.y = _map.get_height_at_world(global_position) if is_instance_valid(_map) else 0.0
+		position.y = (_map.ground_anchor_y(global_position) if _map.has_method("ground_anchor_y") else _map.get_height_at_world(global_position)) if is_instance_valid(_map) else 0.0
 		return
 
 	# Anticipation d'attaque (windup) : l'ennemi est ENGAGÉ — immobile, le
@@ -401,7 +495,7 @@ func _physics_process(delta: float) -> void:
 		velocity = _charge_dir * CHARGE_SPEED * pokemon_instance.status_speed_mult()
 		_update_anim(Vector2(velocity.x, velocity.z))
 		move_and_slide()
-		position.y = _map.get_height_at_world(global_position) if is_instance_valid(_map) else 0.0
+		position.y = (_map.ground_anchor_y(global_position) if _map.has_method("ground_anchor_y") else _map.get_height_at_world(global_position)) if is_instance_valid(_map) else 0.0
 		var hit := _find_target()
 		if is_instance_valid(hit) \
 				and global_position.distance_to(hit.global_position) <= ATTACK_RANGE * 0.9:
@@ -424,6 +518,7 @@ func _physics_process(delta: float) -> void:
 		Behavior.KITER:      _move_kiter(target, dist, delta)
 		Behavior.CHARGER:    _move_charger(target, dist, delta)
 		Behavior.SKIRMISHER: _move_skirmisher(target, dist, delta)
+		Behavior.SUPPORT:    _move_support(target, dist, delta)
 		_:                   _move_chaser(target, dist, delta)
 
 
@@ -540,7 +635,7 @@ func _steer_to(pos: Vector3, delta: float, speed_mult: float = 1.0) -> void:
 	velocity = dir * SPEED * speed_mult * pokemon_instance.status_speed_mult() * _terrain_speed_mult()
 	_update_anim(Vector2(velocity.x, velocity.z))
 	move_and_slide()
-	position.y = _map.get_height_at_world(global_position) if is_instance_valid(_map) else 0.0
+	position.y = (_map.ground_anchor_y(global_position) if _map.has_method("ground_anchor_y") else _map.get_height_at_world(global_position)) if is_instance_valid(_map) else 0.0
 
 
 ## S'éloigne en ligne droite de `pos` (pas d'A* : on fuit, on ne contourne pas).
@@ -551,7 +646,7 @@ func _flee_from(pos: Vector3, speed_mult: float = 1.0) -> void:
 	velocity = away * SPEED * speed_mult * pokemon_instance.status_speed_mult() * _terrain_speed_mult()
 	_update_anim(Vector2(velocity.x, velocity.z))
 	move_and_slide()
-	position.y = _map.get_height_at_world(global_position) if is_instance_valid(_map) else 0.0
+	position.y = (_map.ground_anchor_y(global_position) if _map.has_method("ground_anchor_y") else _map.get_height_at_world(global_position)) if is_instance_valid(_map) else 0.0
 
 
 func _hold_and_attack(target: CharacterBody3D) -> void:
@@ -566,6 +661,54 @@ func _move_chaser(target: CharacterBody3D, dist: float, delta: float) -> void:
 		_steer_to(target.global_position, delta)
 	else:
 		_hold_and_attack(target)
+
+
+## SOUTIEN : reste en retrait et BOOSTE ses alliés proches (+25 % sur une
+## stat, 7 s, rafraîchi sans empiler) toutes les CHANT_CD secondes. S'il est
+## acculé, il se replie ; sans allié à portée, il se bat comme un chasseur.
+## Le boost se VOIT : éclat doré sur chaque bénéficiaire + étiquette au-dessus
+## de sa barre (cf. _refresh_buff_label).
+const SUPPORT_RADIUS := 9.0
+const SUPPORT_CHANT_CD := 5.0
+const SUPPORT_KEEPAWAY := 6.0
+var _chant_cd: float = 0.0
+
+func _move_support(target: CharacterBody3D, dist: float, delta: float) -> void:
+	_chant_cd = maxf(0.0, _chant_cd - delta)
+
+	var allies: Array = []
+	for e in get_tree().get_nodes_in_group("enemies"):
+		if e == self or not is_instance_valid(e):
+			continue
+		if global_position.distance_to(e.global_position) <= SUPPORT_RADIUS:
+			allies.append(e)
+
+	if allies.is_empty():
+		_move_chaser(target, dist, delta)   # plus personne à chanter : au front
+		return
+
+	if _chant_cd <= 0.0:
+		_chant_cd = SUPPORT_CHANT_CD
+		var stat: String = ["atk", "spd", "def"][abs(hash(pokemon_instance.data.id)) % 3]
+		# Anim PMD de CONCENTRATION sur le chanteur (pas un coup) + planche
+		# d'effet Essentials sur chaque bénéficiaire.
+		_play_action_anim(["charge", "attack"], Vector2.ZERO, 0.5)
+		for e in allies.slice(0, 3):   # 3 bénéficiaires max par chant
+			if e.has_method("apply_buff"):
+				e.apply_buff(stat, 1.25, 7.0)
+				AttackAnim.play(get_parent(), e.global_position, "fx_boost")
+		# Le chanteur se signale : flash doré + son — le joueur apprend à le
+		# cibler EN PREMIER, c'est tout l'intérêt tactique du rôle.
+		sprite.modulate = Color(2.0, 1.7, 0.9)
+		get_tree().create_timer(0.25).timeout.connect(func() -> void:
+			if is_instance_valid(self): sprite.modulate = Color.WHITE)
+		Sfx.play("levelup", -10.0, 0.4)
+
+	if dist < SUPPORT_KEEPAWAY:
+		_flee_from(target.global_position, 0.9)
+	else:
+		velocity = Vector3.ZERO
+		_update_anim(Vector2.ZERO)
 
 
 ## Tireur : maintient une bande de distance — recule si on le colle, avance
@@ -1023,7 +1166,11 @@ func take_damage(amount: int, source_pos: Vector3 = Vector3(INF, INF, INF),
 		dir.y = 0.0
 		if dir.length() > 0.01:
 			dir = dir.normalized()
-			if not fatal:
+			# Recul refusé si : ténacité en recharge (un seul recul par fenêtre)
+			# ou anticipation EN COURS — un ennemi engagé est arc-bouté, son
+			# coup PART : c'est l'esquive qui sauve, pas le matraquage.
+			if not fatal and _poise_cd <= 0.0 and _windup <= 0.0:
+				_poise_cd = POISE_TIME
 				var kb := KNOCKBACK_BASE
 				if is_boss:        kb *= 0.15
 				elif is_champion:  kb *= 0.5

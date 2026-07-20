@@ -33,6 +33,11 @@ const TYPE_SHEETS := {
 	"poison":   {"file": "022-Darkness01.png", "tint": Color(0.85, 0.45, 1.0)},
 	"dragon":   {"file": "023-Burst01.png", "tint": Color(0.55, 0.55, 1.0)},
 	"fairy":    {"file": "Light1.png"},
+	# ── Effets HORS-TYPE (clés préfixées fx_, jamais en collision avec un
+	# type PokeAPI) : montée de stats et soin — joués sur le BÉNÉFICIAIRE
+	# (chant de soutien, CT de soin), planches Essentials dédiées.
+	"fx_boost": {"file": "028-State01.png"},
+	"fx_heal":  {"file": "Heal5.png"},
 }
 
 static var _frames_cache: Dictionary = {}   # file -> SpriteFrames (ou null si illisible)

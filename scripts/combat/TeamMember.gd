@@ -8,7 +8,7 @@ extends CharacterBody3D
 
 const SPEED           := 9.4
 const ATTACK_RANGE    := 4.0   # secours : Pokémon sans move équipé
-const ATTACK_COOLDOWN := 0.7   # idem
+const ATTACK_COOLDOWN := 1.0   # idem — aligné sur les cadences rallongées
 
 # ── Cadence & portée par ATTAQUE ──────────────────────────────────────
 # Chaque move a sa portée / portée mini / cadence (cf. MoveData.tune()).
@@ -17,7 +17,7 @@ const ATTACK_COOLDOWN := 0.7   # idem
 #                  parallèle) — une grosse frappe reste indisponible longtemps ;
 #   _global_lock : court verrou APRÈS n'importe quelle attaque — sans lui on
 #                  pourrait enchaîner les 4 capacités d'un coup (retour joueurs).
-const GLOBAL_LOCK := 0.35
+const GLOBAL_LOCK := 0.5   # rallongé avec les cadences (cf. MoveData.tune)
 
 var _move_cd:     PackedFloat32Array = PackedFloat32Array([0.0, 0.0, 0.0, 0.0])
 var _move_cd_max: PackedFloat32Array = PackedFloat32Array([1.0, 1.0, 1.0, 1.0])
@@ -422,7 +422,10 @@ func _move_cooldown(idx: int) -> float:
 ## La capacité `idx` est-elle lançable MAINTENANT ? (verrou global + sa propre
 ## cadence). La portée mini est vérifiée séparément, à la cible.
 func _move_ready(idx: int) -> bool:
-	if _evolving or _global_lock > 0.0:
+	# _action_lock : le sprite est ENCORE dans son anim d'attaque/dégâts — la
+	# capacité suivante attend qu'il ait fini son geste (retour joueurs : « on
+	# peut faire plusieurs attaques en même temps »).
+	if _evolving or _global_lock > 0.0 or _action_lock > 0.0:
 		return false
 	if idx < 0 or idx >= _move_cd.size():
 		return false
@@ -779,7 +782,8 @@ func _terrain_speed_mult() -> float:
 ## — la map reste plate par défaut (arène) donc ce suivi ne fait rien de
 ## visible en dehors des maps normales.
 func _snap_to_ground() -> void:
-	position.y = _map.get_height_at_world(global_position) if is_instance_valid(_map) else 0.0
+	position.y = _map.ground_anchor_y(global_position) \
+		if is_instance_valid(_map) and _map.has_method("ground_anchor_y") else 0.0
 
 
 ## Renvoie le point vers lequel diriger le compagnon : ligne droite si la vue
@@ -998,11 +1002,13 @@ func _attack() -> void:
 		if hit_count > 0:
 			_play_attack_lunge(lunge_pos / hit_count, anim_prefixes)
 		else:
-			sprite.modulate = Color(2.2, 2.2, 2.2)
-			get_tree().create_timer(0.1).timeout.connect(func():
-				if is_instance_valid(self) and not _evolving:
-					sprite.modulate = Color.WHITE
-			)
+			# COUP DANS LE VIDE : même langage visuel qu'un coup qui porte —
+			# fente, anim d'attaque PMD et effet du type devant soi. L'ancien
+			# simple flash blanc faisait croire que l'attaque n'était pas
+			# partie (retour joueurs : « je veux voir l'animation »).
+			var swing := _swing_point()
+			_play_attack_lunge(swing, anim_prefixes)
+			AttackAnim.play(get_parent(), swing, move_type)
 
 
 ## CT de statut à effet réel (cf. MoveData.effect) : soin (soi/équipe) ou
@@ -1020,15 +1026,18 @@ func _use_status_move(move: MoveData) -> void:
 		"heal_self":
 			pokemon_instance.heal_percent(float(move.effect.get("pct", 0.3)))
 			CombatVFX.spawn_damage_number(get_parent(), global_position, 0, "heal")
+			AttackAnim.play(get_parent(), global_position, "fx_heal")
 		"heal_team":
 			var pct: float = float(move.effect.get("pct", 0.3))
 			pokemon_instance.heal_percent(pct)
 			CombatVFX.spawn_damage_number(get_parent(), global_position, 0, "heal")
+			AttackAnim.play(get_parent(), global_position, "fx_heal")
 			for ally in get_tree().get_nodes_in_group("players"):
 				if not is_instance_valid(ally) or ally == self: continue
 				if global_position.distance_to(ally.global_position) > HEAL_TEAM_RADIUS: continue
 				ally.pokemon_instance.heal_percent(pct)
 				CombatVFX.spawn_damage_number(get_parent(), ally.global_position, 0, "heal")
+				AttackAnim.play(get_parent(), ally.global_position, "fx_heal")
 		"status":
 			var target := _nearest_enemy(STATUS_MOVE_RANGE)
 			if is_instance_valid(target):
@@ -1038,6 +1047,10 @@ func _use_status_move(move: MoveData) -> void:
 				AttackAnim.play(get_parent(), target.global_position, move.type)
 
 	if not _evolving:
+		# Anim PMD DIFFÉRENTE d'une frappe : Charge (concentration) — une CT
+		# de soutien ne « donne pas un coup » (retour joueurs). Repli attack
+		# pour les planches sans action Charge.
+		_play_action_anim(["charge", "attack"], Vector2.ZERO, 0.5)
 		sprite.modulate = Color(1.4, 2.0, 1.4)
 		get_tree().create_timer(0.12).timeout.connect(func():
 			if is_instance_valid(self) and not _evolving:
@@ -1053,12 +1066,15 @@ const RANGED_RANGE := 9.0   # secours (Pokémon sans move équipé)
 func _ranged_attack(move_type: String, move_power: int, reach: float = RANGED_RANGE) -> void:
 	var target := _nearest_enemy(reach)
 	if target == null:
-		# Tir à vide : petit flash, comme un coup dans le vide en mêlée
-		sprite.modulate = Color(2.2, 2.2, 2.2)
-		get_tree().create_timer(0.1).timeout.connect(func():
-			if is_instance_valid(self) and not _evolving:
-				sprite.modulate = Color.WHITE
-		)
+		# TIR À VIDE : anim de tir + projectile qui part réellement devant soi
+		# et se perd (launch_point, esquivable/rien à toucher). Le simple flash
+		# blanc laissait croire que rien n'était parti (retour joueurs).
+		var ahead := _swing_point(minf(reach, 7.0))
+		if not _evolving:
+			var vdir := ahead - global_position
+			_play_action_anim(["shoot", "charge", "attack"], Vector2(vdir.x, vdir.z), 0.4)
+		Projectile.launch_point(get_parent(), global_position, ahead,
+			CombatVFX.type_color(move_type), func() -> void: pass)
 		return
 
 	var dir := target.global_position - global_position
@@ -1083,6 +1099,16 @@ func _ranged_attack(move_type: String, move_power: int, reach: float = RANGED_RA
 		CombatVFX.spawn_damage_number(parent, tgt.global_position, dmg, kind)
 		AttackAnim.play(parent, tgt.global_position, move_type)
 	)
+
+
+## Point « devant soi » pour un coup dans le VIDE : dernière direction de
+## déplacement si on bouge, sinon le côté vers lequel le sprite regarde.
+func _swing_point(dist: float = 1.6) -> Vector3:
+	var v := velocity
+	v.y = 0.0
+	if v.length() > 0.5:
+		return global_position + v.normalized() * dist
+	return global_position + Vector3(-dist if sprite.flip_h else dist, 0, 0)
 
 
 func _play_attack_lunge(target_pos: Vector3, anim_prefixes: Array = ["attack"]) -> void:

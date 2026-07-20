@@ -31,16 +31,20 @@ var cooldown:  float = 0.7    # secondes, avant mise à l'échelle par la Vitess
 ## avoir rempli ces deux champs (tous les sites de création de MoveData).
 func tune() -> void:
 	var p := clampf(float(power), 0.0, 120.0) / 120.0   # 0..1
+	# Cadences RALLONGÉES (passe d'équilibrage, avec la ténacité ennemie) :
+	# le spam permanent rendait chaque coup insignifiant — un coup doit être
+	# une DÉCISION, et l'intervalle laisse aux ennemis le temps d'exister
+	# (retour joueurs : « trop facile », « plus de cooldown »).
 	match damage_class:
 		"special":
 			range_max = 7.0 + p * 4.0        # 7.0 → 11.0
 			range_min = 3.0 if power >= 90 else 0.0
-			cooldown  = 0.90 + p * 0.80      # 0.90 → 1.70
+			cooldown  = 1.30 + p * 1.10      # 1.30 → 2.40 (avant : 0.90 → 1.70)
 		"status":
 			range_max = 8.0
 			range_min = 0.0
-			cooldown  = 3.0
+			cooldown  = 4.0                  # avant : 3.0
 		_:  # physique
 			range_max = 3.4 + p * 1.2        # 3.4 → 4.6
 			range_min = 0.0
-			cooldown  = 0.55 + p * 0.75      # 0.55 → 1.30
+			cooldown  = 0.85 + p * 1.05      # 0.85 → 1.90 (avant : 0.55 → 1.30)

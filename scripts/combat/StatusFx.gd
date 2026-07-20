@@ -10,8 +10,10 @@ extends RefCounted
 ## emojis) : BRÛ brûlure, PSN poison, PAR paralysie, GEL gel, DOR sommeil.
 
 const INFO := {
-	"burn":      {"tag": "BRÛ", "col": Color(1.00, 0.45, 0.12), "dur": 6.0, "dot": 0.020},
-	"poison":    {"tag": "PSN", "col": Color(0.72, 0.32, 0.82), "dur": 6.0, "dot": 0.030},
+	# DOT nettement relevé (retour joueurs : « poison/brûlure devraient faire
+	# plus de dégâts ») : % des PV max par tick (cf. PokemonInstance._DOT_INTERVAL).
+	"burn":      {"tag": "BRÛ", "col": Color(1.00, 0.45, 0.12), "dur": 7.0, "dot": 0.045},
+	"poison":    {"tag": "PSN", "col": Color(0.72, 0.32, 0.82), "dur": 8.0, "dot": 0.060},
 	"paralysis": {"tag": "PAR", "col": Color(0.95, 0.85, 0.12), "dur": 5.0, "dot": 0.0},
 	"freeze":    {"tag": "GEL", "col": Color(0.50, 0.85, 1.00), "dur": 3.0, "dot": 0.0},
 	"sleep":     {"tag": "DOR", "col": Color(0.62, 0.70, 1.00), "dur": 3.0, "dot": 0.0},
