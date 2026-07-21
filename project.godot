@@ -19,6 +19,8 @@ config/icon="res://icon.png"
 
 PokemonAPI="*res://autoloads/PokemonAPI.gd"
 GameManager="*res://autoloads/GameManager.gd"
+StoryManager="*res://autoloads/StoryManager.gd"
+MissionManager="*res://autoloads/MissionManager.gd"
 PMDSprites="*res://autoloads/PMDSprites.gd"
 ShadowTexture="*res://autoloads/ShadowTexture.gd"
 Net="*res://autoloads/Net.gd"

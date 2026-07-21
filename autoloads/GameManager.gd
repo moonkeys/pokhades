@@ -796,6 +796,8 @@ func save_game() -> void:
 		"master_volume":       master_volume,
 		"sfx_volume":          sfx_volume,
 		"audio_muted":         audio_muted,
+		"story":               StoryManager.to_dict(),
+		"missions":            MissionManager.to_dict(),
 	}
 	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	if f == null:
@@ -845,6 +847,8 @@ func load_game() -> void:
 	master_volume        = float(d.get("master_volume", master_volume))
 	sfx_volume           = float(d.get("sfx_volume", sfx_volume))
 	audio_muted          = bool(d.get("audio_muted", audio_muted))
+	StoryManager.from_dict(d.get("story", {}))
+	MissionManager.from_dict(d.get("missions", {}))
 
 
 ## JSON n'autorise que des clés-chaînes — nos dictionnaires pid→… utilisent
@@ -902,3 +906,5 @@ func reset_save() -> void:
 	champion_shards       = 0
 	build_weight_cap      = 24
 	key_bindings          = {}
+	StoryManager.reset()
+	MissionManager.reset()

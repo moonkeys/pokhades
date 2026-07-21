@@ -84,18 +84,36 @@ const CHAMPION_SPRITE: Dictionary = {
 }
 
 ## Réplique d'intro du champion — affichée dans la boîte de dialogue à
-## l'entrée de sa salle, avant que ses Pokémon n'apparaissent.
+## l'entrée de sa salle. Depuis l'arc « Rébellion », les champions ne se
+## présentent plus par leur type : ce sont les GARDIENS DU SYSTÈME qui maintient
+## les Pokémon captifs, et ils s'adressent au rebelle en tant que tel (cf.
+## StoryManager). Leur type transparaît dans le ton, pas dans la menace.
 const CHAMPION_INTRO_LINE: Dictionary = {
-	"Pierre":    "J'utilise des Pokémon Roche, alors ma défense est parfaite ! Essaie un peu de la percer !",
-	"Ondine":    "Héhé… tu croyais affronter une simple débutante ? Mes Pokémon d'Eau vont te submerger !",
-	"Major Bob": "Un vrai combat, ça se gagne à l'électricité ! Prépare-toi à un choc !",
-	"Erika":     "Oh… je te prie de m'excuser. Mes Pokémon Plante ont un parfum si envoûtant qu'on s'endort presque.",
-	"Koga":      "Fwahaha ! Tu ne verras même pas mes Pokémon Poison venir te frapper dans l'ombre !",
-	"Morgane":   "Je vois déjà l'issue de ce combat… et elle n'est pas en ta faveur.",
-	"Auguste":   "Le feu de la passion brûle en moi ! Voyons si tu peux résister à sa chaleur !",
-	"Giovanni":  "Je suis le chef de la Team Rocket… et je ne perds JAMAIS sur mon propre terrain.",
-	"Blanche":   "Peu importe le type, la force et la stratégie suffisent. Montre-moi ce que tu vaux !",
+	"Pierre":    "Un Pokémon sauvage qui prêche la « liberté » ? La Roche ne cède pas, et l'ordre non plus. Retourne dans le rang.",
+	"Ondine":    "Ta petite rébellion ? Une vaguelette. Mes Pokémon d'Eau la noieront avant qu'elle n'atteigne le large.",
+	"Major Bob": "Libérer les Pokémon ? Quelle idée électrisante… et parfaitement illégale. Je vais te remettre les idées en place !",
+	"Erika":     "La liberté a un parfum enivrant, je le concède. Mais mes fleurs endorment les rêveurs de ton espèce.",
+	"Koga":      "Fwahaha ! Un meneur de révolte se cache toujours dans l'ombre… tout comme mon poison. Il te trouvera.",
+	"Morgane":   "Je lis ton avenir : une cage. Ta « rébellion » n'est qu'un caprice que l'ordre corrigera.",
+	"Auguste":   "Ce feu dans ton regard, cette envie de tout brûler des chaînes… je vais l'éteindre, rebelle.",
+	"Giovanni":  "La liberté ? Le pouvoir se prend, il ne se distribue pas. Les Pokémon m'appartiennent — toi le premier.",
+	"Blanche":   "Peu importe ta cause : la force fait la loi, et la loi enferme. Montre-moi si un sauvage peut la briser.",
 }
+
+## Réplique ESCALADÉE du boss final — le dernier verrou du système. Générique et
+## grandiose : à cet instant, le champion d'acte incarne la Ligue tout entière,
+## au-delà de son identité. Utilisée à la place de la ligne normale dans la
+## salle du DRESSEUR FINAL (cf. CombatArena._is_final_boss_room).
+const FINAL_BOSS_INTRO := "Alors c'est toi. Le sauvage qui rêve d'un monde sans Poké Balls. " \
+	+ "Je suis le dernier verrou de la Ligue — l'ordre lui-même. Franchis-moi, et tout s'effondre. " \
+	+ "Mais aucun rebelle n'a jamais brisé LA chaîne."
+
+## Réplique de CONCESSION du boss final, jouée APRÈS sa défaite : le système
+## reconnaît sa chute et le monde bascule vers le choix (cf. l'épilogue de
+## StoryManager). Non bloquante, même boîte de dialogue.
+const FINAL_BOSS_DEFEAT := "Impossible… le dernier verrou a cédé. " \
+	+ "Va, alors. Que les Pokémon choisissent : suivre un dresseur… ou vivre libres. " \
+	+ "La chaîne est brisée — et c'est toi qui l'as brisée."
 
 
 ## Chemin complet du sprite du champion `champ_name` ({} si introuvable).
@@ -105,7 +123,7 @@ static func champion_sprite_path(champ_name: String) -> String:
 
 
 static func champion_intro_line(champ_name: String) -> String:
-	return CHAMPION_INTRO_LINE.get(champ_name, "Prépare-toi au combat !")
+	return CHAMPION_INTRO_LINE.get(champ_name, "Ta rébellion s'arrête ici, sauvage !")
 
 ## Compo de champion par nom ("Blanche" → Dictionary), {} si introuvable.
 static func team_by_name(champ_name: String) -> Dictionary:

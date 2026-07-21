@@ -524,7 +524,7 @@ func show_evolution(name_fr: String) -> void:
 
 
 func show_unlock(name_fr: String) -> void:
-	_toast("★  %s rejoint le Pokédex !" % name_fr.capitalize(), Color(0.35, 0.80, 0.90))
+	_toast("★  %s rejoint la rébellion !" % name_fr.capitalize(), Color(0.35, 0.80, 0.90))
 
 
 func _toast(text: String, accent: Color) -> void:

@@ -4,6 +4,13 @@ extends Node3D
 # Positions sur le layout compact 56×34 (cf. HubMap : plaza 21-35 × 13-23,
 # chemin vertical x26-30, bande horizontale z15-19, étang autour de (9.5, 26.5))
 const NPC_DEFS: Array[Dictionary] = [
+	# Le meneur de la rébellion — Léviator, le serpent furieux qui brise ses
+	# chaînes : symbole d'un Pokémon sauvage et rebelle. Ouvre la Chronique
+	# (récit + objectif + rang). Planté au centre de la plaza.
+	{"id": "story",     "pid": 130, "pos": Vector3(22.0, 0, 14.5), "accent": Color(0.90, 0.24, 0.20)},  # Léviator — meneur
+	# Courrier de la rébellion — Roucarnage porte les rumeurs : missions de
+	# libération facultatives (cf. RumorBoardScreen / MissionManager).
+	{"id": "rumors",    "pid": 18,  "pos": Vector3(34.0, 0, 15.5), "accent": Color(0.85, 0.72, 0.40)},  # Roucarnage — tableau des rumeurs
 	{"id": "start",     "pid": 149, "pos": Vector3(28.0, 0, 7.0),  "accent": Color(0.85, 0.38, 0.10)},  # Dragonite — haut du chemin
 	{"id": "shop",      "pid": 113, "pos": Vector3(9.0,  0, 13.5), "accent": Color(0.92, 0.60, 0.72)},  # Chansey — chemin ouest
 	{"id": "pokedex",   "pid": 137, "pos": Vector3(15.5, 0, 20.5), "accent": Color(0.40, 0.58, 0.95)},  # Porygon — vers l'étang
@@ -27,7 +34,7 @@ const AMBIENT_DEFS: Array[Dictionary] = [
 const INTERACT_RADIUS := 4.5
 const PLAYER_START     := Vector3(28.0, 0, 21.0)
 
-const MAP_W := 56.0
+const MAP_W := 80.0
 const MAP_H := 34.0
 
 # ── Caméra (angle fixe façon Octopath, suit le joueur) ──────────────────
@@ -76,17 +83,25 @@ func _ready() -> void:
 	_register_key()
 	_build_npcs()
 	_build_ambient()
+	_build_freed_pokemon()
 	_build_sunflowers()
 	_build_butterflies()
 	_build_player()
 	_build_camera()
 	_build_ui()
 	_build_multiplayer_avatars()
+	# La rébellion a pu progresser pendant la run (Pokémon libérés, dresseur
+	# vaincu) : on réévalue au retour au hub et on félicite si un chapitre a été
+	# franchi. evaluate() est idempotent — sûr à rappeler à chaque entrée.
+	var advanced := StoryManager.evaluate()
+	MissionManager.ensure_board()   # tableau des rumeurs prêt dès l'entrée
 	if GameManager.is_first_run and GameManager.unlocked_pokemon.is_empty():
 		_open_starter_selection()
 	else:
 		# Retour au hub (post-run, achat, etc.) = point de sauvegarde naturel.
 		GameManager.save_game()
+		if advanced:
+			_show_coming_soon("Nouveau chapitre — %s" % StoryManager.chapter()["title"])
 
 
 # ── Environnement (ciel, lumière, ambiance) ─────────────────────────────
@@ -303,6 +318,50 @@ func _build_ambient() -> void:
 		var r: float = def.get("radius", 2.5)
 		if r > 0.0:
 			npc.start_wandering(def["pos"], r, randf_range(0.9, 1.4))
+
+
+## Points de déambulation des Pokémon LIBÉRÉS (GameManager.unlocked_pokemon),
+## répartis dans les zones ouvertes du hub — chemins, plaza, clairière à l'est
+## (ex-enclos, cf. HubMap.EAST_CLEARING). Retour joueurs : « l'enclos c'est
+## moche, je veux qu'ils se baladent partout dans le hub, mais de manière
+## logique » — donc à la main plutôt qu'un tirage géométrique, pour rester à
+## bonne distance de l'eau, des tentes, du grand arbre et de l'enclos (celui
+## des tournesols, qui lui reste) — même logique de curation que AMBIENT_DEFS.
+const FREED_ROAM_SPOTS: Array[Dictionary] = [
+	{"pos": Vector3(28.0, 0, 4.5),  "radius": 2.0},   # haut du chemin vertical
+	{"pos": Vector3(22.0, 0, 19.0), "radius": 2.5},   # plaza, côté ouest
+	{"pos": Vector3(38.0, 0, 17.0), "radius": 2.0},   # plaza, côté est
+	{"pos": Vector3(28.0, 0, 29.0), "radius": 2.0},   # bas du chemin vertical
+	{"pos": Vector3(12.0, 0, 17.0), "radius": 2.3},   # chemin ouest
+	{"pos": Vector3(50.0, 0, 17.0), "radius": 2.5},   # chemin est, avant la clairière
+	{"pos": Vector3(62.0, 0, 23.0), "radius": 3.0},   # clairière est, ouest
+	{"pos": Vector3(72.0, 0, 24.0), "radius": 3.2},   # clairière est, centre
+	{"pos": Vector3(66.0, 0, 29.0), "radius": 2.8},   # clairière est, sud
+	{"pos": Vector3(55.0, 0, 30.0), "radius": 2.2},   # sud-est, avant la clairière
+]
+
+## Sous-ensemble tournant : jusqu'à FREED_ROAM_SPOTS.size() espèces
+## débloquées, tirées à chaque chargement du hub (pas de minimum forcé en
+## tout début de partie). npc_id "reserve" (≠ "ambient") : contrairement à la
+## faune décorative, ces PNJ sont INTERACTIFS — cf. _process (portée
+## d'interaction) et NpcDialogue.LINES["reserve"].
+func _build_freed_pokemon() -> void:
+	var pool: Array = GameManager.unlocked_pokemon.duplicate()
+	if pool.is_empty():
+		return
+	pool.shuffle()
+	var count := mini(pool.size(), FREED_ROAM_SPOTS.size())
+
+	for i in count:
+		var spot: Dictionary = FREED_ROAM_SPOTS[i]
+		var pos: Vector3 = spot["pos"]
+		var npc := HubNPC.new()
+		npc.position = pos
+		npc.terrain  = _terrain
+		add_child(npc)
+		npc.setup("reserve", pool[i], Color(0.70, 0.85, 0.60))
+		npc.start_wandering(pos, spot["radius"], randf_range(0.9, 1.3))
+		_npcs.append(npc)
 
 
 ## Positions synchronisées avec l'enclos de barrières posé par
@@ -547,6 +606,9 @@ func _update_prompt(npc: HubNPC) -> void:
 
 	var role: String
 	match npc.npc_id:
+		"story":     role = "Chronique de la Rébellion"
+		"rumors":    role = "Tableau des Rumeurs"
+		"reserve":   role = "Pokémon libéré"
 		"start":     role = "Lancer la Run"
 		"shop":      role = "Boutique"
 		"pokedex":   role = "Pokédex & Équipe"
@@ -568,14 +630,30 @@ func _update_prompt(npc: HubNPC) -> void:
 	_prompt_lbl.add_theme_stylebox_override("normal", s)
 
 
+## Petit échange (2-3 phrases, cf. NpcDialogue) AVANT d'ouvrir le menu associé
+## au PNJ — retour joueurs : « je veux pouvoir avoir un petit dialogue avec
+## chaque PNJ ». Le menu ne s'ouvre qu'une fois le dialogue refermé.
 func _interact(npc: HubNPC) -> void:
 	_blocked = true
+	var dlg := NpcDialogueScreen.new()
+	add_child(dlg)
+	var display_name := npc.npc_name if not npc.npc_name.is_empty() else "…"
+	dlg.setup(display_name, npc.pokemon_id, npc.accent, NpcDialogue.lines_for(npc.npc_id))
+	Sfx.play_file(Sfx.SE_MENU_OPEN, -6.0)
+	dlg.finished.connect(func() -> void: _open_npc_screen(npc))
+
+
+func _open_npc_screen(npc: HubNPC) -> void:
 	var screen: CanvasLayer = null
 
 	match npc.npc_id:
 		"start":
 			_open_run_menu()
 			return
+		"story":
+			screen = StoryScreen.new()
+		"rumors":
+			screen = RumorBoardScreen.new()
 		"shop":
 			screen = ShopScreen.new()
 		"pokedex":
@@ -605,6 +683,11 @@ func _interact(npc: HubNPC) -> void:
 		# qu'on compose dans le Pokédex, il se met à jour en direct, comme le
 		# bandeau (retour joueurs).
 		screen.team_changed.connect(_refresh_player_sprite)
+
+	# Réclamer une rumeur verse des Baies/Éclats : le bandeau se met à jour en
+	# direct, sans attendre la fermeture du tableau.
+	if screen.has_signal("reward_claimed"):
+		screen.reward_claimed.connect(_refresh_labels)
 
 	if screen.has_signal("closed"):
 		screen.closed.connect(func() -> void:

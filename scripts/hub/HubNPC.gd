@@ -13,6 +13,7 @@ var _name_label: Label3D          = null
 var _exclaim:    Label3D          = null
 var _in_range:   bool             = false
 var _anim_t:     float            = 0.0
+var _anim:       String           = "idle"
 
 ## Relief du hub (HubMap) — assigné par HubWorld ; les PNJ (fixes comme
 ## déambulants) restent collés aux collines douces. Null = sol plat.
@@ -106,16 +107,28 @@ func _on_sprites(result: Dictionary) -> void:
 
 
 func _process(delta: float) -> void:
+	var move_dir := Vector2.ZERO
 	if _should_wander:
 		_wander_timer -= delta
 		if _wander_pause:
 			if _wander_timer <= 0.0:
 				_pick_wander_target()
 		else:
+			var before := position
 			position = position.move_toward(_wander_target, _wander_speed * delta)
+			# Direction vers LA CIBLE (magnitude = distance restante), pas le
+			# déplacement de CETTE frame : à vitesse ~1 u/s et 60 FPS, ce
+			# déplacement ne fait que ~0,017 — sous le seuil dir.length() < 0.1
+			# de Billboard3D.dir_to_anim, qui retombait donc quasi tout le temps
+			# sur "idle" (sprite figé de face pendant que le PNJ glissait).
+			# Diagonales très visibles (retour joueurs : « leur sprite diagonale
+			# ne fonctionne pas ») car l'idle est calé sur les frames "walk_down".
+			if position.distance_to(before) > 0.0001:
+				move_dir = Vector2(_wander_target.x - before.x, _wander_target.z - before.z)
 			if position.distance_to(_wander_target) < 0.15 or _wander_timer <= 0.0:
 				_wander_pause = true
 				_wander_timer = randf_range(1.0, 3.0)
+	_update_anim(move_dir)
 
 	# Colle au relief (fixes comme déambulants) — les cibles de déambulation
 	# sont en y=0, on réajuste après le déplacement.
@@ -126,6 +139,20 @@ func _process(delta: float) -> void:
 		return
 	_anim_t += delta * 3.0
 	_exclaim.position.y = 1.75 + sin(_anim_t) * 0.08
+
+
+## Anim de marche à 8 directions pendant la déambulation (cf. HubPlayer._update_anim
+## — jusqu'ici les PNJ restaient bloqués en pose "idle" en glissant, retour
+## joueurs : "pas naturel, on ne voit pas quand ils marchent en diagonale").
+func _update_anim(move_dir: Vector2) -> void:
+	if not is_instance_valid(_sprite) or not _sprite.sprite_frames:
+		return
+	var target := Billboard3D.dir_to_anim(move_dir)
+	if target == _anim:
+		return
+	_anim = target
+	if _sprite.sprite_frames.has_animation(_anim):
+		_sprite.play(_anim)
 
 
 func set_in_range(v: bool) -> void:

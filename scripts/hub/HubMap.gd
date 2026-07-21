@@ -16,7 +16,7 @@ extends Node3D
 ## d'équivalent architectural dans le pack nature. 1 unité monde = 1
 ## ancienne tuile (16px).
 
-const W := 56
+const W := 80
 const H := 34
 const TILESET_PATH := "res://assets/tilesets/tileset pokemon.png"
 const NATURE_DIR    := "res://assets/nature/"
@@ -64,9 +64,20 @@ const HEIGHT_SMOOTH_PASSES := 2
 ## Zones toujours PLATES (relief = 0, marge d'une case incluse) : chemins,
 ## plaza, étang, structures, enclos des tournesols, feux de camp. Sert aussi
 ## de zone d'exclusion pour les fleurs/décors épars.
+## Zone d'entraînement aux mécaniques de terrain (herbes hautes + boue) —
+## à l'est de la map agrandie, reliée par la bande de chemin horizontale.
+const TRAINING_ZONE := Rect2i(58, 3, 20, 10)
+## Clairière plate à l'est — abritait un enclos clôturé pour les Pokémon
+## débloqués, supprimé (retour joueurs : "l'enclos c'est moche, je veux qu'ils
+## se baladent partout dans le hub"). Reste une zone plate pour le décor de
+## camp (cf. _place_east_camp_decor) et l'un des points de déambulation des
+## libérés (cf. HubWorld.FREED_ROAM_SPOTS). Démarre à z=20 (sous la bande de
+## chemin z14-20) pour ne pas chevaucher.
+const EAST_CLEARING := Rect2i(58, 20, 20, 12)
+
 const _FLAT_RECTS: Array[Rect2i] = [
 	Rect2i(24, 2, 8, 30),    # chemin vertical
-	Rect2i(4, 14, 48, 6),    # bande de chemin horizontale
+	Rect2i(4, 14, 74, 6),    # bande de chemin horizontale — étendue jusqu'à la zone est
 	Rect2i(20, 12, 16, 12),  # plaza centrale
 	Rect2i(3, 21, 13, 11),   # étang + berges
 	# (Stand de marché, tour et ruines retirés — leurs zones plates aussi, pour
@@ -75,6 +86,8 @@ const _FLAT_RECTS: Array[Rect2i] = [
 	Rect2i(15, 21, 5, 4),    # feu de camp ouest
 	Rect2i(37, 22, 5, 4),    # feu de camp est
 	Rect2i(47, 25, 5, 5),    # grand arbre "hero"
+	TRAINING_ZONE,           # zone d'entraînement (herbes hautes + boue)
+	EAST_CLEARING,           # clairière est (ex-enclos des Pokémon libérés)
 ]
 
 # ── Étang (blob organique, plus un rectangle) ────────────────────────────
@@ -253,6 +266,8 @@ func _generate() -> void:
 	_place_campfires()
 	_place_sunflower_fences()
 	_scatter_tall_grass()   # bouquets de haute herbe pixel-art (cf. GrassPatch)
+	_place_training_zone()
+	_place_east_camp_decor()
 	# Statue centrale retirée (retour joueurs : "la statue moche au centre").
 	# Les tournesols animés sont gérés par SunflowerField.gd (HubWorld._build_sunflowers)
 	# Rangées de test Outside.png : plus posées (encombraient le hub compact).
@@ -269,6 +284,18 @@ func _compute_height_field() -> void:
 	noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
 	noise.seed       = HEIGHT_SEED
 	noise.frequency  = HEIGHT_NOISE_FREQ
+	noise.domain_warp_enabled  = true
+	noise.domain_warp_amplitude = 18.0
+	noise.domain_warp_frequency = HEIGHT_NOISE_FREQ * 0.6
+
+	# Calque "macro" très basse fréquence — mêmes principes que
+	# MapGenerator._compute_height_field() : porte les grandes formes du
+	# relief (une colline, un creux) sous le détail fin du calque principal.
+	var macro := FastNoiseLite.new()
+	macro.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	macro.seed        = HEIGHT_SEED + 1
+	macro.frequency   = HEIGHT_NOISE_FREQ * 0.28
+	macro.fractal_octaves = 1
 
 	var field: Array = []
 	field.resize(H)
@@ -276,8 +303,12 @@ func _compute_height_field() -> void:
 		var row := PackedFloat32Array()
 		row.resize(W)
 		for c in W:
-			row[c] = 0.0 if _is_flat_cell(c, r) else \
-				noise.get_noise_2d(float(c), float(r)) * HEIGHT_AMPLITUDE
+			if _is_flat_cell(c, r):
+				row[c] = 0.0
+				continue
+			var detail := noise.get_noise_2d(float(c), float(r))
+			var macro_h := macro.get_noise_2d(float(c), float(r))
+			row[c] = (macro_h * 0.65 + detail * 0.35) * HEIGHT_AMPLITUDE
 		field[r] = row
 
 	# Lissage (pentes douces) puis re-verrouillage à plat des zones réservées
@@ -976,6 +1007,48 @@ func _place_lamp(pos: Vector3) -> void:
 	root.add_child(body)
 
 
+## Shader procédural de flamme — remplace l'ancien quad "texture floue teintée
+## par le dégradé de particules" (retour joueurs : flammes pas assez belles).
+## Silhouette effilée (large à la base, pointue en haut) qui ondule dans le
+## temps (deux sinusoïdes déphasées sur les bords) + fondu au sommet — donne
+## une languette de feu vivante par particule, sans texture ni asset externe.
+static var _fire_mat_cache: ShaderMaterial = null
+
+static func _fire_shader_material() -> ShaderMaterial:
+	if _fire_mat_cache != null:
+		return _fire_mat_cache
+	var shader := Shader.new()
+	shader.code = """
+shader_type spatial;
+render_mode blend_add, unshaded, cull_disabled, depth_draw_never, shadows_disabled;
+
+// 'billboard' n'est pas supporté par le renderer GL Compatibility (utilisé
+// par ce projet) — billboard manuel, même recette que BILLBOARD_ENABLED.
+void vertex() {
+	MODELVIEW_MATRIX = VIEW_MATRIX * mat4(
+		INV_VIEW_MATRIX[0], INV_VIEW_MATRIX[1], INV_VIEW_MATRIX[2], MODEL_MATRIX[3]);
+	MODELVIEW_NORMAL_MATRIX = mat3(MODELVIEW_MATRIX);
+}
+
+void fragment() {
+	vec2 uv = UV;
+	float t = TIME * 7.0;
+	float wobble = sin(uv.y * 16.0 + t) * 0.035 + sin(uv.y * 6.0 - t * 1.6) * 0.06;
+	float dx = abs(uv.x - 0.5 + wobble);
+	float taper = mix(0.46, 0.03, pow(uv.y, 0.85));
+	float edge = smoothstep(taper, taper * 0.25, dx);
+	float top_fade = smoothstep(1.0, 0.5, uv.y);
+	float base_glow = smoothstep(0.0, 0.25, uv.y) * (1.0 - smoothstep(0.0, 0.12, uv.y) * 0.4);
+	ALBEDO = COLOR.rgb;
+	ALPHA = edge * top_fade * base_glow * COLOR.a;
+}
+"""
+	var mat := ShaderMaterial.new()
+	mat.shader = shader
+	_fire_mat_cache = mat
+	return mat
+
+
 # ── Feux de camp (mesh Kenney + flamme émissive + lumière vacillante) ────
 
 func _place_campfires() -> void:
@@ -999,12 +1072,12 @@ func _build_flame() -> Node3D:
 
 	var pm := ParticleProcessMaterial.new()
 	pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
-	pm.emission_sphere_radius = 0.28
+	pm.emission_sphere_radius = 0.38            # base plus large, flammes bien posées sur le foyer
 	pm.direction = Vector3(0, 1, 0)
-	pm.spread = 12.0
-	pm.gravity = Vector3(0, 1.6, 0)              # les flammes s'élèvent
-	pm.initial_velocity_min = 0.7
-	pm.initial_velocity_max = 1.5
+	pm.spread = 16.0
+	pm.gravity = Vector3(0, 0.7, 0)               # monte moins haut, reste bas et large
+	pm.initial_velocity_min = 0.25
+	pm.initial_velocity_max = 0.55
 	pm.scale_min = 0.7
 	pm.scale_max = 1.15
 	var scurve := Curve.new()                     # grossit puis s'éteint
@@ -1024,17 +1097,8 @@ func _build_flame() -> Node3D:
 	flame.process_material = pm
 
 	var quad := QuadMesh.new()
-	quad.size = Vector2(0.7, 0.95)
-	var fmat := StandardMaterial3D.new()
-	fmat.albedo_texture   = CombatVFX._get_soft_texture()
-	fmat.billboard_mode   = BaseMaterial3D.BILLBOARD_PARTICLES
-	fmat.blend_mode       = BaseMaterial3D.BLEND_MODE_ADD
-	fmat.shading_mode     = BaseMaterial3D.SHADING_MODE_UNSHADED
-	fmat.transparency     = BaseMaterial3D.TRANSPARENCY_ALPHA
-	fmat.vertex_color_use_as_albedo = true        # la couleur des particules teinte le quad
-	fmat.texture_filter   = BaseMaterial3D.TEXTURE_FILTER_LINEAR
-	fmat.cull_mode        = BaseMaterial3D.CULL_DISABLED
-	quad.material = fmat
+	quad.size = Vector2(0.85, 0.48)   # plus large que haut — silhouette basse et large
+	quad.material = _fire_shader_material()
 	flame.draw_pass_1 = quad
 	flame.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	root.add_child(flame)
@@ -1064,7 +1128,16 @@ func _build_flame() -> Node3D:
 	ember.process_material = em
 	var eq := QuadMesh.new()
 	eq.size = Vector2(0.16, 0.16)
-	eq.material = fmat            # même matériau additif teinté
+	var ember_mat := StandardMaterial3D.new()
+	ember_mat.albedo_texture   = CombatVFX._get_soft_texture()
+	ember_mat.billboard_mode   = BaseMaterial3D.BILLBOARD_PARTICLES
+	ember_mat.blend_mode       = BaseMaterial3D.BLEND_MODE_ADD
+	ember_mat.shading_mode     = BaseMaterial3D.SHADING_MODE_UNSHADED
+	ember_mat.transparency     = BaseMaterial3D.TRANSPARENCY_ALPHA
+	ember_mat.vertex_color_use_as_albedo = true
+	ember_mat.texture_filter   = BaseMaterial3D.TEXTURE_FILTER_LINEAR
+	ember_mat.cull_mode        = BaseMaterial3D.CULL_DISABLED
+	eq.material = ember_mat       # petites étincelles rondes, matériau simple
 	ember.draw_pass_1 = eq
 	ember.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	root.add_child(ember)
@@ -1086,8 +1159,8 @@ func _place_campfire(pos: Vector3, variant: int) -> void:
 	# VRAIES flammes en particules (montantes, colorées, + braises) au lieu
 	# d'un cône (retour joueurs).
 	var flame := _build_flame()
-	flame.position = Vector3(0, 0.55, 0)
-	flame.scale = Vector3.ONE * 1.8
+	flame.position = Vector3(0, 0.18, 0)   # posé au ras des bûches, plus flottant au-dessus
+	flame.scale = Vector3.ONE * 0.8
 	root.add_child(flame)
 
 	# Lumière chaude vacillante (script CampfireFlicker, actif en jeu seulement)
@@ -1149,6 +1222,114 @@ func _place_sunflower_fences() -> void:
 		cs.position = (seg[0] as Vector3) + Vector3(0, 0.3, 0)
 		body.add_child(cs)
 		add_child(body)
+
+
+## Zone d'entraînement : herbe haute dense (visuel) + une bande de boue
+## (TerrainEffectZone, cf. scripts/world/TerrainEffectZone.gd) qui ralentit
+## réellement le joueur — pour tester les mécaniques de terrain hors combat.
+func _place_training_zone() -> void:
+	var rect := TRAINING_ZONE
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 31415
+
+	# Herbes hautes concentrées sur la moitié nord de la zone — même recette
+	# que le biome Prairie (MapRender3D._build_pixel_grass) : touffes
+	# "buissonneuses" (build_tufts) + couche de REMPLISSAGE plus dense
+	# (build), sinon le rendu reste trop clairsemé par rapport aux run maps
+	# (retour joueurs : "pas retrouvé les hautes herbes de la prairie").
+	var grass_tint := Color(0.95, 1.08, 0.85)
+	var full: Array = []
+	var filler: Array = []
+	for _i in 260:
+		var px := rng.randf_range(float(rect.position.x) + 1.0, float(rect.end.x) - 1.0)
+		var pz := rng.randf_range(float(rect.position.y) + 1.0, float(rect.position.y) + rect.size.y * 0.55)
+		var y := get_height_at_world(Vector3(px, 0, pz))
+		var xf := Transform3D(Basis(Vector3.UP, rng.randf_range(0.0, TAU))
+			.scaled(Vector3.ONE * rng.randf_range(0.9, 1.35)), Vector3(px, y, pz))
+		if rng.randf() < 0.55:
+			full.append(xf)
+		else:
+			filler.append(xf)
+	if not full.is_empty():
+		add_child(GrassPatch.build_tufts(full, grass_tint, false))
+	if not filler.is_empty():
+		add_child(GrassPatch.build(filler, grass_tint))
+
+	# Bande de boue sur la moitié sud — ralentit le joueur (cf. HubPlayer._speed_mult).
+	var mud_w := float(rect.size.x) - 4.0
+	var mud_d := rect.size.y * 0.32
+	var mud_center := Vector3(
+		float(rect.position.x) + rect.size.x * 0.5, 0.0,
+		float(rect.position.y) + rect.size.y * 0.72)
+
+	var zone := TerrainEffectZone.new()
+	zone.speed_multiplier = 0.4   # net à ressentir (0.5 passait trop inaperçu)
+	zone.collision_layer = 8   # layer dédié (n'interfère pas avec murs/ennemis)
+	zone.collision_mask  = 1   # détecte les corps sur le layer par défaut (joueur)
+	zone.position = mud_center + Vector3(0, 0.3, 0)
+	var cs := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(mud_w, 1.4, mud_d)   # plus haut que la capsule joueur : pas de trou de détection sur relief
+	cs.shape = box
+	zone.add_child(cs)
+	add_child(zone)
+
+	# Vrai sol boueux (même tuile pixel-art que le biome Marécage,
+	# MapGenerator.tile_sol_boueux, passée par le même shader de sol que le
+	# reste du hub) — au lieu d'un aplat de couleur (retour joueurs : "je
+	# devrais avoir le sol boueux des marécages").
+	var mud_mesh := MeshInstance3D.new()
+	var plane := PlaneMesh.new()
+	plane.size = Vector2(mud_w, mud_d)
+	mud_mesh.mesh = plane
+	var mud_tex := Billboard3D.crop_tile(TILESET_PATH, Vector2i(23, 16), 1, 1)
+	mud_mesh.material_override = GrassPatch.ground_material(mud_tex, 1.45, 0.82, mud_w * 0.5)
+	mud_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	mud_mesh.position = mud_center + Vector3(0, -0.03, 0)
+	add_child(mud_mesh)
+
+	# Quelques rondins en bordure — repère visuel de "parcours d'essai".
+	for lp: Vector3 in [
+		Vector3(float(rect.position.x) + 1.5, 0, float(rect.position.y) + 1.5),
+		Vector3(float(rect.end.x) - 1.5, 0, float(rect.position.y) + 1.5),
+	]:
+		var log_prop := KitProps.instance(KitProps.LOGS[0])
+		log_prop.position = lp
+		add_child(log_prop)
+
+
+## Kit "mini-dungeon" (tonneaux, bannière, coffre) — pour habiller l'entrée
+## des nouvelles zones à l'est en ambiance "campement de ralliement" plutôt
+## que prairie nue.
+const MINI_DUNGEON_DIR := "res://assets/kenney_mini-dungeon/Models/GLB format/"
+
+## Décor de camp au carrefour des deux zones à l'est (chemin z14-20, x~55-58) :
+## un feu + une tente pour signaler le "camp d'entraînement", bannière et
+## tonneaux pour marquer l'entrée de la clairière.
+func _place_east_camp_decor() -> void:
+	_place_campfire(Vector3(56.0, 0, 16.0), 1)
+
+	var tent := KitProps.instance_textured(NATURE_FULL_DIR, "tent_smallOpen.glb")
+	tent.scale = Vector3.ONE * 2.8
+	tent.position = Vector3(59.0, 0, 17.5)
+	tent.rotation.y = deg_to_rad(-90.0)
+	add_child(tent)
+	_add_box_collision(tent.position, Vector3(2.0, 1.4, 2.0))
+
+	var banner := KitProps.instance_textured(MINI_DUNGEON_DIR, "banner.glb")
+	banner.scale = Vector3.ONE * 1.6
+	banner.position = Vector3(float(EAST_CLEARING.position.x) + EAST_CLEARING.size.x * 0.5, 0, float(EAST_CLEARING.position.y) - 1.0)
+	add_child(banner)
+
+	for bp: Vector3 in [
+		Vector3(float(EAST_CLEARING.position.x) - 1.5, 0, float(EAST_CLEARING.position.y) + 1.5),
+		Vector3(float(EAST_CLEARING.position.x) - 1.5, 0, float(EAST_CLEARING.position.y) + 3.5),
+	]:
+		var barrel := KitProps.instance_textured(MINI_DUNGEON_DIR, "barrel.glb")
+		barrel.scale = Vector3.ONE * 1.4
+		barrel.position = bp
+		add_child(barrel)
+		_add_box_collision(bp, Vector3(0.8, 1.0, 0.8))
 
 
 ## Assets du kit COMPLET (pas dans le dossier plat de KitProps) — tentes et

@@ -33,6 +33,20 @@ func _ready() -> void:
 			_run_scenario(_scenario_download_all)
 		elif arg == "smoke_hub":
 			_run_scenario(_scenario_hub)
+		elif arg == "smoke_story":
+			_run_scenario(_scenario_story)
+		elif arg == "smoke_rumors":
+			_run_scenario(_scenario_rumors)
+		elif arg == "smoke_recruit":
+			_run_scenario(_scenario_recruit)
+		elif arg == "smoke_final_boss":
+			_run_scenario(_scenario_final_boss)
+		elif arg == "smoke_npc_dialogue":
+			_run_scenario(_scenario_npc_dialogue)
+		elif arg == "smoke_boutique_dialogue":
+			_run_scenario(_scenario_boutique_dialogue)
+		elif arg == "smoke_freed_pokemon":
+			_run_scenario(_scenario_freed_pokemon)
 		elif arg == "smoke_pokedex":
 			_run_scenario(_scenario_pokedex)
 		elif arg == "smoke_pokedex_stress":
@@ -96,6 +110,318 @@ func _scenario_hub() -> void:
 		# le HubWorld peut ÊTRE la racine selon le montage de Hub.tscn
 		hw = scene if scene.get_script() != null else null
 	_pass("hub", "scène %s chargée" % scene.name)
+
+
+## Ouvre la Chronique de la Rébellion et vérifie qu'elle se monte, que la
+## progression narrative se calcule sans erreur et qu'un chapitre se franchit
+## quand l'objectif est atteint (StoryScreen n'est jamais instancié par les
+## scénarios de combat).
+func _scenario_story() -> void:
+	StoryManager.reset()
+	GameManager.unlocked_pokemon = []
+	GameManager.champion_badges = []
+	# Objectif du chapitre 0 = libérer 3 Pokémon : on en met assez pour franchir.
+	GameManager.unlocked_pokemon.assign([1, 4, 7, 25])
+	var advanced := StoryManager.evaluate()
+	if not advanced or StoryManager.current_chapter < 1:
+		_fail("story", "chapitre non franchi malgré objectif atteint (ch=%d)" % StoryManager.current_chapter)
+		return
+	var screen := StoryScreen.new()
+	get_tree().root.add_child(screen)
+	await get_tree().create_timer(0.6).timeout
+	var f := get_tree().root.gui_get_focus_owner()
+	if f == null:
+		_fail("story", "aucun contrôle focalisé (bouton Fermer)")
+		return
+	_pass("story", "chapitre %d · rang %s" % [StoryManager.current_chapter, StoryManager.rank()["name"]])
+	screen.queue_free()
+
+
+## Retour joueurs : « je veux pouvoir avoir un petit dialogue avec chaque
+## PNJ ». Interagit directement avec le PNJ Pokédex (bypass la marche/portée —
+## non pertinent ici), fait défiler les 3 phrases, et vérifie que l'écran
+## associé (PokedexScreen) n'ouvre QU'APRÈS la fermeture du dialogue.
+func _scenario_npc_dialogue() -> void:
+	GameManager.is_first_run = false
+	if GameManager.hub_team.is_empty():
+		GameManager.hub_team = [GameManager.STARTER_IDS[0]]
+	get_tree().change_scene_to_file("res://scenes/hub/Hub.tscn")
+	var waited := 0.0
+	while waited < 12.0:
+		await get_tree().create_timer(0.5).timeout
+		waited += 0.5
+		var sc := get_tree().current_scene
+		if sc != null and sc.get_node_or_null("HubWorld") != null:
+			break
+	await get_tree().create_timer(2.0).timeout
+
+	var scene := get_tree().current_scene
+	var hw: Node = scene.get_node_or_null("HubWorld") if scene != null else null
+	if hw == null:
+		hw = scene if scene != null and scene.get_script() != null else null
+	if hw == null:
+		_fail("npc_dialogue", "HubWorld introuvable")
+		return
+
+	var npcs: Array = hw.get("_npcs")
+	var pokedex_npc: Node = null
+	for n in npcs:
+		if n.npc_id == "pokedex":
+			pokedex_npc = n
+			break
+	if pokedex_npc == null:
+		_fail("npc_dialogue", "PNJ pokedex introuvable")
+		return
+
+	hw.call("_interact", pokedex_npc)
+	await get_tree().process_frame
+	var dlg := _find_child_by_class(hw, "NpcDialogueScreen")
+	if dlg == null:
+		_fail("npc_dialogue", "la boîte de dialogue ne s'est pas ouverte")
+		return
+	if _find_child_by_class(hw, "PokedexScreen") != null:
+		_fail("npc_dialogue", "le Pokédex s'est ouvert AVANT la fin du dialogue")
+		return
+
+	# Fait défiler les phrases (skip + avance, deux pressions par ligne) jusqu'à
+	# fermeture de la boîte, avec une marge de pressions au cas où.
+	for i in 10:
+		var ev := InputEventAction.new()
+		ev.action  = "interact"
+		ev.pressed = true
+		Input.parse_input_event(ev)
+		await get_tree().process_frame
+		await get_tree().create_timer(0.05).timeout
+		if not is_instance_valid(dlg):
+			break
+	if is_instance_valid(dlg):
+		_fail("npc_dialogue", "la boîte de dialogue ne s'est jamais fermée")
+		return
+
+	await get_tree().create_timer(0.3).timeout
+	if _find_child_by_class(hw, "PokedexScreen") == null:
+		_fail("npc_dialogue", "le Pokédex ne s'est pas ouvert après le dialogue")
+		return
+	_pass("npc_dialogue", "dialogue fermé → Pokédex ouvert")
+
+
+## Les nœuds créés via `MaClasse.new()` gardent le nom de leur classe MOTEUR
+## (ex. "CanvasLayer"), pas celui du `class_name` GDScript — get_node_or_null
+## par nom littéral ne marche donc QUE sur les nœuds nommés dans une .tscn.
+## Cette recherche identifie plutôt le script attaché.
+func _find_child_by_class(parent: Node, cls: String) -> Node:
+	for c in parent.get_children():
+		var scr: Script = c.get_script()
+		if scr != null and scr.get_global_name() == cls:
+			return c
+	return null
+
+
+## Même retour joueurs que _scenario_npc_dialogue, mais côté salle-Boutique EN
+## RUN (CombatArena._talk_to_vendor) — chemin distinct (dialogue → BoutiqueScreen
+## au lieu de dialogue → écran du hub), donc testé séparément. Appelle
+## _enter_boutique() directement une fois l'arène chargée plutôt que de viser
+## une salle précise : CombatArena._ready() réinitialise rooms_cleared via
+## RunManager.start_run() au chargement, donc le forcer avant change_scene_to_file
+## ne survivrait pas — l'appel direct est robuste à ce détail d'implémentation.
+func _scenario_boutique_dialogue() -> void:
+	GameManager.is_first_run = false
+	GameManager.selected_starter_id = GameManager.STARTER_IDS[0]
+	GameManager.hub_team = [GameManager.STARTER_IDS[0]]
+	get_tree().change_scene_to_file("res://scenes/combat/CombatArena.tscn")
+	var waited := 0.0
+	while get_tree().get_nodes_in_group("players").is_empty() and waited < 18.0:
+		await get_tree().create_timer(0.5).timeout
+		waited += 0.5
+	await get_tree().create_timer(2.0).timeout
+
+	var arena := get_tree().current_scene
+	if arena == null:
+		_fail("boutique_dialogue", "arène non chargée")
+		return
+	arena.call("_enter_boutique")
+	if arena.get("_vendor_npc") == null:
+		_fail("boutique_dialogue", "PNJ marchand non apparu")
+		return
+
+	arena.call("_talk_to_vendor")
+	await get_tree().process_frame
+	var dlg := _find_child_by_class(arena, "NpcDialogueScreen")
+	if dlg == null:
+		_fail("boutique_dialogue", "la boîte de dialogue ne s'est pas ouverte")
+		return
+	if _find_child_by_class(arena, "BoutiqueScreen") != null:
+		_fail("boutique_dialogue", "la boutique s'est ouverte AVANT la fin du dialogue")
+		return
+
+	for i in 10:
+		var ev := InputEventAction.new()
+		ev.action  = "interact"
+		ev.pressed = true
+		Input.parse_input_event(ev)
+		await get_tree().process_frame
+		await get_tree().create_timer(0.05).timeout
+		if not is_instance_valid(dlg):
+			break
+	if is_instance_valid(dlg):
+		_fail("boutique_dialogue", "la boîte de dialogue ne s'est jamais fermée")
+		return
+
+	await get_tree().create_timer(0.3).timeout
+	if _find_child_by_class(arena, "BoutiqueScreen") == null:
+		_fail("boutique_dialogue", "la boutique ne s'est pas ouverte après le dialogue")
+		return
+	_pass("boutique_dialogue", "dialogue fermé → boutique ouverte")
+
+
+## Retour joueurs : « je ne veux plus qu'ils soient dans un enclos, je veux
+## qu'ils se baladent partout dans le hub… et il faut pouvoir leur parler ».
+## Vérifie qu'un Pokémon libéré (npc_id "reserve", cf. HubWorld.
+## _build_freed_pokemon) apparaît HORS enclos, est interactif, et que son
+## dialogue — SANS menu associé, contrairement aux PNJ fonctionnels — se
+## referme proprement et débloque le joueur.
+func _scenario_freed_pokemon() -> void:
+	GameManager.is_first_run = false
+	GameManager.hub_team = [GameManager.STARTER_IDS[0]]
+	GameManager.unlocked_pokemon.assign([GameManager.STARTER_IDS[0], 1, 4, 7, 25])
+	get_tree().change_scene_to_file("res://scenes/hub/Hub.tscn")
+	var waited := 0.0
+	while waited < 12.0:
+		await get_tree().create_timer(0.5).timeout
+		waited += 0.5
+		var sc := get_tree().current_scene
+		if sc != null and sc.get_node_or_null("HubWorld") != null:
+			break
+	await get_tree().create_timer(2.0).timeout
+
+	var scene := get_tree().current_scene
+	var hw: Node = scene.get_node_or_null("HubWorld") if scene != null else null
+	if hw == null:
+		hw = scene if scene != null and scene.get_script() != null else null
+	if hw == null:
+		_fail("freed_pokemon", "HubWorld introuvable")
+		return
+
+	var npcs: Array = hw.get("_npcs")
+	var freed: Node = null
+	for n in npcs:
+		if n.npc_id == "reserve":
+			freed = n
+			break
+	if freed == null:
+		_fail("freed_pokemon", "aucun Pokémon libéré n'est apparu (roaming hors enclos)")
+		return
+
+	hw.call("_interact", freed)
+	await get_tree().process_frame
+	var dlg := _find_child_by_class(hw, "NpcDialogueScreen")
+	if dlg == null:
+		_fail("freed_pokemon", "la boîte de dialogue ne s'est pas ouverte")
+		return
+
+	for i in 10:
+		var ev := InputEventAction.new()
+		ev.action  = "interact"
+		ev.pressed = true
+		Input.parse_input_event(ev)
+		await get_tree().process_frame
+		await get_tree().create_timer(0.05).timeout
+		if not is_instance_valid(dlg):
+			break
+	if is_instance_valid(dlg):
+		_fail("freed_pokemon", "la boîte de dialogue ne s'est jamais fermée")
+		return
+
+	await get_tree().create_timer(0.2).timeout
+	# PNJ dialogue-only : aucun menu attendu ensuite, et le joueur doit être
+	# redébloqué (sinon il resterait figé — bug distinct des PNJ à menu).
+	if bool(hw.get("_blocked")):
+		_fail("freed_pokemon", "joueur resté bloqué après un dialogue sans menu")
+		return
+	_pass("freed_pokemon", "%d PNJ libérés · dialogue sans menu OK" % _count_reserve(npcs))
+
+
+func _count_reserve(npcs: Array) -> int:
+	var n := 0
+	for c in npcs:
+		if c.npc_id == "reserve":
+			n += 1
+	return n
+
+
+## Arc du boss final : vérifie que les répliques narratives existent et que la
+## boîte de dialogue accepte la forme escaladée (intro « MAÎTRE DE LA LIGUE » +
+## concession post-défaite). Le combat final complet n'est pas joué ici — il
+## change de scène, ce qui perturberait le harnais ; on valide le chemin ajouté.
+func _scenario_final_boss() -> void:
+	if PokePools.FINAL_BOSS_INTRO.is_empty() or PokePools.FINAL_BOSS_DEFEAT.is_empty():
+		_fail("final_boss", "répliques du boss final manquantes")
+		return
+	for line in [PokePools.FINAL_BOSS_INTRO, PokePools.FINAL_BOSS_DEFEAT]:
+		var dlg := ChampionDialogueScreen.new()
+		get_tree().root.add_child(dlg)
+		dlg.setup("Giovanni", "Sol", line, "MAÎTRE DE LA LIGUE")
+		await get_tree().process_frame
+		await get_tree().process_frame
+		if dlg.get_child_count() == 0:
+			_fail("final_boss", "boîte de dialogue vide")
+			dlg.queue_free()
+			return
+		dlg.queue_free()
+		await get_tree().process_frame
+	_pass("final_boss", "intro escaladée + concession OK")
+
+
+## « Rejoindre ou s'enfuir » : vérifie le modèle de confiance de recrutement —
+## bornes respectées, espèce déjà libérée garantie, et confiance qui grimpe avec
+## la stature de la rébellion.
+func _scenario_recruit() -> void:
+	StoryManager.reset()
+	GameManager.unlocked_pokemon = []
+	GameManager.champion_badges = []
+	var c0 := StoryManager.recruit_chance(4)   # espèce neuve, rébellion naissante
+	if c0 < StoryManager.RECRUIT_CHANCE_MIN or c0 > StoryManager.RECRUIT_CHANCE_MAX:
+		_fail("recruit", "chance de base hors bornes (%.2f)" % c0)
+		return
+	# Espèce déjà libérée → confiance acquise, recrutement garanti.
+	GameManager.unlocked_pokemon.assign([4])
+	if StoryManager.recruit_chance(4) < 0.999 or not StoryManager.roll_recruit(4):
+		_fail("recruit", "espèce déjà libérée non garantie")
+		return
+	# Grande rébellion + réputation → meilleure confiance pour une espèce neuve.
+	GameManager.unlocked_pokemon.assign(range(1, 30))
+	GameManager.champion_badges = ["A", "B", "C"]
+	var c1 := StoryManager.recruit_chance(999)
+	if c1 <= c0:
+		_fail("recruit", "la stature de la rébellion n'améliore pas la confiance (%.2f <= %.2f)" % [c1, c0])
+		return
+	_pass("recruit", "confiance %d%% → %d%% · libéré = garanti" % [int(c0 * 100), int(c1 * 100)])
+
+
+## Ouvre le Tableau des Rumeurs, vérifie qu'une mission accomplie se réclame et
+## verse bien sa récompense, puis que le tableau se renouvelle sans erreur.
+func _scenario_rumors() -> void:
+	MissionManager.reset()
+	GameManager.unlocked_pokemon = []
+	# Pool 0 = « Évasion de la Réserve » : libère 3 Pokémon. Base 0.
+	MissionManager._active = [{"pool": 0, "base": 0}]
+	if MissionManager.slot(0)["done"]:
+		_fail("rumors", "mission accomplie à 0 libéré (base cassée)")
+		return
+	GameManager.unlocked_pokemon.assign([1, 4, 7])   # 3 libérés → objectif atteint
+	if not MissionManager.slot(0)["done"]:
+		_fail("rumors", "objectif non atteint à 3 libérés")
+		return
+	var screen := RumorBoardScreen.new()
+	get_tree().root.add_child(screen)
+	await get_tree().create_timer(0.6).timeout
+	var gold_before := GameManager.gold
+	var got := MissionManager.claim(0)
+	if got.is_empty() or GameManager.gold <= gold_before:
+		_fail("rumors", "réclamation sans récompense (or %d -> %d)" % [gold_before, GameManager.gold])
+		return
+	_pass("rumors", "réclamé +%d Baies · %d rumeurs au tableau" % [int(got["gold"]), MissionManager.slot_count()])
+	screen.queue_free()
 
 
 ## Ouvre le VRAI PokedexScreen et vérifie la navigation clavier : deux erreurs

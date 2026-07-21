@@ -23,6 +23,8 @@ var _cs_triggers: Array = []   # [{"area":Area3D, "cs_id":String, "prompt":Strin
 ## actif même sans bouger.
 var _near_obstacle: Dictionary = {}
 var _near_vendor:   bool = false   # à portée du marchand ([E] pour parler)
+var _near_sleeper:  bool = false   # à portée du Maushold endormi ([E] pour parler)
+var _near_wanderer: bool = false   # à portée du Ramoloss qui déambule ([E] pour parler)
 var _near_boon:     bool = false   # à portée du don de fin de zone ([E])
 var _near_chest_prompt: String = ""   # "" si aucun coffre à portée
 
@@ -103,6 +105,7 @@ var _boutique_nodes:  Array = []            # PNJ + déclencheur du vendeur
 var _boutique_offers: Array = []            # offre d'attaque par membre vivant
 var _boutique_live:   Array = []            # membres vivants (alignés sur _boutique_offers)
 var _boutique_screen: BoutiqueScreen = null
+var _npc_dialogue:    NpcDialogueScreen = null   # petit échange avant vendeur/sleeper/wanderer
 
 # ── Don de fin de zone (façon Hades) ──────────────────────────────────
 var _boon_node:   Area3D = null             # item flottant au centre
@@ -304,8 +307,12 @@ func _process(delta: float) -> void:
 
 	_refresh_cs_prompt()
 	if Input.is_action_just_pressed("interact"):
-		if _near_vendor and not is_instance_valid(_boutique_screen):
-			_open_boutique_shop()
+		if _near_vendor and not is_instance_valid(_boutique_screen) and not is_instance_valid(_npc_dialogue):
+			_talk_to_vendor()
+		elif _near_sleeper and not is_instance_valid(_npc_dialogue):
+			_talk_to_boutique_npc(_sleeper_npc, "boutique_sleeper")
+		elif _near_wanderer and not is_instance_valid(_npc_dialogue):
+			_talk_to_boutique_npc(_wanderer_npc, "boutique_wanderer")
 		elif _near_boon and not is_instance_valid(_boon_screen):
 			_open_boon()
 		elif _near_recruit and not is_instance_valid(_recruit_screen):
@@ -1039,7 +1046,13 @@ func _spawn_room_enemies() -> void:
 		# il se ferme tout seul PENDANT que le combat démarre déjà.
 		var dlg := ChampionDialogueScreen.new()
 		get_tree().root.add_child(dlg)
-		dlg.setup(str(comp["name"]), str(comp["type"]))
+		# Arc du boss final : à l'ultime salle, le champion incarne la Ligue
+		# tout entière — intro escaladée + titre « MAÎTRE DE LA LIGUE ».
+		if _is_final_boss_room(room):
+			dlg.setup(str(comp["name"]), str(comp["type"]),
+				PokePools.FINAL_BOSS_INTRO, "MAÎTRE DE LA LIGUE")
+		else:
+			dlg.setup(str(comp["name"]), str(comp["type"]))
 		_spawn_champion_trainer(comp)
 
 		# Musique de combat de dresseur — en boucle tant que le boss tient
@@ -1250,6 +1263,20 @@ func _run_victory() -> void:
 	# compter les morts d'ennemis) — il la diffuse à tous les clients.
 	if _mp and multiplayer.is_server():
 		_net_victory.rpc()
+
+	# Arc du boss final — CONCESSION : le dernier verrou du système reconnaît sa
+	# chute et le monde bascule vers le choix (cf. l'épilogue de StoryManager).
+	# Boîte de dialogue non bloquante, qui se referme d'elle-même pendant que la
+	# séquence de victoire se déroule.
+	var vact := RunManager.inst().act_of(RunManager.inst().rooms_cleared)
+	var vcomp: Dictionary = RunManager.inst().champion_for_act(vact)
+	var dlg := ChampionDialogueScreen.new()
+	# Enfant de l'arène (et non du root) : au changement de scène vers le hub, la
+	# boîte s'en va avec l'arène plutôt que de s'attarder par-dessus le hub.
+	add_child(dlg)
+	dlg.setup(str(vcomp.get("name", "")), str(vcomp.get("type", "")),
+		PokePools.FINAL_BOSS_DEFEAT, "MAÎTRE DE LA LIGUE")
+
 	var gold := 500 + RunManager.inst().rooms_cleared * 30
 	GameManager.add_gold(gold)
 	Sfx.play("victory")
@@ -1289,7 +1316,8 @@ func _reward_boss(room: int) -> void:
 	GameManager.add_gold(berries)
 	GameManager.add_champion_shards(shards)
 	var first := GameManager.record_champion_win(champ_name)
-	GameManager.save_game()   # badges/éclats persistent tout de suite
+	StoryManager.evaluate()   # un badge peut faire avancer la rébellion
+	GameManager.save_game()   # badges/éclats/chapitre persistent tout de suite
 
 	hud.notify("🏅 +%d Baies · +%d Éclat%s de Champion" % [berries, shards, "s" if shards > 1 else ""],
 		Color(0.95, 0.78, 0.28))
@@ -1298,14 +1326,14 @@ func _reward_boss(room: int) -> void:
 		# Recrutement : seulement en solo (en multi chacun n'a qu'un Pokémon,
 		# une recrue IA désynchroniserait la composition d'équipe).
 		if not _mp:
-			_spawn_recruit(champ)
+			_offer_recruit(champ)
 
 
-## Fait apparaître un Pokémon du dresseur, endormi au sol (sprite « sleep »),
-## près du centre — le joueur va lui parler avec [E] pour le recruter.
-func _spawn_recruit(champ: Dictionary) -> void:
-	if not is_instance_valid(_map):
-		return
+## « Rejoindre ou s'enfuir » : un Pokémon du dresseur est choisi, puis un jet de
+## confiance (cf. StoryManager) décide s'il reste au sol pour être recruté ou
+## s'il détale. Plus la rébellion est grande — et plus l'espèce a déjà été
+## libérée —, plus il te fait confiance.
+func _offer_recruit(champ: Dictionary) -> void:
 	if _team.size() >= GameManager.get_max_team_size():
 		hud.notify("Équipe pleine — impossible de recruter", Color(0.80, 0.55, 0.30))
 		return
@@ -1314,6 +1342,18 @@ func _spawn_recruit(champ: Dictionary) -> void:
 		return
 	# Forme de BASE d'un membre au hasard : recrutable + évoluera par le niveau.
 	var pick: int = GameManager.base_species_of(int(ids[randi() % ids.size()]))
+	if StoryManager.roll_recruit(pick):
+		_spawn_recruit(pick)
+	else:
+		_flee_recruit(pick)
+
+
+## Fait apparaître le Pokémon `pick` (déjà choisi et « convaincu », cf.
+## _offer_recruit), endormi au sol (sprite « sleep ») près du centre — le joueur
+## va lui parler avec [E] pour le recruter.
+func _spawn_recruit(pick: int) -> void:
+	if not is_instance_valid(_map):
+		return
 	_recruit_pid = pick
 	_load_recruit(pick)   # espèce + attaques en cache pour le moment du recrutement
 
@@ -1365,6 +1405,44 @@ func _spawn_recruit(champ: Dictionary) -> void:
 	add_child(area)
 	_recruit_node = area
 	hud.notify("😴 Un Pokémon du dresseur gît au sol — va lui parler [E]", Color(0.55, 0.80, 0.95))
+
+
+## La confiance n'était pas au rendez-vous : le Pokémon détale. On le montre
+## brièvement s'enfuir (sprite qui court vers le fond en s'estompant), avec un
+## message qui explique COMMENT le rallier la prochaine fois — c'est le levier
+## de progression : plus la rébellion grandit, plus ils te rejoignent.
+func _flee_recruit(pick: int) -> void:
+	if is_instance_valid(_map):
+		var sz := _map.get_map_cell_size()
+		var cell := Vector2i(sz.x / 2, sz.y / 2 + 2)
+		var spr := AnimatedSprite3D.new()
+		Billboard3D.setup_sprite(spr)
+		spr.position = _map.cell_to_world3(cell)
+		add_child(spr)
+		var shadow := Billboard3D.make_blob_shadow(Vector2(1.0, 0.55))
+		spr.add_child(shadow)
+		PMDSprites.get_walk_sprites(pick, spr, func(result: Dictionary) -> void:
+			if not is_instance_valid(spr) or result.is_empty():
+				return
+			spr.sprite_frames = result.frames
+			Billboard3D.size_to_width(spr, result, Billboard3D.CHAR_WIDTH)
+			spr.play("walk" if result.frames.has_animation("walk") else "idle")
+		)
+		# Il court vers le fond de l'arène (−Z) en s'estompant, puis disparaît.
+		var away := spr.position + Vector3(0, 0, -7.0)
+		var tw := create_tween()
+		tw.set_parallel(true)
+		tw.tween_property(spr, "position", away, 1.3).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+		tw.tween_property(spr, "modulate:a", 0.0, 1.3).set_delay(0.4)
+		tw.chain().tween_callback(func() -> void:
+			if is_instance_valid(spr):
+				spr.queue_free()
+		)
+
+	var pct := int(round(StoryManager.recruit_chance(pick) * 100.0))
+	hud.notify("💨 Un Pokémon du dresseur s'enfuit — pas encore assez confiance (%d%%)." % pct,
+		Color(0.80, 0.62, 0.40))
+	hud.notify("Agrandis la rébellion pour rallier davantage de captifs.", Color(0.62, 0.55, 0.42))
 
 
 ## Charge à la demande l'espèce du recrut ET ses attaques (init_moves lit
@@ -1489,7 +1567,7 @@ func _do_recruit() -> void:
 	GameManager.unlock_pokemon(pid)
 	GameManager.save_game()
 	Sfx.play_file(Sfx.SE_MOVE_LEARNT)
-	hud.notify("★ %s rejoint l'équipe !" % data.name_fr.capitalize(), Color(0.35, 0.80, 0.55))
+	hud.notify("★ %s rejoint la rébellion !" % data.name_fr.capitalize(), Color(0.35, 0.80, 0.55))
 
 	# Le sprite endormi se réveille (petit sursaut) puis disparaît — la
 	# recrue « active » est le TeamMember qui vient de spawn à côté.
@@ -1881,6 +1959,12 @@ func _roll_move_offers(inst: PokemonInstance) -> Array:
 	return out
 
 
+## PNJ de la salle-Boutique, référencés pour lire leur nom FR (async, cf.
+## HubNPC.npc_name) au moment de parler — plutôt que de le re-taper en dur.
+var _vendor_npc:   HubNPC = null
+var _sleeper_npc:  HubNPC = null
+var _wanderer_npc: HubNPC = null
+
 func _spawn_boutique_npcs() -> void:
 	if not is_instance_valid(_map):
 		return
@@ -1894,6 +1978,7 @@ func _spawn_boutique_npcs() -> void:
 	vendor.setup("boutique_vendor", BOUTIQUE_VENDOR_PID, Color(0.85, 0.60, 0.20))
 	vendor.position = _map.cell_to_world3(Vector2i(cx, cy))
 	_boutique_nodes.append(vendor)
+	_vendor_npc = vendor
 	_spawn_vendor_trigger(Vector2i(cx, cy))
 
 	# Maushold endormi (fixe) + « Zzz »
@@ -1902,6 +1987,7 @@ func _spawn_boutique_npcs() -> void:
 	sleeper.setup("boutique_sleeper", BOUTIQUE_SLEEPER_PID, Color(0.72, 0.72, 0.82))
 	sleeper.position = _map.cell_to_world3(Vector2i(maxi(3, cx - 4), cy + 2))
 	_boutique_nodes.append(sleeper)
+	_sleeper_npc = sleeper
 	var zzz := Label3D.new()
 	zzz.text        = "Zzz"
 	zzz.position    = Vector3(0.3, 1.6, 0)
@@ -1913,6 +1999,13 @@ func _spawn_boutique_npcs() -> void:
 	zzz.outline_modulate = Color(0, 0, 0, 0.7)
 	zzz.no_depth_test = true
 	sleeper.add_child(zzz)
+	var sleeper_enter := func() -> void:
+		_near_sleeper = true
+		_refresh_interact_prompt()
+	var sleeper_exit := func() -> void:
+		_near_sleeper = false
+		_refresh_interact_prompt()
+	_attach_talk_trigger(sleeper, sleeper_enter, sleeper_exit)
 
 	# Ramoloss qui déambule lentement
 	var wanderer := HubNPC.new()
@@ -1921,7 +2014,40 @@ func _spawn_boutique_npcs() -> void:
 	var wcenter := _map.cell_to_world3(Vector2i(mini(sz.x - 3, cx + 4), maxi(3, cy - 2)))
 	wanderer.position = wcenter
 	_boutique_nodes.append(wanderer)
+	_wanderer_npc = wanderer
 	wanderer.start_wandering(wcenter, 2.4, 0.7)
+	# Déclencheur ENFANT du PNJ (et non posé au sol) : il déambule, le
+	# déclencheur doit le suivre plutôt que rester planté à sa position de départ.
+	var wanderer_enter := func() -> void:
+		_near_wanderer = true
+		_refresh_interact_prompt()
+	var wanderer_exit := func() -> void:
+		_near_wanderer = false
+		_refresh_interact_prompt()
+	_attach_talk_trigger(wanderer, wanderer_enter, wanderer_exit)
+
+
+## Zone de conversation ([E]) attachée en ENFANT d'un HubNPC — suit son
+## porteur s'il déambule (cf. wanderer ci-dessus).
+func _attach_talk_trigger(npc: HubNPC, on_enter: Callable, on_exit: Callable) -> void:
+	var area := Area3D.new()
+	area.position        = Vector3(0, 0.8, 0)
+	area.collision_layer  = 0
+	area.collision_mask   = 1
+	var cs := CollisionShape3D.new()
+	var sh := SphereShape3D.new()
+	sh.radius = 1.5
+	cs.shape  = sh
+	area.add_child(cs)
+	area.body_entered.connect(func(body: Node) -> void:
+		if body.is_in_group("players") and body.get("is_active") == true:
+			on_enter.call()
+	)
+	area.body_exited.connect(func(body: Node) -> void:
+		if body.is_in_group("players") and body.get("is_active") == true:
+			on_exit.call()
+	)
+	npc.add_child(area)
 
 
 func _spawn_vendor_trigger(cell: Vector2i) -> void:
@@ -1961,6 +2087,34 @@ func _spawn_vendor_trigger(cell: Vector2i) -> void:
 	)
 	add_child(area)
 	_boutique_nodes.append(area)
+
+
+## Petit échange (cf. NpcDialogue) avec le marchand AVANT d'ouvrir la boutique —
+## retour joueurs : « je veux pouvoir avoir un petit dialogue avec chaque PNJ,
+## dans le HUB et même dans la boutique ». Le magasin ne s'ouvre qu'une fois le
+## dialogue refermé.
+func _talk_to_vendor() -> void:
+	_talk_to_boutique_npc(_vendor_npc, "boutique_vendor", _open_boutique_shop)
+
+
+## Sleeper/wanderer : même petit échange, mais purement décoratif — aucun menu
+## ne s'ouvre ensuite (`on_finished` optionnel).
+func _talk_to_boutique_npc(npc: HubNPC, npc_id: String, on_finished: Callable = Callable()) -> void:
+	if is_instance_valid(_npc_dialogue):
+		return
+	var dlg := NpcDialogueScreen.new()
+	add_child(dlg)
+	_npc_dialogue = dlg
+	var display_name := npc.npc_name if is_instance_valid(npc) and not npc.npc_name.is_empty() else "…"
+	var pid := npc.pokemon_id if is_instance_valid(npc) else 0
+	var accent := npc.accent if is_instance_valid(npc) else Color(0, 0, 0, 0)
+	dlg.setup(display_name, pid, accent, NpcDialogue.lines_for(npc_id))
+	Sfx.play_file(Sfx.SE_MENU_OPEN, -6.0)
+	dlg.finished.connect(func() -> void:
+		_npc_dialogue = null
+		if on_finished.is_valid():
+			on_finished.call()
+	)
 
 
 func _open_boutique_shop() -> void:
@@ -2084,7 +2238,15 @@ func _clear_boutique_nodes() -> void:
 		if is_instance_valid(n):
 			n.queue_free()
 	_boutique_nodes.clear()
-	_near_vendor = false
+	_vendor_npc   = null
+	_sleeper_npc  = null
+	_wanderer_npc = null
+	_near_vendor   = false
+	_near_sleeper  = false
+	_near_wanderer = false
+	if is_instance_valid(_npc_dialogue):
+		_npc_dialogue.queue_free()
+		_npc_dialogue = null
 	_refresh_interact_prompt()
 
 
@@ -2326,6 +2488,10 @@ func _refresh_interact_prompt() -> void:
 		hud.set_interact_prompt(true, _near_chest_prompt)
 	elif _near_vendor:
 		hud.set_interact_prompt(true, "Appuyer sur [E] pour parler au marchand")
+	elif _near_sleeper:
+		hud.set_interact_prompt(true, "Appuyer sur [E] pour parler au Pokémon endormi")
+	elif _near_wanderer:
+		hud.set_interact_prompt(true, "Appuyer sur [E] pour parler")
 	elif _near_boon:
 		hud.set_interact_prompt(true, "Appuyer sur [E] pour récupérer la récompense")
 	elif _near_recruit:

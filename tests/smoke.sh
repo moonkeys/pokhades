@@ -44,6 +44,13 @@ echo "── Smoke-tests Pokhades ──"
 
 run_scenario boot        20 smoke_boot
 run_scenario hub         25 smoke_hub
+run_scenario story       20 smoke_story
+run_scenario rumors      20 smoke_rumors
+run_scenario recruit     20 smoke_recruit
+run_scenario final_boss  20 smoke_final_boss
+run_scenario npc_dialogue 20 smoke_npc_dialogue
+run_scenario boutique_dialogue 25 smoke_boutique_dialogue
+run_scenario freed_pokemon 20 smoke_freed_pokemon
 run_scenario pokedex     20 smoke_pokedex
 run_scenario pokedex_stress 30 smoke_pokedex_stress
 run_scenario run_solo    25 smoke_run

@@ -25,7 +25,11 @@ const _TYPE_FR_TO_SLUG := {
 }
 
 
-func setup(champ_name: String, champ_type: String) -> void:
+## `line_override` remplace la réplique par défaut (arc du boss final :
+## intro escaladée ou concession post-défaite). `title_override` remplace le
+## nom sous le portrait (ex. « MAÎTRE DE LA LIGUE »).
+func setup(champ_name: String, champ_type: String,
+		line_override: String = "", title_override: String = "") -> void:
 	layer = 26
 	var root := Control.new()
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -56,13 +60,14 @@ func setup(champ_name: String, champ_type: String) -> void:
 			tr.position        = Vector2(8, 8)
 			tr.size            = Vector2(PORTRAIT_SIZE - 16, PORTRAIT_SIZE - 16)
 			port_frame.add_child(tr)
-	UiKit.label(port_frame, champ_name.to_upper(), Vector2(0, PORTRAIT_SIZE - 4),
+	var title := title_override if title_override != "" else champ_name.to_upper()
+	UiKit.label(port_frame, title, Vector2(0, PORTRAIT_SIZE - 4),
 		14, UiKit.GOLD, PORTRAIT_SIZE, HORIZONTAL_ALIGNMENT_CENTER)
 	var type_slug: String = _TYPE_FR_TO_SLUG.get(champ_type, champ_type.to_lower())
 	UiKit.type_badge(port_frame, Vector2((PORTRAIT_SIZE - 90) * 0.5, PORTRAIT_SIZE + 16), type_slug, 20.0)
 
 	# Texte de la réplique — effet machine à écrire, puis fermeture automatique
-	var line := PokePools.champion_intro_line(champ_name)
+	var line := line_override if line_override != "" else PokePools.champion_intro_line(champ_name)
 	_full_text = "« %s »" % line
 	var text_area := UiKit.dark_card(panel, Vector2(170, 20), Vector2(810, PORTRAIT_SIZE + 40))
 	_lbl = UiKit.label(text_area, _full_text, Vector2(20, 16), 18, UiKit.CREAM, 770,
