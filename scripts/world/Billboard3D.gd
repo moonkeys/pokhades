@@ -194,6 +194,41 @@ static func make_sprite_from_file_sized_by_height(path: String, target_height: f
 	return make_sprite_from_file(path, scale_mult)
 
 
+# ── Dresseurs (combats de boss) — planches Characters/trainer_*.png,
+# convention RPG Maker/Essentials : 4 colonnes (frames de marche) × 4
+# lignes (bas/gauche/droite/haut), 32×48 px par case. ───────────────────
+
+const TRAINER_FRAME_W := 32
+const TRAINER_FRAME_H := 48
+const TRAINER_DIR_ROWS := {"walk_down": 0, "walk_left": 1, "walk_right": 2, "walk_up": 3}
+
+## Construit un SpriteFrames 4-directions + "idle" à partir d'une planche
+## dresseur Essentials. Retourne {"frames": SpriteFrames, "frame_size":
+## Vector2i} — même forme que PMDSprites.get_walk_sprites(), réutilisable
+## telle quelle par align_feet()/size_to_width().
+static func make_trainer_frames(path: String) -> Dictionary:
+	var img := _get_tileset_image(path)
+	if img == null:
+		return {}
+	var frames := SpriteFrames.new()
+	for anim in TRAINER_DIR_ROWS:
+		var row: int = TRAINER_DIR_ROWS[anim]
+		frames.add_animation(anim)
+		frames.set_animation_speed(anim, 6.0)
+		frames.set_animation_loop(anim, true)
+		for col in 4:
+			var region := Rect2i(col * TRAINER_FRAME_W, row * TRAINER_FRAME_H,
+				TRAINER_FRAME_W, TRAINER_FRAME_H)
+			frames.add_frame(anim, ImageTexture.create_from_image(img.get_region(region)))
+	# idle = la case neutre (colonne 0, ligne "bas"), figée
+	frames.add_animation("idle")
+	frames.set_animation_loop("idle", true)
+	frames.set_animation_speed("idle", 1.0)
+	var idle_region := Rect2i(0, 0, TRAINER_FRAME_W, TRAINER_FRAME_H)
+	frames.add_frame("idle", ImageTexture.create_from_image(img.get_region(idle_region)))
+	return {"frames": frames, "frame_size": Vector2i(TRAINER_FRAME_W, TRAINER_FRAME_H)}
+
+
 static func _find_foot_row(img: Image) -> int:
 	var w := img.get_width()
 	var h := img.get_height()
