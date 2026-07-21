@@ -9,6 +9,7 @@ extends CanvasLayer
 signal closed
 
 var _panel: Panel = null
+var _confirming_reset: bool = false
 
 
 func _ready() -> void:
@@ -20,7 +21,14 @@ func _ready() -> void:
 
 
 func _build() -> void:
-	_panel = UiKit.main_panel(Vector2(340, 110), Vector2(600, 440))
+	if _confirming_reset:
+		_build_confirm_reset()
+	else:
+		_build_main()
+
+
+func _build_main() -> void:
+	_panel = UiKit.main_panel(Vector2(320, 90), Vector2(640, 500))
 	add_child(_panel)
 	UiKit.pop_in(_panel)
 	UiKit.banner(_panel, "PARAMÈTRES")
@@ -40,7 +48,7 @@ func _build() -> void:
 	var mute_btn := UiKit.button(
 		"🔇  Réactiver le son" if GameManager.audio_muted else "🔊  Couper le son",
 		Vector2(300, 52), not GameManager.audio_muted)
-	mute_btn.position = Vector2(150, 246)
+	mute_btn.position = Vector2(170, 246)
 	_panel.add_child(mute_btn)
 	mute_btn.pressed.connect(func() -> void:
 		GameManager.audio_muted = not GameManager.audio_muted
@@ -51,18 +59,56 @@ func _build() -> void:
 
 	# Contrôles : voir toutes les touches, à quoi elles servent, et les remapper.
 	var ctrl_btn := UiKit.button("⌨  Contrôles / touches", Vector2(300, 52), false)
-	ctrl_btn.position = Vector2(150, 310)
+	ctrl_btn.position = Vector2(170, 310)
 	_panel.add_child(ctrl_btn)
 	ctrl_btn.pressed.connect(_open_controls)
 
+	# Réinitialisation : efface la sauvegarde et toute la progression.
+	var reset_btn := UiKit.button("🗑  Réinitialiser la partie", Vector2(300, 52), false)
+	reset_btn.position = Vector2(170, 374)
+	_panel.add_child(reset_btn)
+	reset_btn.pressed.connect(func() -> void:
+		_confirming_reset = true
+		_rebuild()
+	)
+
 	var back := UiKit.button("✓  Fermer", Vector2(220, 48), false)
-	back.position = Vector2(190, 374)
+	back.position = Vector2(210, 438)
 	_panel.add_child(back)
 	back.pressed.connect(func() -> void:
 		GameManager.save_game()
 		closed.emit()
 	)
 	MenuNav.focus_first(_panel)
+
+
+func _build_confirm_reset() -> void:
+	_panel = UiKit.main_panel(Vector2(320, 150), Vector2(640, 340))
+	add_child(_panel)
+	UiKit.pop_in(_panel)
+	UiKit.banner(_panel, "RÉINITIALISER LA PARTIE ?")
+
+	UiKit.label(_panel, "Toute la progression (Pokémon débloqués, équipe, or, objets,\naméliorations…) sera définitivement perdue.\nCette action est irréversible.",
+		Vector2(30, 100), 15, UiKit.CREAM, 580, HORIZONTAL_ALIGNMENT_CENTER)
+
+	var yes := UiKit.button("✕  Oui, réinitialiser", Vector2(260, 52), false)
+	yes.position = Vector2(50, 240)
+	_panel.add_child(yes)
+	yes.pressed.connect(_do_reset)
+
+	var no := UiKit.button("↩  Non, annuler", Vector2(260, 52))
+	no.position = Vector2(330, 240)
+	_panel.add_child(no)
+	no.pressed.connect(func() -> void:
+		_confirming_reset = false
+		_rebuild()
+	)
+	MenuNav.focus_first(_panel)
+
+
+func _do_reset() -> void:
+	GameManager.reset_save()
+	get_tree().change_scene_to_file("res://scenes/ui/MainMenu.tscn")
 
 
 func _open_controls() -> void:

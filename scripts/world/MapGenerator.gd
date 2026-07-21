@@ -2100,6 +2100,19 @@ func _compute_height_field() -> void:
 	noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
 	noise.seed       = _rng.randi()
 	noise.frequency  = HEIGHT_NOISE_FREQ
+	noise.domain_warp_enabled  = true
+	noise.domain_warp_amplitude = 18.0
+	noise.domain_warp_frequency = HEIGHT_NOISE_FREQ * 0.6
+
+	# Second calque, très basse fréquence : porte le relief à grande échelle
+	# (une colline ou un creux par map) sous le détail fin du calque
+	# principal — sans ça, le bruit fractal donnait un relief "haché", des
+	# bosses de taille uniforme, sans grandes formes qui structurent la map.
+	var macro := FastNoiseLite.new()
+	macro.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	macro.seed        = _rng.randi()
+	macro.frequency   = HEIGHT_NOISE_FREQ * 0.28
+	macro.fractal_octaves = 1
 
 	var field: Array = []
 	field.resize(H)
@@ -2107,8 +2120,12 @@ func _compute_height_field() -> void:
 		var row := PackedFloat32Array()
 		row.resize(W)
 		for c in W:
-			row[c] = 0.0 if _is_height_flat_cell(c, r) else \
-				noise.get_noise_2d(float(c), float(r)) * height_amplitude
+			if _is_height_flat_cell(c, r):
+				row[c] = 0.0
+				continue
+			var detail := noise.get_noise_2d(float(c), float(r))
+			var macro_h := macro.get_noise_2d(float(c), float(r))
+			row[c] = (macro_h * 0.65 + detail * 0.35) * height_amplitude
 		field[r] = row
 
 	# Lissage (moyenne 3×3) — pentes douces façon collines, pas de bruit

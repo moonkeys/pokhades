@@ -26,6 +26,13 @@ var _dash_dir:      Vector3 = Vector3.ZERO
 ## collines douces. Null = sol plat (comportement d'origine).
 var terrain: Node3D = null
 
+# ── Zones d'effet de terrain (boue…) — cf. TerrainEffectZone.gd ──────────
+# Plusieurs zones peuvent se chevaucher : on garde la plus pénalisante tant
+# qu'au moins une est active. Le dash n'est PAS ralenti (reste un burst
+# fiable même dans la boue).
+var _active_effect_zones: Array[TerrainEffectZone] = []
+var _speed_mult: float = 1.0
+
 # ── Multijoueur (hub partagé) ────────────────────────────────────────────
 # remote_peer != 0 → cette instance est la copie locale d'un AUTRE joueur
 # (cf. TeamMember, même schéma en combat) : pas d'input/collision active,
@@ -51,6 +58,7 @@ func _ready() -> void:
 	# Touches : déclarées UNE fois dans Controls.CATALOG, appliquées au
 	# démarrage par GameManager (filet de sécurité si on entre par le Hub).
 	Controls.apply()
+	add_to_group("terrain_effect_targets")
 
 	# Les copies distantes n'ont pas de collision propre (suivent juste la
 	# position diffusée par leur propriétaire, cf. _remote_process) — sinon
@@ -168,7 +176,7 @@ func move_tick(delta: float, blocked: bool) -> void:
 	if _dash_timer > 0.0:
 		velocity = _dash_dir * DASH_SPEED
 	else:
-		velocity = dir * SPEED
+		velocity = dir * SPEED * _speed_mult
 	move_and_slide()
 	position.y = terrain.get_height_at_world(global_position) if is_instance_valid(terrain) else 0.0
 	_update_anim(Vector2(dir.x, dir.z))
@@ -179,6 +187,24 @@ func move_tick(delta: float, blocked: bool) -> void:
 		if _net_accum >= 1.0 / NET_SEND_HZ:
 			_net_accum = 0.0
 			_net_state.rpc(global_position, _anim, _sprite.flip_h if is_instance_valid(_sprite) else false)
+
+
+## Contrat duck-typé attendu par TerrainEffectZone — voir scripts/world/TerrainEffectZone.gd.
+func _on_terrain_effect_entered(zone: TerrainEffectZone) -> void:
+	_active_effect_zones.append(zone)
+	_recompute_speed_mult()
+
+
+func _on_terrain_effect_exited(zone: TerrainEffectZone) -> void:
+	_active_effect_zones.erase(zone)
+	_recompute_speed_mult()
+
+
+func _recompute_speed_mult() -> void:
+	var mult := 1.0
+	for zone in _active_effect_zones:
+		mult = minf(mult, zone.speed_multiplier)
+	_speed_mult = mult
 
 
 func _update_anim(dir: Vector2) -> void:

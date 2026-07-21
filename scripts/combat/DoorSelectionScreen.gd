@@ -212,7 +212,7 @@ func _build_card(data: Dictionary, x: int, y: int, w: int, h: int) -> void:
 	btn.text     = "Choisir"
 	btn.position = Vector2(w / 2 - 90, h - 74)
 	btn.size     = Vector2(180, 52)
-	btn.add_theme_font_size_override("font_size", 19)
+	btn.add_theme_font_size_override("font_size", UiKit.scaled_font(19))
 	btn.add_theme_color_override("font_color", C_TEXT_LT)
 	_style_btn(btn, accent)
 	var cap := data.duplicate()
@@ -226,7 +226,7 @@ func _mk_lbl(text: String, x: float, y: float, w: float, h: float,
 		fs: int, col: Color, centered: bool = false) -> Label:
 	var l := Label.new()
 	l.text = text; l.position = Vector2(x, y); l.size = Vector2(w, h)
-	l.add_theme_font_size_override("font_size", fs)
+	l.add_theme_font_size_override("font_size", UiKit.scaled_font(fs))
 	l.add_theme_color_override("font_color", col)
 	l.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.50))
 	l.add_theme_constant_override("shadow_offset_x", 1)
