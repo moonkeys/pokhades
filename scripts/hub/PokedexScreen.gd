@@ -26,7 +26,7 @@ const STAT_COLORS: Array[Color] = [
 	Color(0.58, 0.34, 0.78), Color(0.24, 0.54, 0.84), Color(0.20, 0.70, 0.74),
 ]
 
-var _sorted_ids:   Array  = []
+var _sorted_ids:   Array  = []   # union totale (débloqués + aperçus), pour le préchargement
 var _selected_pid: int    = -1
 var _loaded_data:  Dictionary = {}   # pid -> PokemonData
 var _portraits:    Dictionary = {}   # pid -> Texture2D
@@ -34,9 +34,23 @@ var _card_panels:  Dictionary = {}   # pid -> Button (carte de grille focalisabl
 var _card_tex:     Dictionary = {}   # pid -> TextureRect
 var _card_ph:      Dictionary = {}   # pid -> ColorRect
 
+## Onglets de la grille : Débloqués / À débloquer (formes de base seulement) /
+## Rencontrés (toutes formes, y compris évoluées) / Tous.
+const TAB_UNLOCKED  := 0
+const TAB_LOCKABLE  := 1
+const TAB_SEEN      := 2
+const TAB_ALL       := 3
+const TAB_LABELS: Array[String] = ["Débloqués", "À débloquer", "Rencontrés", "Tous"]
+
+var _current_tab: int   = TAB_ALL
+var _tab_ids:     Array = []      # ids affichés dans la grille pour l'onglet courant
+var _tab_buttons: Array = []      # Button par onglet, pour re-styler l'actif
+var _panel_ref:   Panel = null
+
 ## ScrollContainer de la grille — mémorisé pour faire défiler jusqu'à la carte
 ## focalisée (navigation aux flèches et sélection depuis la bande d'équipe).
 var _grid_scroll:     ScrollContainer = null
+var _grid_empty_lbl:  Label = null
 var _detail_root:     Control = null
 var _team_strip_root: Control = null
 
@@ -51,12 +65,35 @@ func _ready() -> void:
 		id_set[pid] = true
 	_sorted_ids = id_set.keys()
 	_sorted_ids.sort()
-	if not _sorted_ids.is_empty():
+	_tab_ids = _compute_tab_ids(_current_tab)
+	if not _tab_ids.is_empty():
+		_selected_pid = _tab_ids[0]
+	elif not _sorted_ids.is_empty():
 		_selected_pid = _sorted_ids[0]
 	add_child(MenuNav.make(func() -> void: closed.emit()))   # Échap = fermer
 	_build()
 	_fetch_all()
 	MenuNav.focus_first(self)
+
+
+## Liste d'ids pour un onglet donné. Ne dépend d'aucune donnée réseau : tout se
+## déduit de l'état déjà en mémoire (unlocked_pokemon / defeat_counts /
+## EVOLUTIONS), donc dispo instantanément même hors-ligne ou avant le préchargement.
+func _compute_tab_ids(tab: int) -> Array:
+	var ids: Array = []
+	match tab:
+		TAB_UNLOCKED:
+			ids = GameManager.unlocked_pokemon.duplicate()
+		TAB_LOCKABLE:
+			for pid in GameManager.defeat_counts:
+				if pid not in GameManager.unlocked_pokemon and GameManager.pre_evolution_of(pid) == -1:
+					ids.append(pid)
+		TAB_SEEN:
+			ids = GameManager.defeat_counts.keys()
+		TAB_ALL:
+			ids = _sorted_ids.duplicate()
+	ids.sort()
+	return ids
 
 
 func _build() -> void:
@@ -66,6 +103,7 @@ func _build() -> void:
 	add_child(veil)
 
 	var panel := UiKit.main_panel(Vector2(100, 50), Vector2(1080, 620))
+	_panel_ref = panel
 	add_child(panel)
 	UiKit.banner(panel, "Pokédex & Équipe")
 	UiKit.pop_in(panel)
@@ -78,6 +116,7 @@ func _build() -> void:
 			0, 280, 1080, 80, 18, C_DIM, true)
 	else:
 		_build_team_strip(panel)
+		_build_tab_bar(panel)
 		_build_grid(panel)
 		_build_detail_panel(panel)
 
@@ -263,15 +302,89 @@ func _reveal(pid: int) -> void:
 		_grid_scroll.ensure_control_visible(_card_panels[pid] as Control)
 
 
+# ── Onglets (Débloqués / À débloquer / Rencontrés / Tous) ──────────────
+
+const TAB_BAR_Y := 178
+const TAB_BAR_H := 26
+
+func _build_tab_bar(panel: Panel) -> void:
+	_tab_buttons.clear()
+	var w := 456
+	var gap := 4
+	var btn_w := (w - gap * (TAB_LABELS.size() - 1)) / TAB_LABELS.size()
+	for i in TAB_LABELS.size():
+		var count := _compute_tab_ids(i).size()
+		var btn := Button.new()
+		btn.text = "%s (%d)" % [TAB_LABELS[i], count]
+		btn.position = Vector2(16 + i * (btn_w + gap), TAB_BAR_Y)
+		btn.size     = Vector2(btn_w, TAB_BAR_H)
+		btn.focus_mode = Control.FOCUS_ALL
+		btn.clip_text = true
+		btn.add_theme_font_size_override("font_size", 10)
+		panel.add_child(btn)
+		_tab_buttons.append(btn)
+		var capture_i := i
+		btn.pressed.connect(func() -> void: _select_tab(capture_i))
+	_style_tab_buttons()
+
+
+func _style_tab_buttons() -> void:
+	for i in _tab_buttons.size():
+		var btn: Button = _tab_buttons[i]
+		var active := i == _current_tab
+		var bg     := C_CARD_SEL if active else C_CARD
+		var border := C_GOLD if active else C_BORDER
+		for state in ["normal", "hover", "pressed", "focus"]:
+			var sb := StyleBoxFlat.new()
+			sb.bg_color     = bg.lightened(0.10) if state in ["hover", "focus"] else bg
+			sb.border_color = C_GOLD_LT if state == "focus" else border
+			sb.set_border_width_all(3 if state == "focus" else 2)
+			sb.set_corner_radius_all(6)
+			btn.add_theme_stylebox_override(state, sb)
+		btn.add_theme_color_override("font_color", C_GOLD if active else C_TEXT)
+
+
+## Change l'onglet actif et reconstruit uniquement la grille (la fiche de
+## droite et la bande d'équipe restent intactes — pas besoin d'un _build()
+## complet, qui casserait le focus courant sans raison).
+func _select_tab(tab: int) -> void:
+	if tab == _current_tab:
+		return
+	_current_tab = tab
+	_tab_ids = _compute_tab_ids(tab)
+	if not (_selected_pid in _tab_ids) and not _tab_ids.is_empty():
+		_select(_tab_ids[0])
+	_style_tab_buttons()
+	_rebuild_grid()
+	call_deferred("_ensure_focus_alive")
+
+
+func _rebuild_grid() -> void:
+	if is_instance_valid(_grid_scroll):
+		_grid_scroll.queue_free()
+		_grid_scroll = null
+	if is_instance_valid(_grid_empty_lbl):
+		_grid_empty_lbl.queue_free()
+		_grid_empty_lbl = null
+	_card_panels.clear()
+	_card_tex.clear()
+	_card_ph.clear()
+	_build_grid(_panel_ref)
+
+
 # ── Grille (gauche, triée par n° de Pokédex) ───────────────────────────
 
+const GRID_Y := TAB_BAR_Y + TAB_BAR_H + 4
+
 func _build_grid(panel: Panel) -> void:
+	if _tab_ids.is_empty():
+		_grid_empty_lbl = _lbl(panel, "Aucun Pokémon dans cet onglet.", 16, GRID_Y, 456, 60, 13, C_DIM, true)
+		return
+
 	var scroll := ScrollContainer.new()
 	_grid_scroll = scroll
-	# Décalée de 144 à 178 : la bande d'équipe est passée de 40 à 68 px de haut
-	# (cf. TEAM_SLOT) et la recouvrait.
-	scroll.position = Vector2(16, 178)
-	scroll.size     = Vector2(456, 392)
+	scroll.position = Vector2(16, GRID_Y)
+	scroll.size     = Vector2(456, 392 - (GRID_Y - TAB_BAR_Y))
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	panel.add_child(scroll)
 
@@ -279,14 +392,14 @@ func _build_grid(panel: Panel) -> void:
 	const CARD_H := 76
 	const GAP    := 8
 	var cols := 2
-	var rows := ceili(float(_sorted_ids.size()) / cols)
+	var rows := ceili(float(_tab_ids.size()) / cols)
 
 	var content := Control.new()
 	content.custom_minimum_size = Vector2(456, rows * (CARD_H + GAP))
 	scroll.add_child(content)
 
-	for i in _sorted_ids.size():
-		var pid: int = _sorted_ids[i]
+	for i in _tab_ids.size():
+		var pid: int = _tab_ids[i]
 		var col := i % cols
 		var row := i / cols
 		_build_entry(content, pid, col * (CARD_W + GAP), row * (CARD_H + GAP), CARD_W, CARD_H)
