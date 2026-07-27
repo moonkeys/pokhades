@@ -221,13 +221,12 @@ func _find_child_by_class(parent: Node, cls: String) -> Node:
 ## RUN (CombatArena._talk_to_vendor) — chemin distinct (dialogue → BoutiqueScreen
 ## au lieu de dialogue → écran du hub), donc testé séparément. Appelle
 ## _enter_boutique() directement une fois l'arène chargée plutôt que de viser
-## une salle précise : CombatArena._ready() réinitialise rooms_cleared via
-## RunManager.start_run() au chargement, donc le forcer avant change_scene_to_file
-## ne survivrait pas — l'appel direct est robuste à ce détail d'implémentation.
+## une salle précise (peu importe la salle réelle pour ce test).
 func _scenario_boutique_dialogue() -> void:
 	GameManager.is_first_run = false
 	GameManager.selected_starter_id = GameManager.STARTER_IDS[0]
 	GameManager.hub_team = [GameManager.STARTER_IDS[0]]
+	RunManager.inst().start_run()   # cf. HubWorld/Net — CombatArena ne le fait plus lui-même
 	get_tree().change_scene_to_file("res://scenes/combat/CombatArena.tscn")
 	var waited := 0.0
 	while get_tree().get_nodes_in_group("players").is_empty() and waited < 18.0:
@@ -518,8 +517,13 @@ func _scenario_run(start_room: int) -> void:
 	GameManager.is_first_run = false
 	GameManager.selected_starter_id = GameManager.STARTER_IDS[0]
 	GameManager.hub_team = [GameManager.STARTER_IDS[0]]
+	# start_run() ICI, comme les vrais appelants (HubWorld/Net) : CombatArena
+	# ne le fait plus lui-même (cf. le fix "map désynchronisée en multi" —
+	# la 1re map se génère dans le _ready() du Map enfant, AVANT celui de
+	# l'arène). L'override de rooms_cleared doit venir APRÈS, sinon start_run()
+	# l'écraserait.
+	RunManager.inst().start_run()
 	if start_room > 0:
-		RunManager.inst().start_run()
 		RunManager.inst().rooms_cleared = start_room
 	get_tree().change_scene_to_file("res://scenes/combat/CombatArena.tscn")
 	# Polling plutôt qu'attente fixe : au premier lancement, le préchargement
@@ -529,7 +533,14 @@ func _scenario_run(start_room: int) -> void:
 	while get_tree().get_nodes_in_group("players").is_empty() and waited < 18.0:
 		await get_tree().create_timer(0.5).timeout
 		waited += 0.5
-	await get_tree().create_timer(3.0).timeout   # temps de télégraphie des spawns
+	# Salle de boss atteinte directement (sans passer par les salles
+	# précédentes, comme en jeu réel) : les espèces des compos de champion ne
+	# se préchargent qu'EN ARRIÈRE-PLAN (cf. CombatArena._spawn_team, "Phase 2")
+	# — en partie réelle, les salles précédentes leur laissent largement le
+	# temps de charger ; ici il faut l'attendre explicitement, sans quoi
+	# _spawn_from_pool ignore silencieusement les vagues pas encore en cache.
+	var wait_s := 6.0 if RunManager.inst().is_boss_room(start_room) else 3.0
+	await get_tree().create_timer(wait_s).timeout   # temps de télégraphie des spawns
 
 	var team := get_tree().get_nodes_in_group("players").size()
 	var enemies := get_tree().get_nodes_in_group("enemies").size()

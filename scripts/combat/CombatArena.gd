@@ -141,7 +141,6 @@ func _ready() -> void:
 	_register_switch_key()
 	_map = get_node_or_null("Map") as MapBase
 	_refresh_map_bounds()
-	RunManager.inst().start_run()
 	GameManager.run_money = 0   # les Pokédollars ne survivent pas à la run
 
 	_ambiance = BiomeAmbiance.new()

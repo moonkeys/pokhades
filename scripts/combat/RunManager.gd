@@ -56,13 +56,23 @@ func is_final_boss_room(room: int) -> bool:
 ## (départ doux → montée en rudesse, jamais deux actes identiques d'affilée).
 ## Lue par MapGenerator._apply_theme (cf. current_biome).
 var _biome_sequence: Array[int] = []
-var _seq_run_id: int = -1   # run_count pour lequel la séquence a été construite
+var _seq_run_id:   int = -1   # run_count pour lequel la séquence a été construite
+var _seq_seed_key: int = 0    # Net.base_seed pour lequel la séquence a été construite (0 = solo)
 
 ## Test de biome (menu Dracolosse) : si >= 0, TOUTE la run est forcée sur ce
 ## biome (tous les actes). Remis à -1 par un lancement de run normal.
 var test_biome_override: int = -1
 
 
+## Appelé par le HUB (solo) et Net._begin/_retry (multijoueur) AVANT le
+## change_scene_to_file vers CombatArena — jamais par l'arène elle-même : la
+## 1re map se génère dans le _ready() du Map, un enfant de CombatArena, qui
+## s'exécute AVANT celui de l'arène (Godot appelle les enfants d'abord). Si ce
+## reset attendait CombatArena._ready(), rooms_cleared/la séquence de biomes
+## restaient à leur valeur de la run PRÉCÉDENTE le temps que _ready() tourne —
+## et RunManager étant un singleton par PROCESSUS, cette valeur pouvait
+## différer entre hôte et invité (retour joueurs : « les 2 joueurs doivent
+## être sur la même map »).
 func start_run(_start_idx: int = 0) -> void:
 	current_zone_idx = 0
 	rooms_cleared    = 0
@@ -70,12 +80,18 @@ func start_run(_start_idx: int = 0) -> void:
 	_ensure_sequence()
 
 
-## Construit la séquence une seule fois par run. La 1re map se génère AVANT
-## CombatArena._ready/start_run (les enfants _ready d'abord) ; on se cale
-## donc sur GameManager.run_count (déjà incrémenté au lancement de la run)
-## pour que la 1re zone et start_run partagent exactement la même séquence.
+## Construit la séquence une seule fois par run. `GameManager.run_count`
+## n'est incrémenté qu'en SOLO (cf. HubWorld._start_run) : en multijoueur il
+## ne bouge pas d'un lancement à l'autre, donc le cache par run_count seul
+## pouvait réutiliser la séquence d'une run SOLO précédente (construite avec
+## un RNG non-partagé) pour une run réseau — même symptôme que le bug de
+## rooms_cleared ci-dessus. `Net.base_seed` (0 hors ligne, sinon toujours
+## nouveau à chaque partie/retry) sert de seconde clé de cache pour couvrir
+## ce cas.
 func _ensure_sequence() -> void:
-	if _biome_sequence.is_empty() or _seq_run_id != GameManager.run_count:
+	var seed_key := Net.base_seed if Net.in_run else 0
+	if _biome_sequence.is_empty() or _seq_run_id != GameManager.run_count or _seq_seed_key != seed_key:
+		_seq_seed_key = seed_key
 		_build_biome_sequence()
 		_seq_run_id = GameManager.run_count
 

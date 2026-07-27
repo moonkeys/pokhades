@@ -255,6 +255,17 @@ func _begin(s: int, roster: Dictionary) -> void:
 	base_seed = s if s != 0 else 1
 	players   = roster
 	in_run    = true
+	# start_run() ICI, sur CHAQUE pair, AVANT le changement de scène : la 1re
+	# zone se génère dans le _ready() du Map (enfant de CombatArena), qui
+	# s'exécute AVANT celui de l'arène elle-même — si le reset de
+	# rooms_cleared/la séquence de biomes attendait _ready(), chaque pair
+	# pouvait lire un rooms_cleared resté à sa PROPRE valeur précédente
+	# (RunManager est un singleton par PROCESSUS) : deux joueurs généraient
+	# alors deux maps différentes pour ce qui devait être la même 1re salle
+	# (retour joueurs : « les 2 joueurs doivent être sur la même map »).
+	# base_seed est déjà identique sur tous les pairs (RPC ci-dessus) donc ce
+	# reset produit la MÊME séquence partout.
+	RunManager.inst().start_run()
 	game_starting.emit()
 	get_tree().change_scene_to_file("res://scenes/combat/CombatArena.tscn")
 
@@ -278,6 +289,7 @@ func request_retry() -> void:
 func _retry(s: int) -> void:
 	base_seed = s if s != 0 else 1
 	in_run    = true
+	RunManager.inst().start_run()   # cf. _begin() — reset AVANT le changement de scène
 	get_tree().change_scene_to_file("res://scenes/combat/CombatArena.tscn")
 
 

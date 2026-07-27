@@ -807,6 +807,12 @@ func _start_run(force_biome: int = -1) -> void:
 			return
 	RunManager.inst().test_biome_override = force_biome
 	GameManager.run_count += 1
+	# start_run() ICI, AVANT le changement de scène : MapGenerator (enfant de
+	# CombatArena) génère la 1re zone dans SON _ready(), qui s'exécute AVANT
+	# celui de CombatArena (Godot appelle les enfants d'abord) — le reset doit
+	# donc être fait par l'appelant, pas par l'arène elle-même, sous peine de
+	# lire un rooms_cleared resté à sa valeur de la run précédente.
+	RunManager.inst().start_run()
 	get_tree().change_scene_to_file("res://scenes/combat/CombatArena.tscn")
 
 
