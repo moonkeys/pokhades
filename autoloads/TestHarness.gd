@@ -47,6 +47,8 @@ func _ready() -> void:
 			_run_scenario(_scenario_boutique_dialogue)
 		elif arg == "smoke_freed_pokemon":
 			_run_scenario(_scenario_freed_pokemon)
+		elif arg == "smoke_boon_claim":
+			_run_scenario(_scenario_boon_claim)
 		elif arg == "smoke_pokedex":
 			_run_scenario(_scenario_pokedex)
 		elif arg == "smoke_pokedex_stress":
@@ -555,6 +557,43 @@ func _scenario_run(start_room: int) -> void:
 		_fail(scenario, "aucun ennemi apparu (team=%d)" % team)
 		return
 	_pass(scenario, "team=%d enemies=%d" % [team, enemies])
+
+
+## Un SEUL don de fin de zone à se disputer (retour joueurs : « chaque joueur
+## recevait son propre bonus ») — teste directement le garde-fou d'arbitrage
+## (_resolve_boon_claim), sans monter une vraie session à 2 pairs : le premier
+## "peer" simulé doit réclamer le don (qui disparaît), le second doit être
+## refusé silencieusement (pas de 2e don, pas de crash).
+func _scenario_boon_claim() -> void:
+	GameManager.is_first_run = false
+	GameManager.hub_team = [GameManager.STARTER_IDS[0]]
+	RunManager.inst().start_run()
+	get_tree().change_scene_to_file("res://scenes/combat/CombatArena.tscn")
+	var waited := 0.0
+	while get_tree().get_nodes_in_group("players").is_empty() and waited < 18.0:
+		await get_tree().create_timer(0.5).timeout
+		waited += 0.5
+	await get_tree().create_timer(1.0).timeout
+
+	var arena := get_tree().current_scene
+	if arena == null:
+		_fail("boon_claim", "arène non chargée")
+		return
+	arena.call("_spawn_boon", RunManager.BONUS_STAT)
+	if not is_instance_valid(arena.get("_boon_node")):
+		_fail("boon_claim", "don non apparu")
+		return
+
+	arena.call("_resolve_boon_claim", 111)   # 1er prétendant
+	if not bool(arena.get("_boon_claimed")):
+		_fail("boon_claim", "réclamation non enregistrée")
+		return
+	if is_instance_valid(arena.get("_boon_node")):
+		_fail("boon_claim", "le don n'a pas disparu après réclamation")
+		return
+
+	arena.call("_resolve_boon_claim", 222)   # 2e prétendant — doit être refusé
+	_pass("boon_claim", "1 seul don réclamé, 2e prétendant refusé")
 
 
 func _scenario_mp_host() -> void:

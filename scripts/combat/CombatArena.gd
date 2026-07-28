@@ -111,6 +111,10 @@ var _npc_dialogue:    NpcDialogueScreen = null   # petit échange avant vendeur/
 var _boon_node:   Area3D = null             # item flottant au centre
 var _boon_type:   int    = -1               # RunManager.BONUS_SKILL / BONUS_STAT
 var _boon_screen: BoutiqueScreen = null     # écran de récompense (skill/stat)
+## Un SEUL don par salle, à se disputer entre joueurs (retour joueurs :
+## « chaque joueur recevait son propre bonus ») — cf. _try_claim_boon. Vrai
+## dès qu'un joueur l'a réclamé (arbitré par l'hôte), jusqu'au prochain spawn.
+var _boon_claimed: bool = false
 
 var _pause_screen: PauseMenuScreen = null
 
@@ -313,7 +317,7 @@ func _process(delta: float) -> void:
 		elif _near_wanderer and not is_instance_valid(_npc_dialogue):
 			_talk_to_boutique_npc(_wanderer_npc, "boutique_wanderer")
 		elif _near_boon and not is_instance_valid(_boon_screen):
-			_open_boon()
+			_try_claim_boon()
 		elif _near_recruit and not is_instance_valid(_recruit_screen):
 			_open_recruit_dialog()
 	if not _near_obstacle.is_empty() and Input.is_action_just_pressed("cs_use"):
@@ -2258,6 +2262,7 @@ var _boon_offers: Array = []
 ## (attaque / stats) est celui annoncé par la porte choisie pour entrer ici.
 func _spawn_boon(bonus_type: int) -> void:
 	_clear_boon()
+	_boon_claimed = false
 	if not is_instance_valid(_map):
 		return
 	_boon_type = bonus_type
@@ -2327,6 +2332,57 @@ func _clear_boon() -> void:
 		_boon_screen.queue_free()
 	_boon_screen = null
 	_boon_type = -1
+
+
+## Point d'entrée de l'interaction [E] sur le don — en solo, ouvre directement
+## l'écran ; en multi, l'hôte ARBITRE : un seul joueur peut le réclamer, les
+## autres perdent leur chance dès qu'un pair les a devancés (retour joueurs :
+## « un seul bonus à la fin d'une salle, à se disputer entre joueurs »).
+func _try_claim_boon() -> void:
+	if not _mp:
+		_open_boon()
+		return
+	if multiplayer.is_server():
+		_resolve_boon_claim(Net.local_id())
+	else:
+		_net_request_boon.rpc_id(1)
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func _net_request_boon() -> void:
+	if not multiplayer.is_server():
+		return
+	_resolve_boon_claim(multiplayer.get_remote_sender_id())
+
+
+## Autorité exclusive de l'hôte : le premier arrivé (peer_id) remporte le don,
+## qui disparaît alors PARTOUT — les autres joueurs ne peuvent plus le
+## réclamer, même s'ils appuient sur [E] au même instant (race tranchée par
+## l'ordre d'arrivée des RPC sur l'hôte).
+func _resolve_boon_claim(peer_id: int) -> void:
+	if _boon_claimed or not is_instance_valid(_boon_node):
+		return
+	_boon_claimed = true
+	_net_boon_claimed.rpc(peer_id)
+	_on_boon_claimed(peer_id)   # "call_remote" ne se rappelle pas lui-même
+
+
+@rpc("authority", "call_remote", "reliable")
+func _net_boon_claimed(peer_id: int) -> void:
+	_on_boon_claimed(peer_id)
+
+
+func _on_boon_claimed(peer_id: int) -> void:
+	# _clear_boon() remet _boon_type à -1 (fin de vie normale du don) : on le
+	# capture avant, sinon _open_boon() ci-dessous ouvrirait le mauvais écran
+	# (le type "stat" par défaut au lieu du vrai type du don).
+	var won_type := _boon_type
+	_clear_boon()
+	if peer_id == Net.local_id():
+		_boon_type = won_type
+		_open_boon()
+	else:
+		hud.notify("Un coéquipier a récupéré la récompense avant toi !", Color(0.80, 0.62, 0.40))
 
 
 func _open_boon() -> void:
