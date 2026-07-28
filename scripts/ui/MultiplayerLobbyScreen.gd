@@ -28,6 +28,16 @@ var _my_ready:    bool = false
 var _status_lbl:  Label = null
 var _code_input:  LineEdit = null
 
+## Mémorisées pour restaurer la position de scroll à travers un _rebuild()
+## (cf. _rebuild) — un autre joueur qui se déclare prêt ou change de Pokémon
+## rafraîchit TOUT le lobby chez TOUT LE MONDE (Net.players_changed), ce qui
+## recréait ces conteneurs à chaque fois et remettait leur scroll à zéro
+## (retour joueurs : « je scrolle pour trouver mon Pokémon et ça me ramène en
+## haut dès que l'autre joueur fait un choix »).
+var _pid_scroll:    ScrollContainer = null
+var _roster_scroll: ScrollContainer = null
+var _item_scroll:   ScrollContainer = null
+
 ## pid → {"pd": PokemonData, "portrait": Texture2D, "moves": Array (lazy)}
 var _data_cache:  Dictionary = {}
 
@@ -74,6 +84,13 @@ func _selectable_items() -> Array:
 
 
 func _rebuild() -> void:
+	# Chaque conteneur défilant garde SA PROPRE position à travers ce
+	# rafraîchissement, déclenché chez TOUT LE MONDE par la moindre action
+	# d'un autre joueur (cf. déclaration des variables ci-dessus).
+	var saved_pid    := _pid_scroll.scroll_vertical if is_instance_valid(_pid_scroll) else 0
+	var saved_roster := _roster_scroll.scroll_vertical if is_instance_valid(_roster_scroll) else 0
+	var saved_item   := _item_scroll.scroll_horizontal if is_instance_valid(_item_scroll) else 0
+
 	if is_instance_valid(_panel):
 		_panel.queue_free()
 	# Passage automatique menu → lobby dès que le registre nous contient
@@ -92,6 +109,15 @@ func _rebuild() -> void:
 		_build_menu()
 	else:
 		_build_lobby()
+
+	# Restauration EN DIFFÉRÉ : les conteneurs viennent d'être peuplés, leur
+	# étendue de scroll n'est calculée qu'après la prochaine passe de layout.
+	if is_instance_valid(_pid_scroll):
+		_pid_scroll.set_deferred("scroll_vertical", saved_pid)
+	if is_instance_valid(_roster_scroll):
+		_roster_scroll.set_deferred("scroll_vertical", saved_roster)
+	if is_instance_valid(_item_scroll):
+		_item_scroll.set_deferred("scroll_horizontal", saved_item)
 
 
 # ── Menu : héberger / rejoindre ────────────────────────────────────────
@@ -173,14 +199,14 @@ func _build_lobby() -> void:
 	# Roster — liste défilante (peut monter à 6) pour ne pas prendre trop de
 	# place au-dessus du reste de l'écran.
 	UiKit.label(_panel, "Joueurs  (%d/6)" % Net.players.size(), Vector2(660, 70), 15, UiKit.CREAM, 300)
-	var roster_scroll := ScrollContainer.new()
-	roster_scroll.position = Vector2(660, 94)
-	roster_scroll.size     = Vector2(300, 110)
-	roster_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	_panel.add_child(roster_scroll)
+	_roster_scroll = ScrollContainer.new()
+	_roster_scroll.position = Vector2(660, 94)
+	_roster_scroll.size     = Vector2(300, 110)
+	_roster_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_panel.add_child(_roster_scroll)
 	var roster_list := VBoxContainer.new()
 	roster_list.add_theme_constant_override("separation", 6)
-	roster_scroll.add_child(roster_list)
+	_roster_scroll.add_child(roster_list)
 	for id: int in Net.player_order():
 		var p: Dictionary = Net.players[id]
 		var row := Panel.new()
@@ -210,16 +236,16 @@ func _build_lobby() -> void:
 	# L'HÔTE (cf. _selectable_pids). Plus d'aperçu séparé à côté — le sprite
 	# est déjà visible sur chaque case ET dans le bandeau du haut.
 	UiKit.label(_panel, "Ton Pokémon :", Vector2(40, 170), 15, UiKit.CREAM, 260)
-	var pid_scroll := ScrollContainer.new()
-	pid_scroll.position = Vector2(40, 196)
-	pid_scroll.size     = Vector2(596, 300)
-	pid_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	_panel.add_child(pid_scroll)
+	_pid_scroll = ScrollContainer.new()
+	_pid_scroll.position = Vector2(40, 196)
+	_pid_scroll.size     = Vector2(596, 300)
+	_pid_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_panel.add_child(_pid_scroll)
 	var pid_grid := GridContainer.new()
 	pid_grid.columns = 2
 	pid_grid.add_theme_constant_override("h_separation", 6)
 	pid_grid.add_theme_constant_override("v_separation", 6)
-	pid_scroll.add_child(pid_grid)
+	_pid_scroll.add_child(pid_grid)
 	for pid in _selectable_pids():
 		pid_grid.add_child(_build_pid_row(pid))
 
@@ -230,14 +256,14 @@ func _build_lobby() -> void:
 	# Objet tenu (optionnel) — grille d'icônes défilante horizontalement,
 	# piochée dans l'inventaire de L'HÔTE (cf. _selectable_items).
 	UiKit.label(_panel, "Objet tenu (optionnel) :", Vector2(40, 522), 14, UiKit.CREAM, 320)
-	var item_scroll := ScrollContainer.new()
-	item_scroll.position = Vector2(40, 546)
-	item_scroll.size     = Vector2(920, 56)
-	item_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	_panel.add_child(item_scroll)
+	_item_scroll = ScrollContainer.new()
+	_item_scroll.position = Vector2(40, 546)
+	_item_scroll.size     = Vector2(920, 56)
+	_item_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_panel.add_child(_item_scroll)
 	var item_row := HBoxContainer.new()
 	item_row.add_theme_constant_override("separation", 8)
-	item_scroll.add_child(item_row)
+	_item_scroll.add_child(item_row)
 	var item_choices: Array = [""]
 	item_choices.append_array(_selectable_items())
 	for api in item_choices:
