@@ -53,6 +53,7 @@ run_scenario boutique_dialogue 25 smoke_boutique_dialogue
 run_scenario freed_pokemon 20 smoke_freed_pokemon
 run_scenario boon_claim  20 smoke_boon_claim
 run_scenario xp_share    20 smoke_xp_share
+run_scenario lobby_item_stats 20 smoke_lobby_item_stats
 run_scenario pokedex     20 smoke_pokedex
 run_scenario pokedex_stress 30 smoke_pokedex_stress
 run_scenario run_solo    25 smoke_run

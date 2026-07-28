@@ -51,6 +51,8 @@ func _ready() -> void:
 			_run_scenario(_scenario_boon_claim)
 		elif arg == "smoke_xp_share":
 			_run_scenario(_scenario_xp_share)
+		elif arg == "smoke_lobby_item_stats":
+			_run_scenario(_scenario_lobby_item_stats)
 		elif arg == "smoke_pokedex":
 			_run_scenario(_scenario_pokedex)
 		elif arg == "smoke_pokedex_stress":
@@ -218,6 +220,19 @@ func _find_child_by_class(parent: Node, cls: String) -> Node:
 		var scr: Script = c.get_script()
 		if scr != null and scr.get_global_name() == cls:
 			return c
+	return null
+
+
+## Recherche récursive (toute la sous-arborescence) d'un Label dont le texte
+## CONTIENT `needle` — utilisé pour vérifier qu'une valeur affichée est bien
+## celle attendue sans dépendre d'un chemin de nœud précis.
+func _find_label_with_text(node: Node, needle: String) -> Label:
+	if node is Label and needle in (node as Label).text:
+		return node
+	for c in node.get_children():
+		var found := _find_label_with_text(c, needle)
+		if found != null:
+			return found
 	return null
 
 
@@ -625,6 +640,44 @@ func _scenario_xp_share() -> void:
 		_fail("xp_share", "assistants non cumulés (%s)" % [peers])
 		return
 	_pass("xp_share", "2 assistants cumulés sur le même ennemi")
+
+
+## Retour joueurs : « dans le menu personnage en ligne, les stats doivent se
+## mettre à jour instantanément quand on équipe un objet » — jusque là, le
+## panneau du lobby multijoueur affichait TOUJOURS les stats de base, sans
+## jamais tenir compte de l'objet tenu choisi. Vérifie qu'équiper un objet à
+## effet connu (Bandeau Choix, +50% Attaque) fait apparaître la valeur
+## boostée dans le panneau, sans passer par une vraie session réseau.
+func _scenario_lobby_item_stats() -> void:
+	GameManager.is_first_run = false
+	GameManager.hub_team = [GameManager.STARTER_IDS[0]]
+	var screen := MultiplayerLobbyScreen.new()
+	get_tree().root.add_child(screen)
+	screen._mode   = "lobby"
+	screen._my_pid = GameManager.STARTER_IDS[0]
+	var waited := 0.0
+	while not (screen._data_cache.get(screen._my_pid, {}) as Dictionary).has("pd") and waited < 10.0:
+		await get_tree().create_timer(0.5).timeout
+		waited += 0.5
+	var pd: PokemonData = (screen._data_cache.get(screen._my_pid, {}) as Dictionary).get("pd")
+	if pd == null:
+		_fail("lobby_item_stats", "PokemonData non chargée")
+		screen.queue_free()
+		return
+
+	var base_atk := pd.attack
+	screen._my_item = "choice-band"   # ItemCatalog : effect=atk, mult=1.5
+	screen._rebuild()
+	await get_tree().create_timer(0.3).timeout
+
+	var expected := int(round(float(base_atk) * 1.5))
+	var lbl := _find_label_with_text(screen, "%d ↑" % expected)
+	if lbl == null:
+		_fail("lobby_item_stats", "stat boostée non affichée (attendu %d ↑, base %d)" % [expected, base_atk])
+		screen.queue_free()
+		return
+	_pass("lobby_item_stats", "Attaque %d → %d ↑ (Bandeau Choix)" % [base_atk, expected])
+	screen.queue_free()
 
 
 func _scenario_mp_host() -> void:

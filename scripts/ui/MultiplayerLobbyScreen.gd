@@ -355,23 +355,47 @@ func _build_hint_row(text: String, w: float) -> Control:
 ## apprenables (lui ET ses évolutions, cf. _resolve_moves) en grille à 2
 ## colonnes juste en dessous — nom, type, puissance, ATT (physique) / ASP
 ## (spéciale), triées de la moins à la plus puissante.
+## `effect` de ItemCatalog → index dans STAT_NAMES/vals (0=PV … 5=Vitesse).
+## Seuls les 4 effets de stat existants (cf. PokemonInstance._apply_stat_mult)
+## ont un équivalent ici — pas encore de bonus Atq./Déf. Spé. côté objets.
+const _ITEM_STAT_INDEX := {"maxhp": 0, "atk": 1, "def": 2, "spd": 5}
+
 func _build_stats_and_moves_panel(pos: Vector2, size: Vector2) -> void:
 	var card := UiKit.dark_card(_panel, pos, size)
-	UiKit.label(card, "Statistiques de base", Vector2(10, 8), 14, UiKit.CREAM, size.x - 20)
 
 	var data: Dictionary = _data_cache.get(_my_pid, {})
 	var pd: PokemonData  = data.get("pd", null)
 	var stats_bottom := 34.0
 	if pd == null:
+		UiKit.label(card, "Statistiques de base", Vector2(10, 8), 14, UiKit.CREAM, size.x - 20)
 		UiKit.label(card, "Chargement…", Vector2(10, 34), 12, UiKit.CREAM.darkened(0.15), size.x - 20)
 		stats_bottom = 60.0
 	else:
+		# Objet tenu : recalcule les stats AFFECTÉES en direct (retour joueurs :
+		# « les stats doivent se mettre à jour instantanément quand on équipe un
+		# objet ») — jusqu'ici la fiche affichait TOUJOURS les stats de BASE,
+		# sans jamais tenir compte de l'objet choisi, même après un _rebuild().
 		var vals: Array = [pd.hp, pd.attack, pd.defense, pd.sp_attack, pd.sp_defense, pd.speed]
+		var boosted_idx := -1
+		if _my_item != "":
+			var it := ItemCatalog.get_item(_my_item)
+			var mult: float = it.get("mult", 1.0)
+			var idx: int = _ITEM_STAT_INDEX.get(str(it.get("effect", "")), -1)
+			if idx >= 0 and mult != 1.0:
+				vals[idx] = int(round(float(vals[idx]) * mult))
+				boosted_idx = idx
+
+		UiKit.label(card, "Statistiques (objet inclus)" if boosted_idx >= 0 else "Statistiques de base",
+			Vector2(10, 8), 14, UiKit.GOLD if boosted_idx >= 0 else UiKit.CREAM, size.x - 20)
+
 		var y := 34.0
 		for i in 6:
-			UiKit.label(card, STAT_NAMES[i], Vector2(10, y), 11, UiKit.CREAM, 74)
-			_draw_stat_bar(card, Vector2(88, y + 2), size.x - 126, 12, float(vals[i]) / STAT_SCALE, STAT_COLORS[i])
-			UiKit.label(card, str(vals[i]), Vector2(size.x - 34, y), 11, UiKit.CREAM, 32)
+			var boosted := i == boosted_idx
+			var col := UiKit.GOLD if boosted else UiKit.CREAM
+			UiKit.label(card, STAT_NAMES[i], Vector2(10, y), 11, col, 74)
+			_draw_stat_bar(card, Vector2(88, y + 2), size.x - 142, 12, float(vals[i]) / STAT_SCALE, STAT_COLORS[i])
+			var val_txt := "%d ↑" % vals[i] if boosted else str(vals[i])
+			UiKit.label(card, val_txt, Vector2(size.x - 46, y), 11, col, 42)
 			y += 23.0
 		stats_bottom = y + 4.0
 
