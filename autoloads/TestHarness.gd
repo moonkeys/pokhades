@@ -53,6 +53,8 @@ func _ready() -> void:
 			_run_scenario(_scenario_xp_share)
 		elif arg == "smoke_lobby_item_stats":
 			_run_scenario(_scenario_lobby_item_stats)
+		elif arg == "smoke_cooldown_focus":
+			_run_scenario(_scenario_cooldown_focus)
 		elif arg == "smoke_pokedex":
 			_run_scenario(_scenario_pokedex)
 		elif arg == "smoke_pokedex_stress":
@@ -678,6 +680,56 @@ func _scenario_lobby_item_stats() -> void:
 		return
 	_pass("lobby_item_stats", "Attaque %d → %d ↑ (Bandeau Choix)" % [base_atk, expected])
 	screen.queue_free()
+
+
+## Retour joueurs : « le cooldown visuel se fige si on change de focus dans
+## le menu d'attaque, bloquant faussement l'attaque » + « ajouter une croix
+## quand on ne peut pas enchaîner, le cooldown n'est pas toujours visible ».
+## Force un slot en pleine recharge puis simule un changement de focus vers
+## ce slot (comme une pression de touche 1-4) : le HUD doit refléter
+## l'indisponibilité IMMÉDIATEMENT (voile + croix), sans attendre le
+## prochain _physics_process.
+func _scenario_cooldown_focus() -> void:
+	GameManager.is_first_run = false
+	GameManager.hub_team = [GameManager.STARTER_IDS[0]]
+	RunManager.inst().start_run()
+	get_tree().change_scene_to_file("res://scenes/combat/CombatArena.tscn")
+	var waited := 0.0
+	while get_tree().get_nodes_in_group("players").is_empty() and waited < 18.0:
+		await get_tree().create_timer(0.5).timeout
+		waited += 0.5
+	await get_tree().create_timer(1.0).timeout
+
+	var arena := get_tree().current_scene
+	var team: Array = get_tree().get_nodes_in_group("players")
+	if arena == null or team.is_empty():
+		_fail("cooldown_focus", "arène/équipe non prête")
+		return
+	var member: Node = team[0]
+
+	var cds: PackedFloat32Array = member.get("_move_cd")
+	var cd_max: PackedFloat32Array = member.get("_move_cd_max")
+	cds[1] = 999.0
+	cd_max[1] = 1.0
+	member.set("_move_cd", cds)
+	member.set("_move_cd_max", cd_max)
+	member.move_selected.emit(1)   # simule la touche "2" (slot d'index 1)
+
+	var hud_node = arena.get("hud")
+	var slots: Array = hud_node.get("_move_slots")
+	if slots.size() < 2:
+		_fail("cooldown_focus", "moins de 2 cases de capacité")
+		return
+	var slot1: Dictionary = slots[1]
+	var cross: Label = slot1.get("cross")
+	var cd_rect: ColorRect = slot1.get("cd")
+	if cross == null or not cross.visible:
+		_fail("cooldown_focus", "croix d'indisponibilité absente après le changement de focus")
+		return
+	if cd_rect == null or cd_rect.size.y <= 0.0:
+		_fail("cooldown_focus", "voile de cooldown non mis à jour (h=%s)" % [cd_rect.size.y if cd_rect else "?"])
+		return
+	_pass("cooldown_focus", "changement de focus → voile + croix à jour immédiatement")
 
 
 func _scenario_mp_host() -> void:

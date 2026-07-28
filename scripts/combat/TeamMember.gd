@@ -76,7 +76,12 @@ var _min_ring_mat: StandardMaterial3D   = null
 var _ring_mat:   StandardMaterial3D   = null
 
 signal hp_changed(ratio: float)
-signal cooldown_changed(ratio: float)
+## `ready` = _move_ready() de la capacité concernée : PAS que la cadence
+## (ratio) est écoulée, mais aussi qu'aucun verrou (anim en cours, statut) ne
+## bloque l'enchaînement. Le seul ratio ne suffisait pas à distinguer "en
+## recharge" de "verrouillé" — retour joueurs : « le cooldown n'est pas
+## toujours visible », d'où l'indicateur dédié (cf. HUD.update_cooldown).
+signal cooldown_changed(ratio: float, ready: bool)
 signal xp_changed(ratio: float, level: int)
 signal leveled_up(level: int)
 signal evolved(name_fr: String)
@@ -382,8 +387,7 @@ func _physics_process(delta: float) -> void:
 		_player_process()
 		# La jauge du HUD suit la capacité SÉLECTIONNÉE (chacune a sa cadence).
 		var i := clampi(_selected_move_idx, 0, _move_cd.size() - 1)
-		var mx: float = maxf(_move_cd_max[i], 0.01)
-		cooldown_changed.emit(1.0 - (_move_cd[i] / mx))
+		cooldown_changed.emit(cooldown_ratio(i), _move_ready(i))
 	else:
 		_companion_process(delta)
 
@@ -417,6 +421,32 @@ func _move_cooldown(idx: int) -> float:
 	var spd := float(pokemon_instance.get_effective_speed())
 	var spd_scale := clampf(1.0 - (spd - 60.0) / 300.0, 0.6, 1.3)
 	return base * spd_scale * cooldown_mult
+
+
+## Ratio de recharge de la capacité `idx` (1.0 = cadence entièrement écoulée).
+## Public : CombatArena s'en sert pour rafraîchir IMMÉDIATEMENT le HUD au
+## changement de capacité sélectionnée/de membre actif, sans attendre le
+## prochain _physics_process (retour joueurs : « le cooldown visuel se fige
+## si on change de focus dans le menu d'attaque »).
+func cooldown_ratio(idx: int) -> float:
+	if idx < 0 or idx >= _move_cd.size():
+		return 1.0
+	return 1.0 - (_move_cd[idx] / maxf(_move_cd_max[idx], 0.01))
+
+
+func active_cooldown_ratio() -> float:
+	return cooldown_ratio(clampi(_selected_move_idx, 0, _move_cd.size() - 1))
+
+
+func active_move_ready() -> bool:
+	return _move_ready(clampi(_selected_move_idx, 0, _move_cd.size() - 1))
+
+
+## Enveloppe publique de _move_ready(), pour un slot arbitraire (cf.
+## CombatArena._connect_move_signal, qui rafraîchit le HUD au changement de
+## capacité SÉLECTIONNÉE, pas seulement celle actuellement active).
+func move_ready(idx: int) -> bool:
+	return _move_ready(idx)
 
 
 ## La capacité `idx` est-elle lançable MAINTENANT ? (verrou global + sa propre

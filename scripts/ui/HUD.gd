@@ -449,7 +449,17 @@ func setup_moves(moves: Array) -> void:
 		cd.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		panel.add_child(cd)
 
-		_move_slots.append({"panel": panel, "cd": cd, "has_move": move != null})
+		# Croix "indisponible" — la cadence à elle seule ne dit pas TOUT
+		# (verrou d'anim en cours, ex.) : retour joueurs « le cooldown n'est
+		# pas toujours visible ». Cachée par défaut ; affichée par
+		# update_cooldown() dès que la capacité SÉLECTIONNÉE ne peut pas
+		# s'enchaîner MAINTENANT, quelle qu'en soit la raison.
+		var cross := _lbl("✕", 0, 0, SLOT_W, SLOT_H, 26, Color(0.95, 0.30, 0.28), true)
+		cross.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		cross.visible = false
+		panel.add_child(cross)
+
+		_move_slots.append({"panel": panel, "cd": cd, "cross": cross, "has_move": move != null})
 
 	set_active_move(_active_move_idx)
 
@@ -465,15 +475,23 @@ func set_active_move(idx: int) -> void:
 		panel.position.y = 642.0 if active else 648.0
 
 
-func update_cooldown(ratio: float) -> void:
-	# ratio 1.0 = prêt ; le voile descend à mesure que l'attaque recharge
+## `ready` = la capacité SÉLECTIONNÉE peut-elle s'enchaîner MAINTENANT
+## (TeamMember.active_move_ready — cadence ET verrous d'anim/statut) ? Séparé
+## du ratio de cadence : un plein voile de cooldown peut être discret
+## (attaques rapides), d'où la croix qui rend l'indisponibilité toujours
+## lisible, quelle qu'en soit la cause.
+func update_cooldown(ratio: float, ready: bool = true) -> void:
 	if _active_move_idx >= _move_slots.size():
 		return
-	var cd: ColorRect = _move_slots[_active_move_idx].get("cd")
+	var slot: Dictionary = _move_slots[_active_move_idx]
+	var cd: ColorRect = slot.get("cd")
 	if is_instance_valid(cd):
 		var h := (1.0 - clampf(ratio, 0.0, 1.0)) * 60.0
 		cd.size.y = h
 		cd.position.y = 2 + (60.0 - h)
+	var cross: Label = slot.get("cross")
+	if is_instance_valid(cross):
+		cross.visible = not ready
 
 
 # ══════════════════════════════════════════════════════════════════════

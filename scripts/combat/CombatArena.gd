@@ -677,9 +677,9 @@ func _wire_team_member(member, idx: int) -> void:
 		if idx == _active_index:
 			hud.update_hp(ratio)
 	)
-	member.cooldown_changed.connect(func(ratio: float) -> void:
+	member.cooldown_changed.connect(func(ratio: float, ready: bool) -> void:
 		if idx == _active_index:
-			hud.update_cooldown(ratio)
+			hud.update_cooldown(ratio, ready)
 	)
 	member.xp_changed.connect(func(ratio: float, lv: int) -> void:
 		hud.update_team_level(idx, lv)
@@ -763,9 +763,9 @@ func _spawn_team_mp() -> void:
 			if idx == _active_index:
 				hud.update_hp(ratio)
 		)
-		member.cooldown_changed.connect(func(ratio: float) -> void:
+		member.cooldown_changed.connect(func(ratio: float, ready: bool) -> void:
 			if idx == _active_index:
-				hud.update_cooldown(ratio)
+				hud.update_cooldown(ratio, ready)
 		)
 		member.xp_changed.connect(func(ratio: float, lv: int) -> void:
 			hud.update_team_level(idx, lv)
@@ -945,7 +945,16 @@ func _connect_move_signal(idx: int) -> void:
 			if m.move_selected.is_connected(cb):
 				m.move_selected.disconnect(cb)
 	if is_instance_valid(_team[idx]):
-		_team[idx].move_selected.connect(func(midx: int) -> void: hud.set_active_move(midx))
+		var member = _team[idx]
+		# Rafraîchi IMMÉDIATEMENT (voile de cooldown + croix d'indisponibilité)
+		# au lieu d'attendre le prochain _physics_process — retour joueurs :
+		# « le cooldown visuel se fige si on change de focus dans le menu
+		# d'attaque » (changement de capacité sélectionnée OU de membre actif).
+		member.move_selected.connect(func(midx: int) -> void:
+			hud.set_active_move(midx)
+			hud.update_cooldown(member.cooldown_ratio(midx), member.move_ready(midx))
+		)
+		hud.update_cooldown(member.active_cooldown_ratio(), member.active_move_ready())
 
 
 func _update_leaders() -> void:
@@ -2171,9 +2180,15 @@ func _learn_boutique_move(member_index: int, option_index: int, replace_index: i
 	else:
 		inst.equipped_moves[inst.equipped_moves.size() - 1] = md
 
-	# HUD des capacités si c'est le membre actif
+	# HUD des capacités si c'est le membre actif — setup_moves() reconstruit
+	# les 4 cases à neuf (voile de cooldown remis à "prêt" par défaut) :
+	# _connect_move_signal() la rafraîchit immédiatement avec le VRAI état,
+	# sinon une capacité en recharge apparaîtrait faussement disponible juste
+	# après avoir appris/remplacé une attaque (même bug que le changement de
+	# focus dans le menu d'attaque).
 	if _active_index < _team.size() and _team[_active_index] == member:
 		hud.setup_moves(inst.equipped_moves)
+		_connect_move_signal(_active_index)
 
 	# Attaque apprise → cet achat est consommé pour ce Pokémon (une fois/visite)
 	_boutique_offers[member_index] = []
@@ -2446,6 +2461,7 @@ func _claim_boon_skill(member_index: int, option_index: int, replace_index: int)
 
 	if _active_index < _team.size() and _team[_active_index] == member:
 		hud.setup_moves(inst.equipped_moves)
+		_connect_move_signal(_active_index)
 	Sfx.play("victory", -6.0)
 	_consume_boon()
 
