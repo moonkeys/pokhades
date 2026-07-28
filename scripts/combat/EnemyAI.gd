@@ -144,10 +144,14 @@ var _path_repath_timer: float   = 0.0
 var _path_waypoint:     Vector3 = Vector3.ZERO
 const REPATH_INTERVAL := 0.4
 
-## `attacker_peer` = peer_id de qui a réellement donné le coup fatal — sert
-## à ne créditer l'XP qu'à SON auteur en multijoueur (cf. CombatArena.
-## _on_enemy_died), pas à toute l'équipe pour chaque kill.
-signal died(xp_reward: int, attacker_peer: int)
+## `attacker_peer` = peer_id de qui a réellement donné le coup fatal.
+## `assist_peers` = TOUS les peer_id ayant infligé au moins un coup à cet
+## ennemi (finisseur inclus) — partage d'XP entre coéquipiers en multijoueur
+## (retour joueurs : « si un Pokémon attaque et que le partenaire achève, les
+## deux doivent recevoir de l'XP, pour éviter un trop gros écart de niveau »).
+## Le solo reste inchangé (cf. CombatArena._on_enemy_died) : seul l'auteur du
+## coup fatal y touche de l'XP.
+signal died(xp_reward: int, attacker_peer: int, assist_peers: Array)
 
 @onready var sprite: AnimatedSprite3D = $AnimatedSprite3D
 
@@ -416,6 +420,7 @@ func _remove_placeholder() -> void:
 var net_shell: bool = false
 var net_target: Vector3 = Vector3.ZERO
 var _last_attacker_peer: int = 1   # qui a frappé en dernier (cf. take_damage)
+var _damaging_peers: Dictionary = {}   # peer_id (int) -> true — cf. signal died
 
 
 func set_net_shell() -> void:
@@ -1122,6 +1127,7 @@ func take_damage(amount: int, source_pos: Vector3 = Vector3(INF, INF, INF),
 		_net_request_damage.rpc_id(1, amount, source_pos)
 		return
 	_last_attacker_peer = attacker_peer
+	_damaging_peers[attacker_peer] = true
 	if attacker != null:
 		last_attacker = attacker
 	pokemon_instance.take_damage(amount)
@@ -1211,6 +1217,6 @@ func _play_death_anim() -> void:
 	tw.tween_property(sprite, "modulate", Color(1.0, 0.2, 0.2, 0.0), 0.5).set_ease(Tween.EASE_IN)
 	tw.tween_property(sprite, "position", _sprite_base_pos + Vector3(0, -0.45, 0), 0.4).set_ease(Tween.EASE_IN)
 	tw.chain().tween_callback(func() -> void:
-		died.emit(xp_reward, _last_attacker_peer)
+		died.emit(xp_reward, _last_attacker_peer, _damaging_peers.keys())
 		queue_free()
 	)

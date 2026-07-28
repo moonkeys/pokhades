@@ -49,6 +49,8 @@ func _ready() -> void:
 			_run_scenario(_scenario_freed_pokemon)
 		elif arg == "smoke_boon_claim":
 			_run_scenario(_scenario_boon_claim)
+		elif arg == "smoke_xp_share":
+			_run_scenario(_scenario_xp_share)
 		elif arg == "smoke_pokedex":
 			_run_scenario(_scenario_pokedex)
 		elif arg == "smoke_pokedex_stress":
@@ -594,6 +596,35 @@ func _scenario_boon_claim() -> void:
 
 	arena.call("_resolve_boon_claim", 222)   # 2e prétendant — doit être refusé
 	_pass("boon_claim", "1 seul don réclamé, 2e prétendant refusé")
+
+
+## Partage d'XP entre coéquipiers (retour joueurs : « si un Pokémon attaque un
+## ennemi et que le partenaire l'achève, les deux doivent recevoir de l'XP »).
+## Vérifie que EnemyAI accumule bien TOUS les peer_id ayant frappé (et pas
+## seulement le dernier) — la distribution réseau elle-même (RPC vers chaque
+## pair) n'est pas rejouée ici, seule la donnée qu'elle diffuse l'est.
+func _scenario_xp_share() -> void:
+	GameManager.is_first_run = false
+	GameManager.hub_team = [GameManager.STARTER_IDS[0]]
+	RunManager.inst().start_run()
+	get_tree().change_scene_to_file("res://scenes/combat/CombatArena.tscn")
+	var waited := 0.0
+	while get_tree().get_nodes_in_group("enemies").is_empty() and waited < 18.0:
+		await get_tree().create_timer(0.5).timeout
+		waited += 0.5
+	var enemies := get_tree().get_nodes_in_group("enemies")
+	if enemies.is_empty():
+		_fail("xp_share", "aucun ennemi apparu")
+		return
+
+	var e: Node = enemies[0]
+	e.call("take_damage", 1, Vector3.INF, Color.WHITE, 111, null)
+	e.call("take_damage", 1, Vector3.INF, Color.WHITE, 222, null)
+	var peers: Dictionary = e.get("_damaging_peers")
+	if not (peers.has(111) and peers.has(222)):
+		_fail("xp_share", "assistants non cumulés (%s)" % [peers])
+		return
+	_pass("xp_share", "2 assistants cumulés sur le même ennemi")
 
 
 func _scenario_mp_host() -> void:

@@ -1660,8 +1660,8 @@ func _materialize_enemy(id: int, lv: int, pos: Vector3, champion: bool, boss: bo
 	CombatVFX.spawn_death_poof(self, pos, Color(0.85, 0.88, 0.95))   # nuage d'arrivée
 	if _mp:
 		var ename := String(enemy.name)
-		enemy.died.connect(func(xp: int, attacker_peer: int) -> void:
-			_net_enemy_died.rpc(ename, xp, attacker_peer)
+		enemy.died.connect(func(xp: int, attacker_peer: int, assist_peers: Array) -> void:
+			_net_enemy_died.rpc(ename, xp, attacker_peer, assist_peers)
 		)
 		_net_spawn_enemy.rpc(ename, id, lv, pos, champion, boss)
 
@@ -1744,20 +1744,22 @@ func _random_valid_spawn() -> Vector3:
 
 # ── Signaux ───────────────────────────────────────────────────────────
 
-func _on_enemy_died(xp_reward: int, attacker_peer: int, pid: int, is_base_form: bool,
-		enemy: Node = null) -> void:
+func _on_enemy_died(xp_reward: int, attacker_peer: int, assist_peers: Array, pid: int,
+		is_base_form: bool, enemy: Node = null) -> void:
 	_alive  -= 1
 	_killed += 1
 	hud.set_kills(_killed, _room_total)
 
 	if _mp:
-		# Multijoueur : l'XP ne va qu'à l'auteur RÉEL du coup fatal (cf.
-		# EnemyAI.take_damage/_last_attacker_peer) — avant, CHAQUE mort
-		# créditait le Pokémon actif de TOUS les pairs, peu importe qui
-		# avait fait le kill (retour joueurs : l'XP était donnée à tout
-		# le monde au lieu d'être répartie selon les kills de chacun).
+		# Multijoueur : l'XP va à TOUS les joueurs ayant infligé au moins un
+		# coup à cet ennemi (assist_peers, finisseur inclus) — pas qu'à
+		# l'auteur du coup fatal. Retour joueurs : « si un Pokémon attaque un
+		# ennemi et que le partenaire l'achève, les deux doivent recevoir de
+		# l'XP, pour éviter un trop gros écart de niveau ». Avant ce partage,
+		# seul le finisseur touchait l'XP (et avant CE fix-là, littéralement
+		# tout le monde, peu importe qui avait fait le kill).
 		_net_kills.rpc(_killed, _room_total)
-		if attacker_peer == Net.local_id():
+		if Net.local_id() in assist_peers:
 			var mine = _team[_active_index] if _active_index < _team.size() else null
 			if is_instance_valid(mine) and not mine.pokemon_instance.is_fainted():
 				mine.gain_xp(xp_reward)
@@ -3593,8 +3595,8 @@ func _spawn_cave_demiboss(lv: int) -> int:
 	_alive += 1
 	if _mp:
 		var ename := String(enemy.name)
-		enemy.died.connect(func(xp: int, attacker_peer: int) -> void:
-			_net_enemy_died.rpc(ename, xp, attacker_peer)
+		enemy.died.connect(func(xp: int, attacker_peer: int, assist_peers: Array) -> void:
+			_net_enemy_died.rpc(ename, xp, attacker_peer, assist_peers)
 		)
 		_net_spawn_enemy.rpc(ename, id, lv, enemy.global_position, false, false, true)
 	return id
@@ -3863,14 +3865,15 @@ func _net_enemy_positions(names: PackedStringArray, poss: PackedVector3Array) ->
 
 
 ## Hôte → clients : mort d'un ennemi — anim de chute locale + XP pour NOTRE
-## Pokémon SEULEMENT SI C'EST NOUS qui avons fait le kill (cf.
-## attacker_peer, EnemyAI.take_damage) — pas systématiquement à chaque mort.
+## Pokémon SI NOUS avons participé au kill (assist_peers, cf. EnemyAI.
+## take_damage/_damaging_peers) — partagé entre tous les assistants, pas
+## réservé au seul finisseur (cf. _on_enemy_died, même partage côté hôte).
 @rpc("authority", "call_remote", "reliable")
-func _net_enemy_died(ename: String, xp: int, attacker_peer: int) -> void:
+func _net_enemy_died(ename: String, xp: int, attacker_peer: int, assist_peers: Array) -> void:
 	var e := get_node_or_null(NodePath(ename))
 	if e != null and e.has_method("_play_death_anim"):
 		e._play_death_anim()
-	if attacker_peer != Net.local_id():
+	if not (Net.local_id() in assist_peers):
 		return
 	var mine = _team[_active_index] if _active_index < _team.size() else null
 	if is_instance_valid(mine) and not mine.pokemon_instance.is_fainted():
