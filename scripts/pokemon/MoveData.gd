@@ -12,6 +12,24 @@ var level_learned: int  = 1
 ## Vide pour les attaques normales (dégâts + tirage de statut par type).
 var effect: Dictionary = {}
 
+## Nombre de fois que ce move a été RENFORCÉ par un don de fin de zone (cf.
+## CombatArena._claim_boon_upgrade) — plafonné pour ne pas dégénérer sur une
+## run très longue. Ne touche QUE `power` : la portée/cadence restent celles
+## d'origine (tune() n'est volontairement PAS rappelé), pour que renforcer une
+## attaque soit un pur "elle tape plus fort", jamais un ralentissement caché.
+var upgrade_count: int = 0
+const MAX_UPGRADES := 4
+const UPGRADE_PCT  := 0.25   # +25% de puissance par renforcement
+
+func can_upgrade() -> bool:
+	return power > 0 and upgrade_count < MAX_UPGRADES
+
+func apply_upgrade() -> void:
+	if not can_upgrade():
+		return
+	power = int(ceil(float(power) * (1.0 + UPGRADE_PCT)))
+	upgrade_count += 1
+
 # ── Portée & cadence PROPRES À CHAQUE ATTAQUE ─────────────────────────
 # Avant, tout le monde partageait une portée unique (4.0 en mêlée, 9.0 à
 # distance) et un cooldown unique (0.7 s) : aucune raison de préférer une

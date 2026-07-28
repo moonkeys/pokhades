@@ -48,6 +48,76 @@ var dash_max_charges: int   = GameManager.dash_charges_bought
 var cooldown_mult:    float = 1.0   # ×0.85 par bonus "atk_rate"
 var xp_mult:          float = 1.0   # ×1.25 par bonus "xp_up"
 
+## ── BOOSTS DE STATS TEMPORAIRES (attaques de soutien) ────────────────
+## Même registre que EnemyAI._buffs (stat -> {mult, t}), pour que le joueur
+## voie EXACTEMENT le même langage visuel des deux côtés du combat. Une
+## étiquette dorée au-dessus de la barre de PV cumule tous les boosts actifs
+## (« +50% ATT · +30% ASP »), sinon un Pokémon qui cogne plus fort après une
+## Danse-Lames n'a AUCUN indice visuel de pourquoi (retour joueurs).
+var _buffs: Dictionary = {}
+var _buff_lbl: Label3D = null
+const _BUFF_NAMES := {"atk": "ATT", "def": "DÉF", "spatk": "ASP", "spdef": "DSP", "spd": "VIT"}
+
+func apply_buff(stat: String, mult: float, dur: float) -> void:
+	if _buffs.has(stat):
+		# Déjà boosté sur cette stat : on RAFRAÎCHIT la durée sans empiler —
+		# l'empilement infini d'un soutien ferait boule de neige.
+		(_buffs[stat] as Dictionary)["t"] = dur
+		return
+	_buffs[stat] = {"mult": mult, "t": dur}
+	match stat:
+		"atk":   pokemon_instance.attack_mult     *= mult
+		"def":   pokemon_instance.defense_mult    *= mult
+		"spatk": pokemon_instance.sp_attack_mult  *= mult
+		"spdef": pokemon_instance.sp_defense_mult *= mult
+		"spd":   pokemon_instance.speed_mult      *= mult
+	_refresh_buff_label()
+
+
+func _tick_buffs(delta: float) -> void:
+	var changed := false
+	for stat: String in _buffs.keys():
+		var b: Dictionary = _buffs[stat]
+		if float(b["t"]) < 0.0:
+			continue   # permanent
+		b["t"] = float(b["t"]) - delta
+		if float(b["t"]) <= 0.0:
+			match stat:
+				"atk":   pokemon_instance.attack_mult     /= float(b["mult"])
+				"def":   pokemon_instance.defense_mult    /= float(b["mult"])
+				"spatk": pokemon_instance.sp_attack_mult  /= float(b["mult"])
+				"spdef": pokemon_instance.sp_defense_mult /= float(b["mult"])
+				"spd":   pokemon_instance.speed_mult      /= float(b["mult"])
+			_buffs.erase(stat)
+			changed = true
+	if changed:
+		_refresh_buff_label()
+
+
+func _refresh_buff_label() -> void:
+	if _buffs.is_empty():
+		if is_instance_valid(_buff_lbl):
+			_buff_lbl.visible = false
+		return
+	if not is_instance_valid(_buff_lbl):
+		_buff_lbl = Label3D.new()
+		_buff_lbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		_buff_lbl.no_depth_test = true
+		_buff_lbl.font_size  = 26
+		_buff_lbl.pixel_size = 0.006
+		_buff_lbl.modulate   = Color(1.0, 0.85, 0.35)
+		_buff_lbl.outline_size = 10
+		_buff_lbl.outline_modulate = Color(0.10, 0.07, 0.02)
+		_buff_lbl.position = Vector3(0, 2.15, 0)
+		add_child(_buff_lbl)
+	var parts: Array[String] = []
+	for stat: String in _buffs:
+		parts.append("+%d%% %s" % [roundi((float(_buffs[stat]["mult"]) - 1.0) * 100.0),
+			_BUFF_NAMES.get(stat, stat)])
+	_buff_lbl.text = " · ".join(parts)
+	_buff_lbl.visible = true
+
+
 var _dash_charges:  int   = GameManager.dash_charges_bought
 var _dash_recharge: float = 0.0
 var _dash_timer:    float = 0.0
@@ -361,6 +431,7 @@ func _physics_process(delta: float) -> void:
 	_update_range_ring()
 	_update_grass_hiding(delta)
 	_update_puddle_steps(delta)
+	_tick_buffs(delta)
 
 	# Diffusion de notre état aux autres joueurs (membre contrôlé localement)
 	if is_active and Net.in_run:
@@ -1079,6 +1150,22 @@ func _use_status_move(move: MoveData) -> void:
 				ally.pokemon_instance.heal_percent(pct)
 				CombatVFX.spawn_damage_number(get_parent(), ally.global_position, 0, "heal")
 				AttackAnim.play(get_parent(), ally.global_position, "fx_heal")
+		"buff_team":
+			# Attaque de zone qui buffe les alliés à portée (façon Danse-Lames/
+			# Méditation) — même rayon que heal_team, même langage de retour
+			# visuel que les ennemis SUPPORT (cf. EnemyAI._move_support),
+			# étiquette dorée cumulable au-dessus de chaque Pokémon buffé.
+			var stat: String = str(move.effect.get("stat", "atk"))
+			var mult: float  = float(move.effect.get("mult", 1.3))
+			var dur: float   = float(move.effect.get("dur", 8.0))
+			apply_buff(stat, mult, dur)
+			AttackAnim.play(get_parent(), global_position, "fx_boost")
+			for ally in get_tree().get_nodes_in_group("players"):
+				if not is_instance_valid(ally) or ally == self: continue
+				if global_position.distance_to(ally.global_position) > HEAL_TEAM_RADIUS: continue
+				if ally.has_method("apply_buff"):
+					ally.apply_buff(stat, mult, dur)
+				AttackAnim.play(get_parent(), ally.global_position, "fx_boost")
 		"status":
 			var target := _nearest_enemy(STATUS_MOVE_RANGE)
 			if is_instance_valid(target):

@@ -265,6 +265,27 @@ func _refresh_team_strip() -> void:
 			wl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			slot.add_child(wl)
 
+			# Objet tenu : badge en haut à gauche (retour joueurs — le poids en
+			# bas à droite occupe déjà l'autre coin).
+			var item_api := GameManager.get_assigned_item(pid)
+			if item_api != "":
+				var item_tex: Texture2D = ItemCatalog.icon(item_api)
+				if is_instance_valid(item_tex):
+					var ibg := ColorRect.new()
+					ibg.position = Vector2(2, 2)
+					ibg.size     = Vector2(18, 18)
+					ibg.color    = Color(0.08, 0.06, 0.03, 0.85)
+					ibg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+					slot.add_child(ibg)
+					var itex := TextureRect.new()
+					itex.position = Vector2(3, 3)
+					itex.size     = Vector2(16, 16)
+					itex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+					itex.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+					itex.texture  = item_tex
+					itex.mouse_filter = Control.MOUSE_FILTER_IGNORE
+					slot.add_child(itex)
+
 			var capture_pid := pid
 			var btn := slot as Button
 			btn.pressed.connect(func() -> void: _reveal(capture_pid))

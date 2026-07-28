@@ -1955,8 +1955,13 @@ func _enter_boutique() -> void:
 
 
 ## Tire jusqu'à 3 attaques puissantes compatibles (movepool + non déjà connues)
-## proposées au choix. [] si aucune. Le joueur choisira ensuite laquelle
-## apprendre et quelle attaque remplacer (cf. BoutiqueScreen).
+## À APPRENDRE, PLUS jusqu'à 2 offres pour RENFORCER une attaque déjà
+## équipée (+25% de puissance, cf. MoveData.apply_upgrade). Retour joueurs :
+## « avoir vraiment plus de choix, pouvoir rendre la capacité plus puissante
+## au lieu de toujours donner de nouvelles attaques » — avant, un don
+## d'attaque ne proposait QUE des attaques inconnues, jamais de renforcer ce
+## qu'on avait déjà. Le joueur choisit ensuite laquelle apprendre/remplacer,
+## ou laquelle renforcer (cf. BoutiqueScreen).
 func _roll_move_offers(inst: PokemonInstance) -> Array:
 	var owned: Array = []
 	for md: MoveData in inst.equipped_moves:
@@ -1970,9 +1975,26 @@ func _roll_move_offers(inst: PokemonInstance) -> Array:
 		if out.size() >= 3:
 			break
 		out.append({
+			"kind": "learn",
 			"api": pick["api"], "label": pick["label"], "type": pick["type"],
 			"power": pick["power"], "class": pick["class"],
 			"price": BOUTIQUE_MOVE_PRICE,
+		})
+
+	var upgradable: Array = []
+	for i in inst.equipped_moves.size():
+		var md: MoveData = inst.equipped_moves[i]
+		if md.can_upgrade():
+			upgradable.append(i)
+	upgradable.shuffle()
+	for idx in upgradable.slice(0, 2):
+		var md: MoveData = inst.equipped_moves[idx]
+		var after := int(ceil(float(md.power) * (1.0 + MoveData.UPGRADE_PCT)))
+		out.append({
+			"kind": "upgrade", "target_idx": idx,
+			"api": md.api_name, "label": "Renforcer : %s" % md.display_name,
+			"type": md.type, "power": md.power, "power_after": after,
+			"class": md.damage_class, "price": BOUTIQUE_MOVE_PRICE,
 		})
 	return out
 
@@ -2141,6 +2163,7 @@ func _open_boutique_shop() -> void:
 	_boutique_screen = BoutiqueScreen.new()
 	add_child(_boutique_screen)
 	_boutique_screen.learn_move.connect(_learn_boutique_move)
+	_boutique_screen.upgrade_move.connect(_upgrade_boutique_move)
 	_boutique_screen.buy_berries.connect(_buy_boutique_berries)
 	_boutique_screen.buy_potion.connect(_buy_boutique_potion)
 	_boutique_screen.closed.connect(func() -> void:
@@ -2200,6 +2223,46 @@ func _learn_boutique_move(member_index: int, option_index: int, replace_index: i
 	hud.update_money(GameManager.run_money)
 	if is_instance_valid(_boutique_screen):
 		_boutique_screen.refresh()
+
+
+## Renforce une attaque DÉJÀ équipée (+puissance, cf. MoveData.apply_upgrade)
+## — pendant à _learn_boutique_move, mais sans gestion de slot : `target_idx`
+## désigne directement l'attaque à l'intérieur de equipped_moves.
+func _upgrade_boutique_move(member_index: int, option_index: int) -> void:
+	if member_index < 0 or member_index >= _boutique_offers.size():
+		return
+	var options: Array = _boutique_offers[member_index]
+	if option_index < 0 or option_index >= options.size():
+		return
+	var offer: Dictionary = options[option_index]
+	var member = _boutique_live[member_index]
+	if not is_instance_valid(member):
+		return
+	if not GameManager.spend_run_money(int(offer["price"])):
+		return
+	_apply_move_upgrade(member, int(offer["target_idx"]))
+	_boutique_offers[member_index] = []   # une seule capacité apprise/renforcée par visite
+	hud.update_money(GameManager.run_money)
+	if is_instance_valid(_boutique_screen):
+		_boutique_screen.refresh()
+
+
+## Partagé entre le renfort payant (Boutique) et le renfort gratuit (don de
+## fin de zone) — n'applique QUE le boost de puissance, pas de gestion de slot.
+func _apply_move_upgrade(member, target_idx: int) -> void:
+	var inst: PokemonInstance = member.pokemon_instance
+	if target_idx < 0 or target_idx >= inst.equipped_moves.size():
+		return
+	var md: MoveData = inst.equipped_moves[target_idx]
+	md.apply_upgrade()
+	# Même filet que _learn_boutique_move : le HUD des capacités doit refléter
+	# la NOUVELLE puissance immédiatement s'il s'agit du membre actif.
+	if _active_index < _team.size() and _team[_active_index] == member:
+		hud.setup_moves(inst.equipped_moves)
+		_connect_move_signal(_active_index)
+	Sfx.play_file(Sfx.SE_MOVE_LEARNT)
+	hud.notify("💪  %s renforcée (Puiss. %d) → %s" % [md.display_name, md.power, inst.data.name_fr.capitalize()],
+		Color(0.95, 0.82, 0.35))
 
 
 func _buy_boutique_berries(price: int, amount: int) -> void:
@@ -2425,6 +2488,7 @@ func _open_boon() -> void:
 				o["price"] = 0   # don gratuit
 			_boon_offers.append(offs)
 		_boon_screen.learn_move.connect(_claim_boon_skill)
+		_boon_screen.upgrade_move.connect(_claim_boon_upgrade)
 		_boon_screen.setup(_boon_live, _boon_offers, "skill")
 	else:
 		_boon_screen.boon_stat.connect(_claim_boon_stat)
@@ -2468,6 +2532,23 @@ func _claim_boon_skill(member_index: int, option_index: int, replace_index: int)
 	if _active_index < _team.size() and _team[_active_index] == member:
 		hud.setup_moves(inst.equipped_moves)
 		_connect_move_signal(_active_index)
+	Sfx.play("victory", -6.0)
+	_consume_boon()
+
+
+## Don d'attaque, variante RENFORT (retour joueurs : « pouvoir donner des
+## bonus aux attaques déjà existantes, pas toujours de nouvelles attaques »).
+func _claim_boon_upgrade(member_index: int, option_index: int) -> void:
+	if member_index < 0 or member_index >= _boon_offers.size():
+		return
+	var options: Array = _boon_offers[member_index]
+	if option_index < 0 or option_index >= options.size():
+		return
+	var member = _boon_live[member_index]
+	if not is_instance_valid(member):
+		return
+	var offer: Dictionary = options[option_index]
+	_apply_move_upgrade(member, int(offer["target_idx"]))
 	Sfx.play("victory", -6.0)
 	_consume_boon()
 

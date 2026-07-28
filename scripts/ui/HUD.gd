@@ -203,6 +203,26 @@ func setup_team(instances: Array, active_idx: int) -> void:
 			portrait.texture = inst.portrait_texture
 		root.add_child(portrait)
 
+		# Objet tenu : petit badge en bas à droite du portrait — retour joueurs
+		# (« montrer l'objet équipé directement sur la liste d'équipe ») : avant,
+		# il fallait ouvrir un menu pour se souvenir qui tenait quoi.
+		if not inst.held_item.is_empty():
+			var item_tex: Texture2D = ItemCatalog.icon(str(inst.held_item.get("api", "")))
+			if is_instance_valid(item_tex):
+				var badge_bg := ColorRect.new()
+				badge_bg.position = Vector2(24, 24)
+				badge_bg.size     = Vector2(15, 15)
+				badge_bg.color    = Color(0.08, 0.06, 0.03, 0.85)
+				root.add_child(badge_bg)
+				var badge := TextureRect.new()
+				badge.position = Vector2(25, 25)
+				badge.size     = Vector2(13, 13)
+				badge.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+				badge.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+				badge.texture = item_tex
+				badge.tooltip_text = str(inst.held_item.get("name", ""))
+				root.add_child(badge)
+
 		var nm := _lbl(inst.data.name_fr.capitalize(), 44, 3, 100, 16, 11, C_TEXT)
 		root.add_child(nm)
 		var lvl := _lbl("N.%d" % inst.level, 146, 3, 30, 16, 10, C_DIM)

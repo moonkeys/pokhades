@@ -55,6 +55,10 @@ func _ready() -> void:
 			_run_scenario(_scenario_lobby_item_stats)
 		elif arg == "smoke_new_bonuses":
 			_run_scenario(_scenario_new_bonuses)
+		elif arg == "smoke_team_buff":
+			_run_scenario(_scenario_team_buff)
+		elif arg == "smoke_move_upgrade":
+			_run_scenario(_scenario_move_upgrade)
 		elif arg == "smoke_cooldown_focus":
 			_run_scenario(_scenario_cooldown_focus)
 		elif arg == "smoke_pokedex":
@@ -761,6 +765,93 @@ func _scenario_new_bonuses() -> void:
 		return
 
 	_pass("new_bonuses", "split phys./spé. OK · critique garanti OK · esquive garantie OK · 3 dons distincts OK")
+
+
+## Retour joueurs : « afficher les boosts de stats au-dessus du Pokémon, de
+## manière cumulable » + « attaques de zone pour buffer ses alliés » —
+## Danse-Lames/Méditation ne faisaient jusqu'ici RIEN à l'usage (aucun
+## `effect` déclaré). Vérifie apply_buff() : la stat augmente, l'étiquette
+## devient visible, et deux boosts simultanés se CUMULENT dans le texte
+## (pas juste le dernier qui écrase l'affichage).
+func _scenario_team_buff() -> void:
+	GameManager.is_first_run = false
+	GameManager.hub_team = [GameManager.STARTER_IDS[0]]
+	RunManager.inst().start_run()
+	get_tree().change_scene_to_file("res://scenes/combat/CombatArena.tscn")
+	var waited := 0.0
+	while get_tree().get_nodes_in_group("players").is_empty() and waited < 18.0:
+		await get_tree().create_timer(0.5).timeout
+		waited += 0.5
+	var players := get_tree().get_nodes_in_group("players")
+	if players.is_empty():
+		_fail("team_buff", "équipe non apparue")
+		return
+	var member: Node = players[0]
+	var inst: PokemonInstance = member.get("pokemon_instance")
+
+	var atk_before := inst.attack_mult
+	member.call("apply_buff", "atk", 1.5, 8.0)
+	if inst.attack_mult <= atk_before:
+		_fail("team_buff", "apply_buff('atk') n'a pas augmenté attack_mult")
+		return
+	var lbl: Label3D = member.get("_buff_lbl")
+	if lbl == null or not lbl.visible or "ATT" not in lbl.text:
+		_fail("team_buff", "étiquette de boost absente/invisible après apply_buff")
+		return
+
+	# Cumul : un 2e boost sur une AUTRE stat doit s'AJOUTER au texte, pas le remplacer.
+	member.call("apply_buff", "spatk", 1.4, 8.0)
+	if "ATT" not in lbl.text or "ASP" not in lbl.text:
+		_fail("team_buff", "les boosts ne se cumulent pas dans l'étiquette (texte: %s)" % lbl.text)
+		return
+
+	_pass("team_buff", "boost appliqué + étiquette cumulable : %s" % lbl.text)
+
+
+## Retour joueurs : « avoir vraiment plus de choix, pouvoir donner des bonus
+## d'attaque aux attaques déjà existantes… rendre la capacité plus puissante
+## au lieu de toujours donner de nouvelles attaques ». Vérifie que
+## _roll_move_offers propose bien une offre "upgrade" pour une attaque déjà
+## équipée, et que la réclamer (_apply_move_upgrade) augmente sa puissance.
+func _scenario_move_upgrade() -> void:
+	GameManager.is_first_run = false
+	GameManager.hub_team = [GameManager.STARTER_IDS[0]]
+	RunManager.inst().start_run()
+	get_tree().change_scene_to_file("res://scenes/combat/CombatArena.tscn")
+	var waited := 0.0
+	while get_tree().get_nodes_in_group("players").is_empty() and waited < 18.0:
+		await get_tree().create_timer(0.5).timeout
+		waited += 0.5
+	var players := get_tree().get_nodes_in_group("players")
+	if players.is_empty():
+		_fail("move_upgrade", "équipe non apparue")
+		return
+	var member: Node = players[0]
+	var inst: PokemonInstance = member.get("pokemon_instance")
+	if inst.equipped_moves.is_empty():
+		_fail("move_upgrade", "aucune attaque équipée à tester")
+		return
+
+	var arena := get_tree().current_scene
+	var offers: Array = arena.call("_roll_move_offers", inst)
+	var upgrade_offer: Dictionary = {}
+	for o: Dictionary in offers:
+		if str(o.get("kind", "")) == "upgrade":
+			upgrade_offer = o
+			break
+	if upgrade_offer.is_empty():
+		_fail("move_upgrade", "aucune offre de renfort proposée (offres: %s)" % [offers])
+		return
+
+	var idx := int(upgrade_offer["target_idx"])
+	var md: MoveData = inst.equipped_moves[idx]
+	var power_before := md.power
+	arena.call("_apply_move_upgrade", member, idx)
+	if md.power <= power_before or md.upgrade_count != 1:
+		_fail("move_upgrade", "le renfort n'a pas augmenté la puissance (%d -> %d, count=%d)"
+			% [power_before, md.power, md.upgrade_count])
+		return
+	_pass("move_upgrade", "%s renforcée : Puiss. %d → %d" % [md.display_name, power_before, md.power])
 
 
 ## Retour joueurs : « le cooldown visuel se fige si on change de focus dans

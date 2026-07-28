@@ -12,6 +12,10 @@ extends CanvasLayer
 ## (surbrillance cyan). Échap annule le remplacement, puis ferme.
 
 signal learn_move(member_index: int, option_index: int, replace_index: int)  # -1 = slot libre
+## Renforce une attaque DÉJÀ équipée (+puissance, cf. MoveData.apply_upgrade)
+## au lieu d'en apprendre une nouvelle — retour joueurs : « pouvoir donner des
+## bonus aux attaques déjà existantes, pas toujours de nouvelles attaques ».
+signal upgrade_move(member_index: int, option_index: int)
 signal buy_berries(price: int, amount: int)
 signal buy_cs(cs_id: String)
 signal buy_potion(member_index: int, item_id: String)
@@ -466,45 +470,56 @@ func _build_attack_scroll() -> void:
 		UiKit.label(_panel, "Choisis l'attaque à remplacer  (Échap : annuler)",
 			Vector2(36, 202.0 + moves.size() * 62.0), 14, UiKit.CYAN_SEL, 400)
 
-	# ── Colonne droite : nouvelles attaques ──────────────────────────
-	UiKit.label(_panel, "NOUVELLES ATTAQUES DISPONIBLES À APPRENDRE",
+	# ── Colonne droite : nouvelles attaques + renforts ────────────────
+	UiKit.label(_panel, "APPRENDRE UNE ATTAQUE OU EN RENFORCER UNE",
 		Vector2(452, 176), 13, UiKit.CREAM, 400)
 	var options: Array = _offers[_sel_member] if _sel_member < _offers.size() else []
 	if options.is_empty():
 		var empty := UiKit.dark_card(_panel, Vector2(452, 202), Vector2(392, 56))
-		UiKit.label(empty, "Rien à apprendre pour ce Pokémon", Vector2(0, 18), 14,
+		UiKit.label(empty, "Rien à apprendre ni renforcer pour ce Pokémon", Vector2(0, 18), 14,
 			UiKit.CREAM, 392, HORIZONTAL_ALIGNMENT_CENTER)
 	for i in options.size():
 		var mv: Dictionary = options[i]
 		var y := 202.0 + i * 82.0
 		var price := int(mv.get("price", 0))
 		var afford: bool = price <= 0 or GameManager.run_money >= price
+		var is_upgrade: bool = str(mv.get("kind", "learn")) == "upgrade"
 		var ocard := UiKit.card(_panel, Vector2(452, y), Vector2(392, 76), _replace_option == i)
 		UiKit.icon_square(ocard, Vector2(10, 14), UiKit.type_sym(str(mv.get("type", ""))), 48.0)
 		UiKit.label(ocard, str(mv.get("label", "")), Vector2(68, 7), 17, UiKit.TEXT_DARK, 210)
 		UiKit.type_badge(ocard, Vector2(68, 34), str(mv.get("type", "")), 21.0)
-		UiKit.label(ocard, "Puiss. %d%s  ·  [I] détails" % [int(mv.get("power", 0)),
-			("  ·  %d ₽" % price) if price > 0 else ""],
-			Vector2(152, 38), 13, UiKit.TEXT_DARK.lightened(0.25), 220)
-		var learn := UiKit.button("Apprendre", Vector2(104, 40))
+		if is_upgrade:
+			UiKit.label(ocard, "Puiss. %d → %d%s" % [int(mv.get("power", 0)), int(mv.get("power_after", 0)),
+				("  ·  %d ₽" % price) if price > 0 else ""],
+				Vector2(152, 38), 13, UiKit.TEXT_DARK.lightened(0.25), 220)
+		else:
+			UiKit.label(ocard, "Puiss. %d%s  ·  [I] détails" % [int(mv.get("power", 0)),
+				("  ·  %d ₽" % price) if price > 0 else ""],
+				Vector2(152, 38), 13, UiKit.TEXT_DARK.lightened(0.25), 220)
+		var learn := UiKit.button("Renforcer" if is_upgrade else "Apprendre", Vector2(104, 40))
 		learn.position = Vector2(392 - 116, 18)
 		learn.disabled = not afford
 		# [I] sur le bouton (focalisable) ouvre la fiche complète de l'attaque —
 		# on choisit une capacité en run sans la connaître par cœur (retour
-		# joueurs). Même geste que dans le Pokédex.
-		var mv_capture := mv
-		learn.gui_input.connect(func(ev: InputEvent) -> void:
-			if ev is InputEventKey and (ev as InputEventKey).pressed \
-					and (ev as InputEventKey).keycode == KEY_I:
-				_open_move_info(mv_capture)
-				get_viewport().set_input_as_handled())
+		# joueurs). Même geste que dans le Pokédex. Pas de fiche pour un
+		# renforcement : c'est la MÊME attaque, déjà connue.
+		if not is_upgrade:
+			var mv_capture := mv
+			learn.gui_input.connect(func(ev: InputEvent) -> void:
+				if ev is InputEventKey and (ev as InputEventKey).pressed \
+						and (ev as InputEventKey).keycode == KEY_I:
+					_open_move_info(mv_capture)
+					get_viewport().set_input_as_handled())
 		var oi := i; var mi := _sel_member
-		learn.pressed.connect(func() -> void:
-			if _team[mi].pokemon_instance.equipped_moves.size() < GameManager.move_slot_count:
-				learn_move.emit(mi, oi, -1)      # slot libre : direct
-			else:
-				_replace_option = oi              # sinon : choisir quoi remplacer
-				_rebuild())
+		if is_upgrade:
+			learn.pressed.connect(func() -> void: upgrade_move.emit(mi, oi))
+		else:
+			learn.pressed.connect(func() -> void:
+				if _team[mi].pokemon_instance.equipped_moves.size() < GameManager.move_slot_count:
+					learn_move.emit(mi, oi, -1)      # slot libre : direct
+				else:
+					_replace_option = oi              # sinon : choisir quoi remplacer
+					_rebuild())
 		ocard.add_child(learn)
 
 	# ── Boutique du bas (vendeur uniquement) : Baies & CS / Potions ───

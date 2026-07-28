@@ -159,11 +159,14 @@ static func all_champion_ids() -> Array[int]:
 const BIOME_TIER_SPLIT := 9   # nb d'espèces "communes" en tête de liste
 
 const BIOME: Dictionary = {
-	# Prairie — Normal / Plante / Vol : la faune la plus douce (acte 1).
+	# Prairie — type NORMAL EXCLUSIVEMENT (retour joueurs : les Coxy/Apitrini
+	# Insecte et autres seconds types de l'ancien casting infligeaient des
+	# one-shots frustrants dès l'acte 1 ; MEADOW ne sert QUE pour l'acte 1,
+	# cf. RunManager._pool_for_act — pas de risque de "s'aplatir" plus tard).
 	MapGenerator.MapTheme.MEADOW: [
-		187, 16, 165, 298, 179, 659,        # Granivol, Roucool, Coxy, Azurill, Wattouat, Sapereau
-		415, 669, 191, 522, 831, 43,        # Apitrini, Flabébé, Tournegrin, Zébibron, Moumouton, Mystherbe
-		396, 519, 29, 241, 203, 128,        # Étourmi, Poichigeon, Nidoran♀, Écrémeuh, Girafarig, Tauros
+		19, 263, 161, 300, 506, 659,        # Rattata, Zigzaton, Fouinette, Skitty, Ponchiot, Sapereau
+		293, 572, 831, 52, 190, 819,        # Chuchmur, Chinchidou, Moumouton, Miaouss, Capumain, Rongourmand
+		924, 241, 399, 431, 133, 128,       # Compagnol, Écrémeuh, Keunotor, Chaglam, Évoli, Tauros
 	],
 	# Forêt — Insecte / Plante, dense et grouillante.
 	MapGenerator.MapTheme.FOREST: [

@@ -32,9 +32,16 @@ const MOVE_LIST: Array[Dictionary] = [
 	{"api": "psychic",      "label": "Psyko",           "type": "psychic",  "price": 100},
 	{"api": "shadow-ball",  "label": "Ball'Ombre",      "type": "ghost",    "price": 120},
 	{"api": "dragon-pulse", "label": "Dracochoc",       "type": "dragon",   "price": 150},
-	# Buffs / statut
-	{"api": "swords-dance", "label": "Danse-Lames",     "type": "normal",   "price": 200},
-	{"api": "calm-mind",    "label": "Méditation",      "type": "psychic",  "price": 200},
+	# Buffs / statut — power/damage_class viennent déjà de PokeAPI (0/"status",
+	# ce sont de VRAIES attaques de statut) : seul "effect" manquait, donc ces
+	# deux CT ne faisaient jusqu'ici RIEN à l'usage (retour joueurs : « corriger
+	# Plénitude, c'est un buff, pas une attaque » — même souci pour Danse-Lames).
+	# Zone d'effet = coéquipiers à portée (cf. TeamMember.HEAL_TEAM_RADIUS),
+	# étiquette dorée cumulable au-dessus de chaque Pokémon buffé.
+	{"api": "swords-dance", "label": "Danse-Lames",     "type": "normal",   "price": 200,
+		"effect": {"kind": "buff_team", "stat": "atk",   "mult": 1.50, "dur": 8.0}},
+	{"api": "calm-mind",    "label": "Méditation",      "type": "psychic",  "price": 200,
+		"effect": {"kind": "buff_team", "stat": "spatk", "mult": 1.40, "dur": 8.0}},
 	{"api": "protect",      "label": "Protection",      "type": "normal",   "price": 120},
 	{"api": "recover",      "label": "Récupération",    "type": "normal",   "price": 180},
 	# CT à effet réel — attaques de statut PokéAPI (puissance 0, damage_class

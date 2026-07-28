@@ -56,6 +56,8 @@ run_scenario xp_share    20 smoke_xp_share
 run_scenario lobby_item_stats 20 smoke_lobby_item_stats
 run_scenario cooldown_focus 20 smoke_cooldown_focus
 run_scenario new_bonuses 25 smoke_new_bonuses
+run_scenario team_buff  20 smoke_team_buff
+run_scenario move_upgrade 20 smoke_move_upgrade
 run_scenario pokedex     20 smoke_pokedex
 run_scenario pokedex_stress 30 smoke_pokedex_stress
 run_scenario run_solo    25 smoke_run
