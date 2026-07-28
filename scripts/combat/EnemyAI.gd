@@ -1021,13 +1021,18 @@ func _do_attack(target: CharacterBody3D) -> void:
 	_ambush_spent = true
 	var move_type:  String
 	var move_power: int
+	var move_class: String
 	if _ranged_move != null:
 		move_type  = _ranged_move.type
 		move_power = _ranged_move.power
+		move_class = _ranged_move.damage_class
 	else:
 		move_type  = pokemon_instance.get_attack_type()
 		move_power = pokemon_instance.get_attack_power()
-	var dmg := DamageCalculator.calculate(pokemon_instance, target.pokemon_instance, move_power, move_type)
+		move_class = pokemon_instance.get_attack_class()
+	var result := DamageCalculator.calculate(pokemon_instance, target.pokemon_instance, move_power, move_type, move_class)
+	var dmg:  int  = result["damage"]
+	var crit: bool = result["crit"]
 
 	# Effets à l'impact (partagés mêlée/projectile)
 	var parent := get_parent()
@@ -1036,11 +1041,15 @@ func _do_attack(target: CharacterBody3D) -> void:
 	var apply_hit := func() -> void:
 		if not is_instance_valid(tgt) or not is_instance_valid(parent):
 			return
-		tgt.take_damage(dmg, from)
+		# take_damage() renvoie false — et affiche déjà « ESQUIVE ! » lui-même —
+		# si le coup a été évité (cf. PokemonInstance.dodge_chance) : rien de
+		# plus à faire côté attaquant dans ce cas.
+		if not tgt.take_damage(dmg, from):
+			return
 		var st := StatusFx.roll(move_type)
 		if st != "":
 			tgt.pokemon_instance.apply_status(st, StatusFx.duration(st))
-		CombatVFX.spawn_damage_number(parent, tgt.global_position, dmg, "player")
+		CombatVFX.spawn_damage_number(parent, tgt.global_position, dmg, "crit" if crit else "player")
 		# Secousse caméra seulement quand le Pokémon CONTRÔLÉ encaisse — un
 		# compagnon touché à l'autre bout de la map ne doit pas secouer l'écran.
 		if tgt.get("is_active") == true:

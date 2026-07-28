@@ -53,6 +53,8 @@ func _ready() -> void:
 			_run_scenario(_scenario_xp_share)
 		elif arg == "smoke_lobby_item_stats":
 			_run_scenario(_scenario_lobby_item_stats)
+		elif arg == "smoke_new_bonuses":
+			_run_scenario(_scenario_new_bonuses)
 		elif arg == "smoke_cooldown_focus":
 			_run_scenario(_scenario_cooldown_focus)
 		elif arg == "smoke_pokedex":
@@ -680,6 +682,85 @@ func _scenario_lobby_item_stats() -> void:
 		return
 	_pass("lobby_item_stats", "Attaque %d → %d ↑ (Bandeau Choix)" % [base_atk, expected])
 	screen.queue_free()
+
+
+## Nouveaux bonus/objets (retour joueurs) : split physique/spécial dans
+## DamageCalculator (Atq./Déf. Spé enfin lues en combat), critique garanti à
+## 100%, esquive garantie à 100%, et 3 dons DISTINCTS tirés au hasard (pas
+## toujours le même bloc de 4/9).
+func _scenario_new_bonuses() -> void:
+	GameManager.is_first_run = false
+	GameManager.hub_team = [GameManager.STARTER_IDS[0]]
+	RunManager.inst().start_run()
+	get_tree().change_scene_to_file("res://scenes/combat/CombatArena.tscn")
+	var waited := 0.0
+	while get_tree().get_nodes_in_group("players").is_empty() and waited < 18.0:
+		await get_tree().create_timer(0.5).timeout
+		waited += 0.5
+	var players := get_tree().get_nodes_in_group("players")
+	if players.is_empty():
+		_fail("new_bonuses", "équipe non apparue")
+		return
+	var victim: Node = players[0]
+	var attacker: PokemonInstance = victim.get("pokemon_instance")
+
+	# 1) Split physique/spécial : Atq. Spé influe sur get_effective_sp_attack(),
+	# jamais sur get_effective_attack() — jusqu'ici la classe du move était
+	# ignorée par DamageCalculator (les 2 stats utilisaient TOUJOURS Attaque).
+	# Comparaison sur les GETTERS (déterministes) plutôt que sur calculate(),
+	# qui inclut une variance aléatoire (0.85-1.0) : deux appels successifs
+	# peuvent légitimement différer même sans changement réel, ce qui rendrait
+	# ce test bruité pour rien.
+	var atk_base := attacker.get_effective_attack()
+	var spatk_base := attacker.get_effective_sp_attack()
+	attacker.sp_attack_mult = 3.0
+	if attacker.get_effective_attack() != atk_base:
+		_fail("new_bonuses", "Atq. Spé influence get_effective_attack() (ne devrait pas)")
+		attacker.sp_attack_mult = 1.0
+		return
+	var spatk_boosted := attacker.get_effective_sp_attack()
+	if spatk_boosted <= spatk_base:
+		_fail("new_bonuses", "Atq. Spé x3 n'augmente pas get_effective_sp_attack() (%d vs base %d)" % [spatk_boosted, spatk_base])
+		attacker.sp_attack_mult = 1.0
+		return
+	# calculate("special") doit tourner sans erreur avec cette paire de stats.
+	var special_dmg: int = DamageCalculator.calculate(attacker, attacker, 60, "normal", "special")["damage"]
+	attacker.sp_attack_mult = 1.0
+	if special_dmg <= 0:
+		_fail("new_bonuses", "calculate('special') n'a rien retourné")
+		return
+
+	# 2) Critique garanti
+	attacker.crit_chance = 1.0
+	var r: Dictionary = DamageCalculator.calculate(attacker, attacker, 60, "normal", "physical")
+	attacker.crit_chance = 0.0
+	if not r["crit"]:
+		_fail("new_bonuses", "crit_chance=1.0 n'a pas critiqué")
+		return
+
+	# 3) Esquive garantie — take_damage() doit renvoyer false et ne rien retirer
+	var hp_before := attacker.current_hp
+	attacker.dodge_chance = 1.0
+	var landed: bool = victim.call("take_damage", 10)
+	attacker.dodge_chance = 0.0
+	if landed or attacker.current_hp != hp_before:
+		_fail("new_bonuses", "dodge_chance=1.0 n'a pas empêché les dégâts")
+		return
+
+	# 4) 3 dons DISTINCTS tirés du bassin (retour joueurs : « 3, pas 4/9 systématiques »)
+	var arena := get_tree().current_scene
+	var offer: Array = arena.call("_roll_stat_boon_offer")
+	if offer.size() != 3:
+		_fail("new_bonuses", "l'offre de dons ne fait pas 3 (%d)" % offer.size())
+		return
+	var ids: Dictionary = {}
+	for o: Dictionary in offer:
+		ids[o["id"]] = true
+	if ids.size() != 3:
+		_fail("new_bonuses", "doublons dans l'offre de dons (%s)" % [offer])
+		return
+
+	_pass("new_bonuses", "split phys./spé. OK · critique garanti OK · esquive garantie OK · 3 dons distincts OK")
 
 
 ## Retour joueurs : « le cooldown visuel se fige si on change de focus dans

@@ -115,6 +115,10 @@ var _boon_screen: BoutiqueScreen = null     # écran de récompense (skill/stat)
 ## « chaque joueur recevait son propre bonus ») — cf. _try_claim_boon. Vrai
 ## dès qu'un joueur l'a réclamé (arbitré par l'hôte), jusqu'au prochain spawn.
 var _boon_claimed: bool = false
+## 3 dons de stat tirés au hasard pour CE don (cf. _roll_stat_boon_offer) —
+## figés au spawn, pas au moment d'ouvrir l'écran : rouvrir après "Continuer"
+## doit revoir les MÊMES 3 options, pas en retirer 3 nouvelles.
+var _boon_stat_offer: Array = []
 
 var _pause_screen: PauseMenuScreen = null
 
@@ -2280,6 +2284,8 @@ var _boon_offers: Array = []
 func _spawn_boon(bonus_type: int) -> void:
 	_clear_boon()
 	_boon_claimed = false
+	if bonus_type == RunManager.BONUS_STAT:
+		_boon_stat_offer = _roll_stat_boon_offer()
 	if not is_instance_valid(_map):
 		return
 	_boon_type = bonus_type
@@ -2422,7 +2428,7 @@ func _open_boon() -> void:
 		_boon_screen.setup(_boon_live, _boon_offers, "skill")
 	else:
 		_boon_screen.boon_stat.connect(_claim_boon_stat)
-		_boon_screen.setup(_team, [], "stat")
+		_boon_screen.setup(_team, _boon_stat_offer, "stat")
 	# « Continuer » ferme sans réclamer — le don reste dispo (on peut y revenir).
 	_boon_screen.closed.connect(func() -> void:
 		if is_instance_valid(_boon_screen):
@@ -2470,9 +2476,22 @@ func _claim_boon_skill(member_index: int, option_index: int, replace_index: int)
 ## boost ne doit plus s'appliquer à TOUTE l'équipe). Ferme l'écran de don,
 ## ouvre le sélecteur de membre, applique au seul Pokémon choisi.
 const _STAT_BOON_LABELS := {
-	"boost_atk": "Attaque +20%", "boost_def": "Défense +20%",
-	"boost_hp": "PV max +20%",   "boost_spd": "Vitesse +20%",
+	"boost_atk": "Attaque +20%",     "boost_def": "Défense +20%",
+	"boost_hp": "PV max +20%",       "boost_spd": "Vitesse +20%",
+	"boost_spatk": "Atq. Spé +20%",  "boost_spdef": "Déf. Spé +20%",
+	"atk_rate": "Cadence -15%",      "boost_range": "Portée +20%",
+	"boost_crit": "Critique +15%",   "boost_dodge": "Esquive +12%",
 }
+
+
+## 3 dons DISTINCTS tirés au hasard dans BoutiqueScreen.STAT_BOONS (retour
+## joueurs : « proposer le choix entre 3 bonus, pas 4 générés
+## systématiquement »). Figé au spawn du don (cf. _spawn_boon), pas à chaque
+## ouverture de l'écran — rouvrir après "Continuer" doit revoir LES MÊMES 3.
+func _roll_stat_boon_offer() -> Array:
+	var pool := BoutiqueScreen.STAT_BOONS.duplicate()
+	pool.shuffle()
+	return pool.slice(0, 3)
 
 ## Le Pokémon ET la stat viennent du MÊME écran (cf. BoutiqueScreen.
 ## _build_stat_boon) : plus de second panneau de sélection par-dessus le
@@ -2504,9 +2523,15 @@ func _apply_bonus_to_member(bonus_id: String, idx: int) -> void:
 			hud.update_team_hp(idx, r)
 			if idx == _active_index:
 				hud.update_hp(r)
-		"boost_atk": inst.attack_mult  *= 1.2
-		"boost_def": inst.defense_mult *= 1.2
-		"boost_spd": inst.speed_mult   *= 1.2
+		"boost_atk":   inst.attack_mult     *= 1.2
+		"boost_def":   inst.defense_mult    *= 1.2
+		"boost_spd":   inst.speed_mult      *= 1.2   # cadence ET déplacement, cf. TeamMember.move_tick
+		"boost_spatk": inst.sp_attack_mult  *= 1.2
+		"boost_spdef": inst.sp_defense_mult *= 1.2
+		"boost_range": inst.range_mult      *= 1.2
+		"boost_crit":  inst.add_crit_chance(0.15)
+		"boost_dodge": inst.add_dodge_chance(0.12)
+		"atk_rate":    m.cooldown_mult      *= 0.85
 	var label: String = _STAT_BOON_LABELS.get(bonus_id, "Bonus")
 	hud.notify("⬆  %s → %s" % [label, inst.data.name_fr.capitalize()], Color(0.95, 0.82, 0.35))
 

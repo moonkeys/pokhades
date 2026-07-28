@@ -5,9 +5,10 @@ extends RefCounted
 ## hub (contre des Baies), assignés à un Pokémon dans l'écran d'équipe, puis
 ## appliqués au spawn de run (cf. CombatArena._spawn_team).
 ##
-## `effect` (objets tenus) : "atk" / "def" / "spd" → multiplicateur de stat,
-## "maxhp" → bonus de PV max (via PokemonInstance.apply_hp_boost). Ces
-## effets sont déjà gérés par PokemonInstance.equip_item / _apply_stat_mult.
+## `effect` (objets tenus) : "atk" / "def" / "spatk" / "spdef" / "spd" →
+## multiplicateur de stat, "maxhp" → bonus de PV max (via PokemonInstance.
+## apply_hp_boost). Ces effets sont déjà gérés par PokemonInstance.
+## equip_item / _apply_stat_mult.
 ## `kind` = "held" (objet tenu) ou "candy" (Super Bonbon, consommable qui
 ## augmente le niveau de départ d'un Pokémon de base).
 
@@ -25,18 +26,32 @@ const ITEMS: Array[Dictionary] = [
 		"desc": "+15% Attaque."},
 	{"api": "expert-belt",  "name": "Ceinture Pro",   "kind": "held", "effect": "atk",   "mult": 1.20, "price": 130,
 		"desc": "+20% Attaque."},
+	# ── Attaque Spéciale (nouveau — le catalogue n'avait que l'Attaque) ──
+	{"api": "soul-dew",     "name": "Rosée d'Âme",    "kind": "held", "effect": "spatk", "mult": 1.30, "price": 180,
+		"desc": "+30% Attaque Spéciale."},
+	{"api": "wise-glasses", "name": "Lunettes Sages", "kind": "held", "effect": "spatk", "mult": 1.20, "price": 140,
+		"desc": "+20% Attaque Spéciale."},
+	{"api": "twisted-spoon","name": "Cuillère Tordue","kind": "held", "effect": "spatk", "mult": 1.15, "price": 110,
+		"desc": "+15% Attaque Spéciale."},
 	# ── Vitesse ───────────────────────────────────────────────────────
 	{"api": "choice-scarf", "name": "Mouchoir Choix", "kind": "held", "effect": "spd",   "mult": 1.50, "price": 200,
 		"desc": "+50% Vitesse."},
 	# ── Défensifs / endurance ─────────────────────────────────────────
 	{"api": "black-belt",   "name": "Ceinture Noire", "kind": "held", "effect": "def",   "mult": 1.40, "price": 150,
 		"desc": "+40% Défense."},
+	{"api": "rocky-helmet", "name": "Casque Rocheux", "kind": "held", "effect": "def",   "mult": 1.25, "price": 140,
+		"desc": "+25% Défense."},
 	{"api": "leftovers",    "name": "Restes",         "kind": "held", "effect": "maxhp", "mult": 1.25, "price": 180,
 		"desc": "+25% PV max."},
 	{"api": "sitrus-berry", "name": "Baie Sitrus",    "kind": "held", "effect": "maxhp", "mult": 1.15, "price": 120,
 		"desc": "+15% PV max."},
 	{"api": "oran-berry",   "name": "Baie Oran",      "kind": "held", "effect": "maxhp", "mult": 1.08, "price": 70,
 		"desc": "+8% PV max."},
+	# ── Défense Spéciale (nouveau — inexistant jusqu'ici) ────────────────
+	{"api": "eviolite",     "name": "Évolithe",       "kind": "held", "effect": "spdef", "mult": 1.35, "price": 190,
+		"desc": "+35% Défense Spéciale."},
+	{"api": "metal-powder", "name": "Poudre de Fer",  "kind": "held", "effect": "spdef", "mult": 1.15, "price": 110,
+		"desc": "+15% Défense Spéciale."},
 	# ── Super Bonbon (consommable) ────────────────────────────────────
 	{"api": "rare-candy",   "name": "Super Bonbon",   "kind": "candy", "effect": "",     "mult": 0.0,  "price": 250,
 		"desc": "Augmente de 5 le niveau de départ d'un Pokémon (peut le faire évoluer). Consommé à l'usage."},

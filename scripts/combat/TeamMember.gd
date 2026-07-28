@@ -402,9 +402,14 @@ func _move_at(idx: int) -> MoveData:
 	return moves[idx]
 
 
+## `range_mult` (bonus de fin de zone « Portée des attaques ») n'étend QUE la
+## portée maximale — l'appliquer aussi à range_min repousserait le seuil de
+## trop-près, ce qui pénaliserait les grosses attaques spéciales au lieu de
+## les aider.
 func _move_range_max(idx: int) -> float:
 	var m := _move_at(idx)
-	return m.range_max if m != null else ATTACK_RANGE
+	var base: float = m.range_max if m != null else ATTACK_RANGE
+	return base * pokemon_instance.range_mult
 
 
 func _move_range_min(idx: int) -> float:
@@ -688,8 +693,11 @@ func _player_process() -> void:
 		velocity = _dash_dir * DASH_SPEED
 	else:
 		# paralysie = ralenti ; boue du marécage = ralentie aussi (cf.
-		# MapGenerator.terrain_speed_mult)
-		velocity = dir * SPEED * pokemon_instance.status_speed_mult() * _terrain_speed_mult()
+		# MapGenerator.terrain_speed_mult) ; speed_mult = bonus de fin de zone
+		# « Vitesse de déplacement » / objets à effet "spd" — jusqu'ici ce
+		# multiplicateur n'affectait QUE la cadence d'attaque (cf.
+		# _move_cooldown), jamais le déplacement à proprement parler.
+		velocity = dir * SPEED * pokemon_instance.speed_mult * pokemon_instance.status_speed_mult() * _terrain_speed_mult()
 	_update_anim(Vector2(dir.x, dir.z))
 	move_and_slide()
 	_snap_to_ground()
@@ -980,7 +988,9 @@ func _attack() -> void:
 		if not _enemy_visible(enemy):
 			continue   # tapi : le coup passe au travers, on ne le voit pas
 		if global_position.distance_to(enemy.global_position) <= reach:
-			var dmg := DamageCalculator.calculate(pokemon_instance, enemy.pokemon_instance, move_power, move_type)
+			var result := DamageCalculator.calculate(pokemon_instance, enemy.pokemon_instance, move_power, move_type, move_class)
+			var dmg:  int  = result["damage"]
+			var crit: bool = result["crit"]
 			enemy.take_damage(dmg, global_position, CombatVFX.type_color(move_type), Net.local_id(), self)
 			# Animation d'attaque Essentials (planche du type) jouée sur la cible
 			AttackAnim.play(get_parent(), enemy.global_position, move_type)
@@ -989,10 +999,11 @@ func _attack() -> void:
 			if st != "":
 				enemy.pokemon_instance.apply_status(st, StatusFx.duration(st))
 			# Chiffre de dégâts coloré selon l'efficacité de type — le retour
-			# visuel apprend au joueur les matchups sans ouvrir de menu.
+			# visuel apprend au joueur les matchups sans ouvrir de menu. Un coup
+			# critique prime sur l'efficacité de type (le moment se sent d'abord).
 			var mult := DamageCalculator.type_multiplier(move_type, enemy.pokemon_instance.data.types)
 			CombatVFX.spawn_damage_number(get_parent(), enemy.global_position, dmg,
-				CombatVFX.kind_from_multiplier(mult))
+				"crit" if crit else CombatVFX.kind_from_multiplier(mult))
 			lunge_pos += enemy.global_position
 			hit_count += 1
 
@@ -1111,9 +1122,13 @@ func _ranged_attack(move_type: String, move_power: int, reach: float = RANGED_RA
 	if not _evolving:
 		_play_action_anim(["shoot", "charge", "attack"], Vector2(dir.x, dir.z), 0.4)
 
-	var dmg  := DamageCalculator.calculate(pokemon_instance, target.pokemon_instance, move_power, move_type)
+	# Attaque à distance = toujours SPÉCIALE (cf. le tri physique/spécial dans
+	# _try_attack, seul appelant) : Atq. Spé de l'attaquant vs Déf. Spé de la cible.
+	var result := DamageCalculator.calculate(pokemon_instance, target.pokemon_instance, move_power, move_type, "special")
+	var dmg:  int  = result["damage"]
+	var crit: bool = result["crit"]
 	var mult := DamageCalculator.type_multiplier(move_type, target.pokemon_instance.data.types)
-	var kind := CombatVFX.kind_from_multiplier(mult)
+	var kind := "crit" if crit else CombatVFX.kind_from_multiplier(mult)
 	var tint := CombatVFX.type_color(move_type)
 	var from := global_position
 	var parent := get_parent()
@@ -1196,18 +1211,28 @@ func _update_grass_hiding(delta: float) -> void:
 		sprite.modulate = Color.WHITE
 
 
-func take_damage(amount: int, source_pos: Vector3 = Vector3(INF, INF, INF)) -> void:
+## Retourne true si le coup a bien porté (false = évité — esquive ou
+## évolution en cours) — les appelants s'en servent pour savoir s'il faut
+## afficher LEUR PROPRE retour visuel (chiffre de dégâts, statut…), déjà
+## inutile ici puisque l'esquive affiche son propre texte dédié.
+func take_damage(amount: int, source_pos: Vector3 = Vector3(INF, INF, INF)) -> bool:
 	# Multijoueur : les ennemis (hôte) frappent la COPIE locale d'un joueur
 	# distant → on relaie au propriétaire, qui applique et rediffuse ses PV.
 	if remote_peer != 0:
 		if multiplayer.is_server():
 			_net_take_damage.rpc_id(remote_peer, amount, source_pos)
-		return
+		return true   # résultat réel décidé côté propriétaire, pas ici
 	# INVINCIBLE pendant l'évolution : la transformation est un moment
 	# protégé — en contrepartie le Pokémon ne peut pas attaquer non plus
 	# (cf. les gardes _evolving sur _attack_timer).
 	if _evolving:
-		return
+		return false
+	# Esquive : chance d'ignorer TOTALEMENT le coup (cf. PokemonInstance.
+	# dodge_chance, bonus de fin de zone « Chances d'esquive »). Retour visuel
+	# dédié — sans lui, un coup qui ne fait rien passerait pour un bug.
+	if randf() < pokemon_instance.dodge_chance:
+		CombatVFX.spawn_damage_number(get_parent(), global_position, 0, "dodge")
+		return false
 	pokemon_instance.take_damage(amount)
 	net_broadcast_hp()
 	if not _evolving:
@@ -1232,6 +1257,7 @@ func take_damage(amount: int, source_pos: Vector3 = Vector3(INF, INF, INF)) -> v
 	hp_changed.emit(pokemon_instance.hp_ratio())
 	if pokemon_instance.is_fainted():
 		_play_faint_anim()
+	return true
 
 
 func _play_faint_anim() -> void:

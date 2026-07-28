@@ -356,9 +356,7 @@ func _build_hint_row(text: String, w: float) -> Control:
 ## colonnes juste en dessous — nom, type, puissance, ATT (physique) / ASP
 ## (spéciale), triées de la moins à la plus puissante.
 ## `effect` de ItemCatalog → index dans STAT_NAMES/vals (0=PV … 5=Vitesse).
-## Seuls les 4 effets de stat existants (cf. PokemonInstance._apply_stat_mult)
-## ont un équivalent ici — pas encore de bonus Atq./Déf. Spé. côté objets.
-const _ITEM_STAT_INDEX := {"maxhp": 0, "atk": 1, "def": 2, "spd": 5}
+const _ITEM_STAT_INDEX := {"maxhp": 0, "atk": 1, "def": 2, "spatk": 3, "spdef": 4, "spd": 5}
 
 func _build_stats_and_moves_panel(pos: Vector2, size: Vector2) -> void:
 	var card := UiKit.dark_card(_panel, pos, size)

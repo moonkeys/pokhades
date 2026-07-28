@@ -15,10 +15,26 @@ var equipped_moves: Array = []   # MoveData[] — les 4 équipées (sous-ensembl
 var portrait_texture: Texture2D = null
 
 # Multiplicateurs de stats (bonus de run cumulables)
-var attack_mult:  float = 1.0
-var defense_mult: float = 1.0
-var speed_mult:   float = 1.0
-var max_hp_mult:  float = 1.0
+var attack_mult:     float = 1.0
+var defense_mult:    float = 1.0
+var speed_mult:      float = 1.0
+var max_hp_mult:     float = 1.0
+var sp_attack_mult:  float = 1.0
+var sp_defense_mult: float = 1.0
+var range_mult:      float = 1.0   # portée des attaques (cf. TeamMember._move_range_max/min)
+
+# Coup critique / esquive — bonus de fin de zone (0.0 par défaut, cumulables,
+# bornés pour rester lisibles même en cumulant plusieurs dons dans une run).
+var crit_chance:  float = 0.0
+var dodge_chance: float = 0.0
+const _CRIT_CAP  := 0.60
+const _DODGE_CAP := 0.50
+
+func add_crit_chance(delta: float) -> void:
+	crit_chance = clampf(crit_chance + delta, 0.0, _CRIT_CAP)
+
+func add_dodge_chance(delta: float) -> void:
+	dodge_chance = clampf(dodge_chance + delta, 0.0, _DODGE_CAP)
 
 # Objet tenu — un seul à la fois par Pokémon ({} si aucun)
 var held_item: Dictionary = {}
@@ -141,6 +157,11 @@ func get_attack_power() -> int:
 		return p if p > 0 else 40
 	return 40
 
+func get_attack_class() -> String:
+	if not equipped_moves.is_empty():
+		return (equipped_moves[0] as MoveData).damage_class
+	return "physical"
+
 
 # ── PV ───────────────────────────────────────────────────────────────
 
@@ -149,6 +170,12 @@ func get_effective_attack() -> int:
 
 func get_effective_defense() -> int:
 	return int(float(data.defense) * defense_mult)
+
+func get_effective_sp_attack() -> int:
+	return int(float(data.sp_attack) * sp_attack_mult)
+
+func get_effective_sp_defense() -> int:
+	return int(float(data.sp_defense) * sp_defense_mult)
 
 func get_effective_speed() -> int:
 	return int(float(data.speed) * speed_mult)
@@ -192,20 +219,24 @@ func equip_item(item: Dictionary) -> void:
 func _apply_stat_mult(item: Dictionary) -> void:
 	var mult: float = item.get("mult", 1.0)
 	match item.get("effect", ""):
-		"atk":   attack_mult  *= mult
-		"def":   defense_mult *= mult
-		"spd":   speed_mult   *= mult
-		"maxhp": apply_hp_boost(mult)
+		"atk":     attack_mult     *= mult
+		"def":     defense_mult    *= mult
+		"spatk":   sp_attack_mult  *= mult
+		"spdef":   sp_defense_mult *= mult
+		"spd":     speed_mult      *= mult
+		"maxhp":   apply_hp_boost(mult)
 
 
 func _unapply_stat_mult(item: Dictionary) -> void:
 	var mult: float = item.get("mult", 1.0)
 	if mult == 0.0: return
 	match item.get("effect", ""):
-		"atk":   attack_mult  /= mult
-		"def":   defense_mult /= mult
-		"spd":   speed_mult   /= mult
-		"maxhp": apply_hp_boost(1.0 / mult)
+		"atk":     attack_mult     /= mult
+		"def":     defense_mult    /= mult
+		"spatk":   sp_attack_mult  /= mult
+		"spdef":   sp_defense_mult /= mult
+		"spd":     speed_mult      /= mult
+		"maxhp":   apply_hp_boost(1.0 / mult)
 
 
 ## Équipe l'objet tenu du catalogue assigné à ce Pokémon (cf.

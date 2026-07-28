@@ -28,11 +28,22 @@ const BERRY_PACKS: Array[Dictionary] = [
 	{"amount": 120, "price": 480},
 ]
 
+## Bassin COMPLET des dons de stat — 3 tirés au hasard à chaque don (cf.
+## CombatArena._roll_stat_boon_offer), plus jamais les 4/9 en bloc à chaque
+## fois (retour joueurs : « proposer le choix entre 3 bonus, pas 4 générés
+## systématiquement » + « ajouter vitesse de déplacement, réduction des
+## cooldowns, portée, critique, esquive, attaque/défense spéciale »).
 const STAT_BOONS: Array[Dictionary] = [
-	{"id": "boost_atk", "label": "Attaque +20%", "sym": "⚔"},
-	{"id": "boost_def", "label": "Défense +20%", "sym": "🛡"},
-	{"id": "boost_hp",  "label": "PV max +20%",  "sym": "♥"},
-	{"id": "boost_spd", "label": "Vitesse +20%", "sym": "⚡"},
+	{"id": "boost_atk",   "label": "Attaque +20%",       "sym": "⚔"},
+	{"id": "boost_def",   "label": "Défense +20%",       "sym": "🛡"},
+	{"id": "boost_hp",    "label": "PV max +20%",        "sym": "♥"},
+	{"id": "boost_spd",   "label": "Vitesse +20%",       "sym": "⚡"},
+	{"id": "boost_spatk", "label": "Atq. Spé +20%",      "sym": "✨"},
+	{"id": "boost_spdef", "label": "Déf. Spé +20%",      "sym": "🔰"},
+	{"id": "atk_rate",    "label": "Cadence -15%",       "sym": "⏱"},
+	{"id": "boost_range", "label": "Portée +20%",        "sym": "🎯"},
+	{"id": "boost_crit",  "label": "Critique +15%",      "sym": "💥"},
+	{"id": "boost_dodge", "label": "Esquive +12%",       "sym": "💨"},
 ]
 
 ## Objets de soin achetables en boutique — s'appliquent au Pokémon de
@@ -224,9 +235,13 @@ func _build_stat_boon() -> void:
 	_stat_boon_btns.clear()
 	_build_stat_member_row()
 
+	# 3 dons tirés au hasard, décidés une fois pour toutes par CombatArena
+	# (_roll_stat_boon_offer) et passés via `_offers` — pas les 4/9 systématiquement
+	# (retour joueurs). Filet de sécurité si jamais vide : les 3 premiers du bassin.
+	var offer: Array = _offers if not _offers.is_empty() else STAT_BOONS.slice(0, 3)
 	var cw := 380.0; var ch := 108.0
-	for i in STAT_BOONS.size():
-		var boon: Dictionary = STAT_BOONS[i]
+	for i in offer.size():
+		var boon: Dictionary = offer[i]
 		var px := 40.0 + (i % 2) * (cw + 40.0)
 		var py := 300.0 + (i / 2) * (ch + 20.0)
 		var card := UiKit.card(_panel, Vector2(px, py), Vector2(cw, ch))

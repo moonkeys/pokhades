@@ -45,14 +45,28 @@ static var TYPE_CHART: Dictionary = {
 }
 
 
+## `damage_class` ("physical"/"special"/"status") sélectionne la paire de
+## stats Attaque/Défense ou Atq. Spé/Déf. Spé — jusqu'ici TOUJOURS Attaque/
+## Défense, quelle que soit la classe du move (Atq. Spé/Déf. Spé n'étaient que
+## cosmétiques, jamais lues en combat). Nécessaire pour que les bonus
+## "Attaque Spéciale"/"Défense Spéciale" aient un effet réel.
+## Retourne {"damage": int, "crit": bool} — `crit` pilote le retour visuel
+## (chiffre de dégâts distinct, cf. CombatVFX).
 static func calculate(
 	attacker: PokemonInstance,
 	defender: PokemonInstance,
 	move_power: int,
-	move_type: String
-) -> int:
-	var atk := float(attacker.get_effective_attack())
-	var def := float(defender.get_effective_defense())
+	move_type: String,
+	damage_class: String = "physical"
+) -> Dictionary:
+	var atk: float
+	var def: float
+	if damage_class == "special":
+		atk = float(attacker.get_effective_sp_attack())
+		def = float(defender.get_effective_sp_defense())
+	else:
+		atk = float(attacker.get_effective_attack())
+		def = float(defender.get_effective_defense())
 	var lvl := float(attacker.level)
 
 	# Formule officielle Pokémon Gen 5+
@@ -65,8 +79,11 @@ static func calculate(
 		modifier *= chart.get(dtype, 1.0)
 
 	var rand := randf_range(0.85, 1.0)
+	var crit := randf() < attacker.crit_chance
+	if crit:
+		modifier *= 1.5
 
-	return max(1, int(floor(base * modifier * rand)))
+	return {"damage": max(1, int(floor(base * modifier * rand))), "crit": crit}
 
 
 static func type_multiplier(attack_type: String, defender_types: Array) -> float:

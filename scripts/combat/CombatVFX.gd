@@ -14,6 +14,8 @@ static var _soft_tex: GradientTexture2D = null
 ##   "super"  → attaque super efficace (orange, plus gros)
 ##   "weak"   → pas très efficace (gris, plus petit)
 ##   "player" → dégâts subis par l'équipe (rouge)
+##   "crit"   → coup critique (doré, plus gros) — cf. PokemonInstance.crit_chance
+##   "dodge"  → coup esquivé, aucun dégât (bleu, texte dédié) — cf. dodge_chance
 ##   "normal" → tout le reste (blanc)
 static func spawn_damage_number(parent: Node, pos: Vector3, amount: int, kind: String = "normal") -> void:
 	if not is_instance_valid(parent) or not parent.is_inside_tree():
@@ -44,6 +46,14 @@ static func spawn_damage_number(parent: Node, pos: Vector3, amount: int, kind: S
 			lbl.font_size = 46
 			lbl.modulate = Color(0.35, 0.95, 0.45)
 			lbl.text = "+PV"
+		"crit":
+			lbl.font_size = 60
+			lbl.modulate = Color(1.0, 0.85, 0.20)
+			lbl.text += " !"
+		"dodge":
+			lbl.font_size = 44
+			lbl.modulate = Color(0.55, 0.85, 1.0)
+			lbl.text = "ESQUIVE !"
 		_:
 			lbl.font_size = 50
 			lbl.modulate = Color(0.98, 0.95, 0.88)
