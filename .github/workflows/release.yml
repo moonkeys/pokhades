@@ -54,8 +54,8 @@ jobs:
             os: macos-latest
             preset: "macOS"
             export_path: builds/macos/Pokhades.zip
-            pack_dir: builds/macos/unzipped
-            main_exe: Pokhades.app
+            pack_dir: builds/macos/flat
+            main_exe: Pokhades
             godot_asset: macos.universal.zip
             godot_asset_bin: ""   # cas particulier : bundle Godot.app, pas un binaire nu
             templates_dir: "$HOME/Library/Application Support/Godot/export_templates/4.7.stable"
@@ -140,19 +140,23 @@ jobs:
       - name: Préparer le dossier à packager
         run: |
           if [ "${{ matrix.channel }}" = "osx" ]; then
-            # L'export macOS produit un .zip contenant Pokhades.app ; Velopack
-            # a besoin du bundle .app directement dans packDir. Reproduit et
-            # validé en local avec le même zip et la même commande — en cas
-            # de nouvel échec ici, ces logs (contenu du zip, contenu après
-            # extraction) doivent suffire à voir où ça diverge sans un
-            # nouvel aller-retour.
-            echo "--- contenu de ${{ matrix.export_path }} ---"
-            unzip -l "${{ matrix.export_path }}"
-            mkdir -p "${{ matrix.pack_dir }}"
-            unzip -q "${{ matrix.export_path }}" -d "${{ matrix.pack_dir }}"
-            echo "--- contenu de ${{ matrix.pack_dir }} après extraction ---"
-            find "${{ matrix.pack_dir }}" -maxdepth 3
-            test -d "${{ matrix.pack_dir }}/${{ matrix.main_exe }}"
+            # L'export produit un .zip contenant Pokhades.app. Contrairement à
+            # ce qu'indiquait le message d'erreur de vpk ("Could not find main
+            # application executable ... Pokhades.app"), --packDir n'attend
+            # PAS un bundle .app déjà assemblé : vpk construit lui-même le
+            # bundle à partir d'un dossier À PLAT (exécutable + ressources au
+            # même niveau, comme pour Windows) et --mainExe est le nom du
+            # binaire, pas du bundle. Confirmé en reproduisant l'appel exact
+            # en local (dotnet installé via Homebrew) : la version "bundle
+            # pré-assemblé" échoue systématiquement, la version aplatie
+            # produit un .pkg en 11s.
+            mkdir -p unzipped_app "${{ matrix.pack_dir }}"
+            unzip -q "${{ matrix.export_path }}" -d unzipped_app
+            cp -r unzipped_app/Pokhades.app/Contents/MacOS/*   "${{ matrix.pack_dir }}/"
+            cp -r unzipped_app/Pokhades.app/Contents/Resources/* "${{ matrix.pack_dir }}/"
+            echo "--- contenu de ${{ matrix.pack_dir }} ---"
+            ls -la "${{ matrix.pack_dir }}"
+            test -f "${{ matrix.pack_dir }}/${{ matrix.main_exe }}"
           fi
 
       - name: Installer le runtime .NET
