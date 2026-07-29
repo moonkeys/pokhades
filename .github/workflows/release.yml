@@ -1,39 +1,52 @@
 # Publie une nouvelle version : export Godot -> paquet Velopack -> GitHub Release.
 # Déclenché en poussant un tag :  git tag v1.0.0 && git push origin v1.0.0
+# (déclenchement manuel possible depuis l'onglet Actions, sans publier de release)
 name: Release
 
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 env:
-  GODOT_VERSION: "4.4.1"
+  GODOT_VERSION: "4.7"   # doit correspondre aux templates d'export du projet
   APP_ID: Pokhades
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 30   # garde-fou : un export bloqué ne tourne pas indéfiniment
     steps:
       - uses: actions/checkout@v4
 
       - name: Installer Godot + templates d'export
         run: |
           BASE="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable"
-          curl -sSL -o godot.zip  "$BASE/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
-          curl -sSL -o tpl.tpz    "$BASE/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
-          unzip -q godot.zip && mv Godot_v*_linux.x86_64 /usr/local/bin/godot && chmod +x /usr/local/bin/godot
+          curl -fsSL -o godot.zip "$BASE/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          curl -fsSL -o tpl.tpz   "$BASE/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          unzip -q godot.zip
+          sudo mv Godot_v*_linux.x86_64 /usr/local/bin/godot && sudo chmod +x /usr/local/bin/godot
           unzip -q tpl.tpz
-          mkdir -p ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
-          mv templates/* ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable/
+          # Le dossier attendu porte la version telle que rapportée par l'éditeur
+          mkdir -p "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+          mv templates/* "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable/"
+          godot --version
+
+      - name: Importer les ressources
+        # --import se termine tout seul, mais un projet non importé peut laisser
+        # Godot en attente : timeout dur + on ignore un code de sortie non nul,
+        # l'export qui suit est le vrai test.
+        run: timeout 900 godot --headless --import . || true
 
       - name: Exporter le jeu (Windows)
         run: |
           mkdir -p builds/windows
-          godot --headless --import .            # premier import des ressources
-          godot --headless --export-release "Windows Desktop" builds/windows/Pokhades.exe
+          timeout 900 godot --headless --export-release "Windows Desktop" builds/windows/Pokhades.exe
+          test -f builds/windows/Pokhades.exe   # échoue franchement si l'export n'a rien produit
+          ls -lh builds/windows
 
       - name: Installer Velopack
         run: dotnet tool install -g vpk
@@ -41,18 +54,31 @@ jobs:
       - name: Packager (installeur + delta vs version précédente)
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
+          [ "$VERSION" = "$GITHUB_REF_NAME" ] && VERSION="0.0.$GITHUB_RUN_NUMBER"   # run manuel, hors tag
+          mkdir -p releases
           # Récupère les paquets précédents pour que Velopack calcule un delta
           gh release download --pattern "*.nupkg" --dir releases || true
-          ~/.dotnet/tools/vpk pack \
+          vpk pack \
             --packId "$APP_ID" \
             --packVersion "$VERSION" \
             --packDir builds/windows \
             --mainExe Pokhades.exe \
             --outputDir releases
+          # Nom attendu par la page de téléchargement (docs/index.html)
+          mv releases/*Setup.exe releases/Pokhades-win-Setup.exe
+          ls -lh releases
         env:
           GH_TOKEN: ${{ github.token }}
 
       - name: Publier la Release
+        if: startsWith(github.ref, 'refs/tags/')
         run: gh release create "$GITHUB_REF_NAME" releases/* --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
+
+      - name: Conserver les paquets (run manuel)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: pokhades-packages
+          path: releases/
