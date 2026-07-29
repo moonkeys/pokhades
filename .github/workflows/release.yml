@@ -68,6 +68,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Bibliothèques système (Linux uniquement)
+        if: matrix.channel == 'linux'
+        # Le binaire Godot linux headless est lié à X11/audio même pour
+        # tourner en --headless ; sans ces libs, ubuntu-latest le lance
+        # sur un binaire dont dépendances manquent et l'exécution échoue.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libfontconfig1 libxcursor1 libxinerama1 libxi6 libxrandr1 \
+            libxrender1 libxext6 libgl1 libasound2t64 libpulse0 \
+            || sudo apt-get install -y --no-install-recommends libasound2
+
       - name: Installer Godot + templates d'export
         run: |
           BASE="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable"
@@ -142,24 +154,35 @@ jobs:
         # "*-full.nupkg" ont le même nom sur les trois plateformes. Comme les
         # trois jobs finissent fusionnés dans un seul dossier avant l'upload
         # vers la Release, ces fichiers s'écraseraient silencieusement.
+        # Sous `set -e -o pipefail` (le mode par défaut des steps GitHub
+        # Actions), "ls motif-sans-résultat | head" peut faire échouer tout
+        # le script même quand head réussit : pipefail propage l'échec de
+        # ls. On protège donc chaque recherche avec `|| true` / `shopt -s
+        # nullglob` plutôt que de compter sur le pipe.
         run: |
-          case "${{ matrix.channel }}" in
-            win)   ext="exe";      dest="Pokhades-win-Setup.exe" ;;
-            linux) ext="AppImage"; dest="Pokhades-linux.AppImage" ;;
-            osx)   ext="pkg";      dest="Pokhades-osx-Setup.pkg" ;;
-          esac
-          f=$(ls releases/*."$ext" 2>/dev/null | head -1)
-          if [ -n "$f" ]; then
-            cp "$f" "releases/$dest"
+          shopt -s nullglob
+
+          if [ "${{ matrix.channel }}" = "win" ]; then
+            ext="exe"; dest="Pokhades-win-Setup.exe"
+          elif [ "${{ matrix.channel }}" = "linux" ]; then
+            ext="AppImage"; dest="Pokhades-linux.AppImage"
+          else
+            ext="pkg"; dest="Pokhades-osx-Setup.pkg"
+          fi
+
+          matches=(releases/*."$ext")
+          if [ "${#matches[@]}" -gt 0 ]; then
+            cp "${matches[0]}" "releases/$dest"
           else
             echo "::warning::Aucun .$ext produit par vpk pour le canal ${{ matrix.channel }} — vérifie le contenu de releases/"
           fi
 
-          [ -f releases/RELEASES ] && mv releases/RELEASES "releases/RELEASES-${{ matrix.channel }}"
+          if [ -f releases/RELEASES ]; then
+            mv releases/RELEASES "releases/RELEASES-${{ matrix.channel }}"
+          fi
           for f in releases/*-full.nupkg releases/*-delta.nupkg; do
-            [ -f "$f" ] || continue
             base=$(basename "$f")
-            mv "$f" "releases/${{ matrix.channel }}-${base#${APP_ID}-}"
+            mv "$f" "releases/${{ matrix.channel }}-${base#"${APP_ID}"-}"
           done
           ls -lh releases
 
