@@ -784,11 +784,26 @@ func _tick_status(delta: float) -> bool:
 	return not inst.status_can_act()
 
 
+## Vue dégagée : recalculée ~7×/s (LOS_CHECK_INTERVAL), pas à chaque frame
+## (60×/s). Un raycast physique par ennemi par frame était le principal
+## poste de lag continu en combat — ça grimpe linéairement avec le nombre
+## d'ennemis à l'écran, donc ça pèse encore plus fort en coop (plus de monde
+## = plus de raycasts/frame). Le résultat mis en cache entre deux vérifs ne
+## se périme pas assez vite pour être perceptible (un ennemi ne perd/regagne
+## la vue derrière un obstacle en beaucoup moins de 150 ms).
+var _los_check_timer: float = 0.0
+var _cached_los:      bool  = true
+const LOS_CHECK_INTERVAL := 0.15
+
 ## Renvoie le point vers lequel diriger l'ennemi : ligne droite si la vue est
 ## dégagée, sinon le prochain point de détour calculé via la grille A* de la map.
 func _get_steer_target(target_pos: Vector3, delta: float) -> Vector3:
 	_path_repath_timer -= delta
-	if _has_clear_line_of_sight(target_pos):
+	_los_check_timer    -= delta
+	if _los_check_timer <= 0.0:
+		_los_check_timer = LOS_CHECK_INTERVAL
+		_cached_los = _has_clear_line_of_sight(target_pos)
+	if _cached_los:
 		_path_repath_timer = 0.0   # ligne dégagée — pas besoin de chemin mémorisé
 		return target_pos
 

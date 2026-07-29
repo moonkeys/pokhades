@@ -59,6 +59,8 @@ func _ready() -> void:
 			_run_scenario(_scenario_team_buff)
 		elif arg == "smoke_move_upgrade":
 			_run_scenario(_scenario_move_upgrade)
+		elif arg == "smoke_los_throttle":
+			_run_scenario(_scenario_los_throttle)
 		elif arg == "smoke_cooldown_focus":
 			_run_scenario(_scenario_cooldown_focus)
 		elif arg == "smoke_pokedex":
@@ -852,6 +854,42 @@ func _scenario_move_upgrade() -> void:
 			% [power_before, md.power, md.upgrade_count])
 		return
 	_pass("move_upgrade", "%s renforcée : Puiss. %d → %d" % [md.display_name, power_before, md.power])
+
+
+## Retour joueurs : « ça lag beaucoup en run, j'ai peur que ce soit pire en
+## coop ». EnemyAI faisait un raycast physique de ligne de vue à CHAQUE
+## frame, pour CHAQUE ennemi (60×/s) — throttlé depuis à ~7×/s
+## (LOS_CHECK_INTERVAL). Vérifie indirectement le throttle : un 2e appel
+## juste après le 1er ne doit PAS redéclencher de raycast (le minuteur décroît
+## depuis sa valeur précédente au lieu d'être réarmé à chaque frame).
+func _scenario_los_throttle() -> void:
+	GameManager.is_first_run = false
+	GameManager.hub_team = [GameManager.STARTER_IDS[0]]
+	RunManager.inst().start_run()
+	get_tree().change_scene_to_file("res://scenes/combat/CombatArena.tscn")
+	var waited := 0.0
+	while get_tree().get_nodes_in_group("enemies").is_empty() and waited < 18.0:
+		await get_tree().create_timer(0.5).timeout
+		waited += 0.5
+	var enemies := get_tree().get_nodes_in_group("enemies")
+	if enemies.is_empty():
+		_fail("los_throttle", "aucun ennemi apparu")
+		return
+
+	var e: Node = enemies[0]
+	var target: Vector3 = e.global_position + Vector3(1.0, 0, 0)
+	e.call("_get_steer_target", target, 0.01)
+	var timer_after_first: float = e.get("_los_check_timer")
+	if timer_after_first <= 0.0:
+		_fail("los_throttle", "le minuteur de vérification LOS n'a pas été réarmé")
+		return
+
+	e.call("_get_steer_target", target, 0.01)
+	var timer_after_second: float = e.get("_los_check_timer")
+	if timer_after_second >= timer_after_first:
+		_fail("los_throttle", "le minuteur ne décroît pas — la vue est revérifiée à chaque appel")
+		return
+	_pass("los_throttle", "vérification LOS throttlée (%.3f -> %.3f)" % [timer_after_first, timer_after_second])
 
 
 ## Retour joueurs : « le cooldown visuel se fige si on change de focus dans
