@@ -61,6 +61,8 @@ func _ready() -> void:
 			_run_scenario(_scenario_move_upgrade)
 		elif arg == "smoke_los_throttle":
 			_run_scenario(_scenario_los_throttle)
+		elif arg == "smoke_sprite_occlusion":
+			_run_scenario(_scenario_sprite_occlusion)
 		elif arg == "smoke_portrait_race":
 			_run_scenario(_scenario_portrait_race)
 		elif arg == "smoke_stats_overlay_item":
@@ -927,6 +929,76 @@ func _scenario_move_upgrade() -> void:
 			% [power_before, md.power, md.upgrade_count])
 		return
 	_pass("move_upgrade", "%s renforcée : Puiss. %d → %d" % [md.display_name, power_before, md.power])
+
+
+## Retour joueurs : « on ne voit pas les sprites derrière des décors 3D » —
+## un obstacle placé PILE entre la caméra et le joueur doit déclencher
+## l'occlusion (sprite semi-transparent, alpha-blend réactivé) ; le retirer
+## doit la lever (retour au rendu opaque normal).
+func _scenario_sprite_occlusion() -> void:
+	GameManager.is_first_run = false
+	GameManager.hub_team = [GameManager.STARTER_IDS[0]]
+	RunManager.inst().start_run()
+	get_tree().change_scene_to_file("res://scenes/combat/CombatArena.tscn")
+	var waited := 0.0
+	while get_tree().get_nodes_in_group("players").is_empty() and waited < 18.0:
+		await get_tree().create_timer(0.5).timeout
+		waited += 0.5
+	var players := get_tree().get_nodes_in_group("players")
+	if players.is_empty():
+		_fail("sprite_occlusion", "équipe non apparue")
+		return
+	var member: Node = players[0]
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		_fail("sprite_occlusion", "aucune caméra active")
+		return
+
+	# Aucun obstacle : pas d'occlusion.
+	member.set("_occlusion_timer", 0.0)
+	member.call("_update_sprite_occlusion", 0.0)
+	if bool(member.get("_sprite_occluded")):
+		_fail("sprite_occlusion", "occlusion signalée sans aucun obstacle sur le trajet")
+		return
+
+	# Obstacle massif planté au milieu du segment caméra → joueur (layer 1,
+	# même couche que les colliders d'arbres/rochers de MapRender3D).
+	var member_pos: Vector3 = member.get("global_position")
+	var mid: Vector3 = (cam.global_position + member_pos) * 0.5
+	var body := StaticBody3D.new()
+	body.collision_layer = 1
+	body.collision_mask  = 0
+	var cs := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(6, 6, 6)
+	cs.shape = box
+	body.add_child(cs)
+	get_tree().current_scene.add_child(body)
+	body.global_position = mid
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+
+	member.set("_occlusion_timer", 0.0)
+	member.call("_update_sprite_occlusion", 0.0)
+	if not bool(member.get("_sprite_occluded")):
+		_fail("sprite_occlusion", "obstacle massif entre caméra et joueur non détecté")
+		body.queue_free()
+		return
+	var sprite: Node = member.get("sprite")
+	if sprite.get("alpha_cut") != SpriteBase3D.ALPHA_CUT_DISABLED:
+		_fail("sprite_occlusion", "alpha_cut pas repassé en blend pendant l'occlusion")
+		body.queue_free()
+		return
+
+	body.queue_free()
+	await get_tree().process_frame
+	member.set("_occlusion_timer", 0.0)
+	member.call("_update_sprite_occlusion", 0.0)
+	if bool(member.get("_sprite_occluded")):
+		_fail("sprite_occlusion", "occlusion persiste après retrait de l'obstacle")
+		return
+
+	_pass("sprite_occlusion", "occlusion détectée avec obstacle, levée sans")
 
 
 ## Retour joueurs : « ça lag beaucoup en run, j'ai peur que ce soit pire en

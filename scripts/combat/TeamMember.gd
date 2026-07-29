@@ -198,6 +198,7 @@ func setup(instance: PokemonInstance, idx: int, active: bool) -> void:
 func _remote_process(delta: float) -> void:
 	var to := _net_target - global_position
 	global_position = global_position.lerp(_net_target, minf(1.0, delta * 12.0))
+	_update_sprite_occlusion(delta)
 	if sprite.sprite_frames != null:
 		var anim := _net_anim if to.length() > 0.06 else "idle"
 		if anim != _current_anim and sprite.sprite_frames.has_animation(anim):
@@ -433,6 +434,7 @@ func _physics_process(delta: float) -> void:
 		_move_cd[i] = max(0.0, _move_cd[i] - delta)
 	_update_range_ring()
 	_update_grass_hiding(delta)
+	_update_sprite_occlusion(delta)
 	_update_puddle_steps(delta)
 	_tick_buffs(delta)
 
@@ -1299,6 +1301,49 @@ func _update_grass_hiding(delta: float) -> void:
 			sprite.modulate = GRASS_HIDDEN_TINT
 	elif sprite.modulate == GRASS_HIDDEN_TINT:
 		sprite.modulate = Color.WHITE
+
+
+## Retour joueurs : « on ne voit pas les sprites quand ils sont derrière des
+## décors 3D » — un tronc d'arbre ou un rocher entre la caméra et le
+## personnage le rendait invisible (au lieu d'être juste caché DERRIÈRE),
+## illisible en combat. Un rayon caméra → personnage (throttlé comme le LOS
+## ennemi, cf. EnemyAI.LOS_CHECK_INTERVAL) détecte l'occlusion par les
+## obstacles (layer 1, mêmes colliders que ceux qui bloquent le déplacement)
+## et rend le sprite semi-transparent le temps qu'elle dure.
+const OCCLUDED_TINT := Color(1.0, 1.0, 1.0, 0.35)
+const OCCLUSION_CHECK_INTERVAL := 0.15
+var _occlusion_timer: float = 0.0
+var _sprite_occluded: bool = false
+
+func _update_sprite_occlusion(delta: float) -> void:
+	_occlusion_timer -= delta
+	if _occlusion_timer > 0.0:
+		return
+	_occlusion_timer = OCCLUSION_CHECK_INTERVAL
+	if _evolving or not is_instance_valid(sprite):
+		return
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	var space := get_world_3d().direct_space_state
+	var query := PhysicsRayQueryParameters3D.create(cam.global_position, global_position + Vector3(0, 0.5, 0))
+	query.collision_mask = 1
+	query.exclude        = [get_rid()]
+	var was_occluded := _sprite_occluded
+	_sprite_occluded = not space.intersect_ray(query).is_empty()
+	if _sprite_occluded == was_occluded:
+		return
+	# alpha_cut DISCARD (mode normal, cf. Billboard3D.setup_sprite) ne fait que
+	# tout-ou-rien sur un seuil — un modulate.a réduit y serait juste invisible
+	# au lieu de translucide. DISABLED repasse en vrai alpha-blend le temps de
+	# l'occlusion.
+	if _sprite_occluded:
+		if sprite.modulate == Color.WHITE:
+			sprite.alpha_cut = SpriteBase3D.ALPHA_CUT_DISABLED
+			sprite.modulate  = OCCLUDED_TINT
+	elif sprite.modulate == OCCLUDED_TINT:
+		sprite.alpha_cut = SpriteBase3D.ALPHA_CUT_DISCARD
+		sprite.modulate  = Color.WHITE
 
 
 ## Retourne true si le coup a bien porté (false = évité — esquive ou

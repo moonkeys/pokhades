@@ -477,6 +477,7 @@ func _physics_process(delta: float) -> void:
 		var to := net_target - global_position
 		global_position = global_position.lerp(net_target, minf(1.0, delta * 10.0))
 		_update_anim(Vector2(to.x, to.z) if to.length() > 0.08 else Vector2.ZERO)
+		_update_sprite_occlusion(delta)
 		return
 
 	_attack_timer = max(0.0, _attack_timer - delta)
@@ -490,6 +491,7 @@ func _physics_process(delta: float) -> void:
 		return
 
 	_update_grass_hiding()
+	_update_sprite_occlusion(delta)
 	_update_puddle_steps(delta)
 
 	# Recul en cours : l'IA lâche les commandes, le corps glisse (move_and_slide
@@ -1155,6 +1157,46 @@ func _update_grass_hiding() -> void:
 	if hidden != _grass_hidden:
 		_grass_hidden = hidden
 		visible = not hidden
+
+
+## Retour joueurs : « on ne voit pas les sprites derrière des décors 3D » —
+## même mécanisme que TeamMember._update_sprite_occlusion (rayon caméra →
+## personnage, throttlé, layer 1 = obstacles). Semi-transparent plutôt
+## qu'invisible : contrairement à l'herbe haute (dissimulation VOULUE, cf.
+## _update_grass_hiding), un tronc d'arbre qui masque juste la vue ne doit
+## pas rendre l'ennemi indétectable.
+const OCCLUDED_TINT := Color(1.0, 1.0, 1.0, 0.35)
+const OCCLUSION_CHECK_INTERVAL := 0.15
+var _occlusion_timer: float = 0.0
+var _sprite_occluded: bool = false
+
+func _update_sprite_occlusion(delta: float) -> void:
+	_occlusion_timer -= delta
+	if _occlusion_timer > 0.0:
+		return
+	_occlusion_timer = OCCLUSION_CHECK_INTERVAL
+	if not is_instance_valid(sprite):
+		return
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	var space := get_world_3d().direct_space_state
+	var query := PhysicsRayQueryParameters3D.create(cam.global_position, global_position + Vector3(0, 0.5, 0))
+	query.collision_mask = 1
+	query.exclude        = [get_rid()]
+	var was_occluded := _sprite_occluded
+	_sprite_occluded = not space.intersect_ray(query).is_empty()
+	if _sprite_occluded == was_occluded:
+		return
+	# cf. TeamMember._update_sprite_occlusion : DISCARD est tout-ou-rien, il
+	# faut repasser en alpha-blend pour qu'un modulate.a réduit soit visible.
+	if _sprite_occluded:
+		if sprite.modulate == Color.WHITE:
+			sprite.alpha_cut = SpriteBase3D.ALPHA_CUT_DISABLED
+			sprite.modulate  = OCCLUDED_TINT
+	elif sprite.modulate == OCCLUDED_TINT:
+		sprite.alpha_cut = SpriteBase3D.ALPHA_CUT_DISCARD
+		sprite.modulate  = Color.WHITE
 
 
 ## Cet ennemi est-il tapi et invisible ? Consulté par l'équipe du joueur (cf.
