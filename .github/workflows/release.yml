@@ -1,4 +1,5 @@
-# Publie une nouvelle version : export Godot -> paquet Velopack -> GitHub Release.
+# Publie une nouvelle version : export Godot -> paquet Velopack -> GitHub Release,
+# pour Windows, Linux et macOS.
 # Déclenché en poussant un tag :  git tag v1.0.0 && git push origin v1.0.0
 # (déclenchement manuel possible depuis l'onglet Actions, sans publier de release)
 name: Release
@@ -16,12 +17,46 @@ env:
   APP_ID: Pokhades
 
 jobs:
-  release:
+  build:
     # Velopack packe pour la plateforme du runner qui l'exécute (pas celle du
-    # binaire fourni) : un mainExe .exe (PE) packagé sur ubuntu-latest fait
-    # planter vpk, qui tente d'y lire un ELF Linux. Il faut un runner Windows
-    # pour produire l'installeur Windows.
-    runs-on: windows-latest
+    # binaire fourni) : un mainExe Windows packagé sur ubuntu-latest fait
+    # planter vpk, qui tente d'y lire un ELF Linux. Chaque plateforme tourne
+    # donc sur son propre runner natif.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - channel: win
+            os: windows-latest
+            preset: "Windows Desktop"
+            export_path: builds/windows/Pokhades.exe
+            pack_dir: builds/windows
+            main_exe: Pokhades.exe
+            godot_asset: win64.exe.zip
+            godot_asset_bin: win64.exe
+            templates_dir: "$APPDATA/Godot/export_templates/${{ env.GODOT_VERSION }}.stable"
+
+          - channel: linux
+            os: ubuntu-latest
+            preset: "Linux"
+            export_path: builds/linux/Pokhades.x86_64
+            pack_dir: builds/linux
+            main_exe: Pokhades.x86_64
+            godot_asset: linux.x86_64.zip
+            godot_asset_bin: linux.x86_64
+            templates_dir: "$HOME/.local/share/godot/export_templates/${{ env.GODOT_VERSION }}.stable"
+
+          - channel: osx
+            os: macos-latest
+            preset: "macOS"
+            export_path: builds/macos/Pokhades.zip
+            pack_dir: builds/macos/unzipped
+            main_exe: Pokhades.app
+            godot_asset: macos.universal.zip
+            godot_asset_bin: ""   # cas particulier : bundle Godot.app, pas un binaire nu
+            templates_dir: "$HOME/Library/Application Support/Godot/export_templates/${{ env.GODOT_VERSION }}.stable"
+
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30   # garde-fou : un export bloqué ne tourne pas indéfiniment
     defaults:
       run:
@@ -32,32 +67,49 @@ jobs:
       - name: Installer Godot + templates d'export
         run: |
           BASE="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable"
-          curl -fsSL -o godot.zip "$BASE/Godot_v${GODOT_VERSION}-stable_win64.exe.zip"
+          curl -fsSL -o godot.zip "$BASE/Godot_v${GODOT_VERSION}-stable_${{ matrix.godot_asset }}"
           curl -fsSL -o tpl.tpz   "$BASE/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
           unzip -q godot.zip
-
           mkdir -p "$RUNNER_TEMP/godot-bin"
-          mv Godot_v*_win64.exe "$RUNNER_TEMP/godot-bin/godot.exe"
-          echo "$RUNNER_TEMP/godot-bin" >> "$GITHUB_PATH"
+
+          if [ "${{ matrix.channel }}" = "osx" ]; then
+            mv Godot.app "$RUNNER_TEMP/godot-bin/Godot.app"
+            GODOT_BIN="$RUNNER_TEMP/godot-bin/Godot.app/Contents/MacOS/Godot"
+          else
+            mv "Godot_v${GODOT_VERSION}-stable_${{ matrix.godot_asset_bin }}" "$RUNNER_TEMP/godot-bin/godot$( [ '${{ matrix.channel }}' = 'win' ] && echo .exe )"
+            GODOT_BIN="$RUNNER_TEMP/godot-bin/godot$( [ '${{ matrix.channel }}' = 'win' ] && echo .exe )"
+          fi
+          chmod +x "$GODOT_BIN"
+          echo "GODOT_BIN=$GODOT_BIN" >> "$GITHUB_ENV"
 
           unzip -q tpl.tpz
           # Le dossier attendu porte la version telle que rapportée par l'éditeur
-          mkdir -p "$APPDATA/Godot/export_templates/${GODOT_VERSION}.stable"
-          mv templates/* "$APPDATA/Godot/export_templates/${GODOT_VERSION}.stable/"
-          "$RUNNER_TEMP/godot-bin/godot.exe" --version
+          mkdir -p "${{ matrix.templates_dir }}"
+          mv templates/* "${{ matrix.templates_dir }}/"
+          "$GODOT_BIN" --version
 
       - name: Importer les ressources
         # --import se termine tout seul, mais un projet non importé peut laisser
         # Godot en attente : timeout dur + on ignore un code de sortie non nul,
         # l'export qui suit est le vrai test.
-        run: timeout 900 godot --headless --import . || true
+        run: timeout 900 "$GODOT_BIN" --headless --import . || true
 
-      - name: Exporter le jeu (Windows)
+      - name: Exporter le jeu (${{ matrix.channel }})
         run: |
-          mkdir -p builds/windows
-          timeout 900 godot --headless --export-release "Windows Desktop" builds/windows/Pokhades.exe
-          test -f builds/windows/Pokhades.exe   # échoue franchement si l'export n'a rien produit
-          ls -lh builds/windows
+          mkdir -p "$(dirname "${{ matrix.export_path }}")"
+          timeout 900 "$GODOT_BIN" --headless --export-release "${{ matrix.preset }}" "${{ matrix.export_path }}"
+          test -e "${{ matrix.export_path }}"   # échoue franchement si l'export n'a rien produit
+          ls -lh "$(dirname "${{ matrix.export_path }}")"
+
+      - name: Préparer le dossier à packager
+        run: |
+          if [ "${{ matrix.channel }}" = "osx" ]; then
+            # L'export macOS produit un .zip contenant Pokhades.app ; Velopack
+            # a besoin du bundle .app directement dans packDir.
+            mkdir -p "${{ matrix.pack_dir }}"
+            unzip -q "${{ matrix.export_path }}" -d "${{ matrix.pack_dir }}"
+            ls "${{ matrix.pack_dir }}"
+          fi
 
       - name: Installer Velopack
         run: dotnet tool install -g vpk
@@ -67,19 +119,62 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           [ "$VERSION" = "$GITHUB_REF_NAME" ] && VERSION="0.0.$GITHUB_RUN_NUMBER"   # run manuel, hors tag
           mkdir -p releases
-          # Récupère les paquets précédents pour que Velopack calcule un delta
-          gh release download --pattern "*.nupkg" --dir releases || true
+          # Récupère les paquets précédents de CE canal pour que Velopack calcule un delta
+          # (nom tel que renommé par l'étape "Renommer les paquets" d'un run antérieur)
+          gh release download --pattern "${{ matrix.channel }}-*.nupkg" --dir releases || true
           vpk pack \
             --packId "$APP_ID" \
             --packVersion "$VERSION" \
-            --packDir builds/windows \
-            --mainExe Pokhades.exe \
+            --packDir "${{ matrix.pack_dir }}" \
+            --mainExe "${{ matrix.main_exe }}" \
+            --channel "${{ matrix.channel }}" \
             --outputDir releases
-          # Nom attendu par la page de téléchargement (docs/index.html)
-          mv releases/*Setup.exe releases/Pokhades-win-Setup.exe
           ls -lh releases
         env:
           GH_TOKEN: ${{ github.token }}
+
+      - name: Renommer les paquets (nom attendu par la page + éviter les collisions inter-canaux)
+        # Velopack ne préfixe pas tout par le canal : "RELEASES" et
+        # "*-full.nupkg" ont le même nom sur les trois plateformes. Comme les
+        # trois jobs finissent fusionnés dans un seul dossier avant l'upload
+        # vers la Release, ces fichiers s'écraseraient silencieusement.
+        run: |
+          case "${{ matrix.channel }}" in
+            win)   ext="exe";      dest="Pokhades-win-Setup.exe" ;;
+            linux) ext="AppImage"; dest="Pokhades-linux.AppImage" ;;
+            osx)   ext="pkg";      dest="Pokhades-osx-Setup.pkg" ;;
+          esac
+          f=$(ls releases/*."$ext" 2>/dev/null | head -1)
+          if [ -n "$f" ]; then
+            cp "$f" "releases/$dest"
+          else
+            echo "::warning::Aucun .$ext produit par vpk pour le canal ${{ matrix.channel }} — vérifie le contenu de releases/"
+          fi
+
+          [ -f releases/RELEASES ] && mv releases/RELEASES "releases/RELEASES-${{ matrix.channel }}"
+          for f in releases/*-full.nupkg releases/*-delta.nupkg; do
+            [ -f "$f" ] || continue
+            base=$(basename "$f")
+            mv "$f" "releases/${{ matrix.channel }}-${base#${APP_ID}-}"
+          done
+          ls -lh releases
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pokhades-${{ matrix.channel }}
+          path: releases/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pokhades-*
+          path: releases
+          merge-multiple: true
+
+      - run: ls -lh releases
 
       - name: Publier la Release
         if: startsWith(github.ref, 'refs/tags/')
