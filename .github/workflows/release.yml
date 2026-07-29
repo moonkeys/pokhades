@@ -17,23 +17,34 @@ env:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    # Velopack packe pour la plateforme du runner qui l'exécute (pas celle du
+    # binaire fourni) : un mainExe .exe (PE) packagé sur ubuntu-latest fait
+    # planter vpk, qui tente d'y lire un ELF Linux. Il faut un runner Windows
+    # pour produire l'installeur Windows.
+    runs-on: windows-latest
     timeout-minutes: 30   # garde-fou : un export bloqué ne tourne pas indéfiniment
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
 
       - name: Installer Godot + templates d'export
         run: |
           BASE="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable"
-          curl -fsSL -o godot.zip "$BASE/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          curl -fsSL -o godot.zip "$BASE/Godot_v${GODOT_VERSION}-stable_win64.exe.zip"
           curl -fsSL -o tpl.tpz   "$BASE/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
           unzip -q godot.zip
-          sudo mv Godot_v*_linux.x86_64 /usr/local/bin/godot && sudo chmod +x /usr/local/bin/godot
+
+          mkdir -p "$RUNNER_TEMP/godot-bin"
+          mv Godot_v*_win64.exe "$RUNNER_TEMP/godot-bin/godot.exe"
+          echo "$RUNNER_TEMP/godot-bin" >> "$GITHUB_PATH"
+
           unzip -q tpl.tpz
           # Le dossier attendu porte la version telle que rapportée par l'éditeur
-          mkdir -p "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
-          mv templates/* "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable/"
-          godot --version
+          mkdir -p "$APPDATA/Godot/export_templates/${GODOT_VERSION}.stable"
+          mv templates/* "$APPDATA/Godot/export_templates/${GODOT_VERSION}.stable/"
+          "$RUNNER_TEMP/godot-bin/godot.exe" --version
 
       - name: Importer les ressources
         # --import se termine tout seul, mais un projet non importé peut laisser
