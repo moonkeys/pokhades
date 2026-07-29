@@ -141,10 +141,18 @@ jobs:
         run: |
           if [ "${{ matrix.channel }}" = "osx" ]; then
             # L'export macOS produit un .zip contenant Pokhades.app ; Velopack
-            # a besoin du bundle .app directement dans packDir.
+            # a besoin du bundle .app directement dans packDir. Reproduit et
+            # validé en local avec le même zip et la même commande — en cas
+            # de nouvel échec ici, ces logs (contenu du zip, contenu après
+            # extraction) doivent suffire à voir où ça diverge sans un
+            # nouvel aller-retour.
+            echo "--- contenu de ${{ matrix.export_path }} ---"
+            unzip -l "${{ matrix.export_path }}"
             mkdir -p "${{ matrix.pack_dir }}"
             unzip -q "${{ matrix.export_path }}" -d "${{ matrix.pack_dir }}"
-            ls "${{ matrix.pack_dir }}"
+            echo "--- contenu de ${{ matrix.pack_dir }} après extraction ---"
+            find "${{ matrix.pack_dir }}" -maxdepth 3
+            test -d "${{ matrix.pack_dir }}/${{ matrix.main_exe }}"
           fi
 
       - name: Installer le runtime .NET
