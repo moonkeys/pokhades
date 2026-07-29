@@ -13,6 +13,10 @@ permissions:
   contents: write
 
 env:
+  # Le contexte env n'est pas accessible depuis strategy.matrix (erreur
+  # "Unrecognized named-value: env" à la compilation du workflow) : la même
+  # valeur est donc aussi codée en dur dans templates_dir pour chaque
+  # entrée de la matrice ci-dessous. Les deux doivent rester synchronisés.
   GODOT_VERSION: "4.7"   # doit correspondre aux templates d'export du projet
   APP_ID: Pokhades
 
@@ -34,7 +38,7 @@ jobs:
             main_exe: Pokhades.exe
             godot_asset: win64.exe.zip
             godot_asset_bin: win64.exe
-            templates_dir: "$APPDATA/Godot/export_templates/${{ env.GODOT_VERSION }}.stable"
+            templates_dir: "$APPDATA/Godot/export_templates/4.7.stable"
 
           - channel: linux
             os: ubuntu-latest
@@ -44,7 +48,7 @@ jobs:
             main_exe: Pokhades.x86_64
             godot_asset: linux.x86_64.zip
             godot_asset_bin: linux.x86_64
-            templates_dir: "$HOME/.local/share/godot/export_templates/${{ env.GODOT_VERSION }}.stable"
+            templates_dir: "$HOME/.local/share/godot/export_templates/4.7.stable"
 
           - channel: osx
             os: macos-latest
@@ -54,7 +58,7 @@ jobs:
             main_exe: Pokhades.app
             godot_asset: macos.universal.zip
             godot_asset_bin: ""   # cas particulier : bundle Godot.app, pas un binaire nu
-            templates_dir: "$HOME/Library/Application Support/Godot/export_templates/${{ env.GODOT_VERSION }}.stable"
+            templates_dir: "$HOME/Library/Application Support/Godot/export_templates/4.7.stable"
 
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30   # garde-fou : un export bloqué ne tourne pas indéfiniment
