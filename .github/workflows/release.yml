@@ -62,6 +62,10 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30   # garde-fou : un export bloqué ne tourne pas indéfiniment
+    # Le job "build" est agrégé sur toute la matrice : sans ceci, un seul
+    # canal en échec (Linux, encore instable) ferait sauter "publish" même
+    # si Windows et macOS ont réussi.
+    continue-on-error: ${{ matrix.channel == 'linux' }}
     defaults:
       run:
         shell: bash
@@ -142,6 +146,15 @@ jobs:
             unzip -q "${{ matrix.export_path }}" -d "${{ matrix.pack_dir }}"
             ls "${{ matrix.pack_dir }}"
           fi
+
+      - name: Installer le runtime .NET
+        # vpk 1.2.0 cible .NET 10 ; les runners ne fournissent pas tous un
+        # SDK compatible pour chaque architecture par défaut (constaté sur
+        # macos-latest arm64 : "You must install .NET to run this
+        # application", DOTNET_ROOT introuvable).
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
 
       - name: Installer Velopack
         run: dotnet tool install -g vpk
