@@ -40,6 +40,21 @@ var _bar_pips:  Array = []
 enum Behavior { CHASER, KITER, CHARGER, SKIRMISHER, SUPPORT }
 var behavior: int = Behavior.CHASER
 
+## ── AGGRO ────────────────────────────────────────────────────────────
+## Avant, un ennemi fraîchement apparu fonçait IMMÉDIATEMENT sur le joueur
+## dès qu'il existait, où qu'il soit sur la map (_find_target n'a aucune
+## limite de distance) — une vague entière se ruait d'un coup, quelle que
+## soit sa position (retour joueurs : « les ennemis doivent attendre d'être
+## provoqués, ne pas tous attaquer en même temps »). Un ennemi SAUVAGE reste
+## désormais immobile (idle) tant qu'aucun joueur n'entre dans AGGRO_RANGE ou
+## ne le frappe (cf. take_damage) — les boss/champions/demi-boss, rencontres
+## SCRIPTÉES, restent engagés dès leur apparition (is_champion).
+const AGGRO_RANGE := 9.0
+var _aggro: bool = false
+## Délai aléatoire avant même de POUVOIR s'aggro — deux ennemis apparus au
+## même endroit ne se réveillent pas à la même frame.
+var _wake_delay: float = 0.0
+
 const KITE_MIN := 5.0            # le tireur recule en deçà de cette distance
 const SKIRMISH_RETREAT_TIME := 0.9
 const SKIRMISH_RETREAT_DIST := 4.5
@@ -251,6 +266,10 @@ func setup(instance: PokemonInstance, champion: bool = false, boss: bool = false
 	is_champion = champion or boss or demi_boss
 	is_boss = boss
 	is_demi_boss = demi_boss
+	# Rencontre scriptée (boss/champion/demi-boss) = engagée dès l'arrivée ;
+	# un sauvage attend d'être provoqué (cf. AGGRO_RANGE plus haut).
+	_aggro = is_champion
+	_wake_delay = randf_range(0.0, 1.2)
 
 	# Barres de vie (retour joueurs : « plus de barres pour demi-boss et
 	# boss ») : as de champion = 5, demi-boss de grotte = 4, élites = 2.
@@ -507,6 +526,22 @@ func _physics_process(delta: float) -> void:
 			_charge_timer = 0.0
 			_do_attack(hit)
 		return
+
+	# Pas encore provoqué : reste immobile (idle), ne vise ni ne poursuit
+	# personne — se réveille dès qu'un joueur entre dans AGGRO_RANGE (ou le
+	# frappe, cf. take_damage). Les rencontres scriptées sautent cette phase
+	# (_aggro déjà vrai depuis setup()).
+	if not _aggro:
+		_wake_delay -= delta
+		if _wake_delay <= 0.0:
+			var watch := _find_target()
+			if is_instance_valid(watch) and global_position.distance_to(watch.global_position) <= AGGRO_RANGE:
+				_aggro = true
+		if not _aggro:
+			velocity = Vector3.ZERO
+			_update_anim(Vector2.ZERO)
+			move_and_slide()
+			return
 
 	var target := _find_target()
 	if not is_instance_valid(target):
@@ -1154,6 +1189,7 @@ func take_damage(amount: int, source_pos: Vector3 = Vector3(INF, INF, INF),
 	_damaging_peers[attacker_peer] = true
 	if attacker != null:
 		last_attacker = attacker
+	_aggro = true   # être frappé = être provoqué, même hors de portée d'aggro
 	pokemon_instance.take_damage(amount)
 	if Net.in_run:
 		_net_hp.rpc(pokemon_instance.current_hp)

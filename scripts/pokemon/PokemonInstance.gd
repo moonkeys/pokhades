@@ -39,6 +39,10 @@ func add_dodge_chance(delta: float) -> void:
 # Objet tenu — un seul à la fois par Pokémon ({} si aucun)
 var held_item: Dictionary = {}
 
+## Rappels équipés (façon Hades) — cf. GameManager.pokemon_revives. Consommés
+## automatiquement à 0 PV (CombatArena._try_auto_revive), un par ranimation.
+var revive_charges: int = 0
+
 # ── Altération de statut (cf. StatusFx) ──────────────────────────────
 var status: String = ""          # "" | burn | poison | paralysis | freeze | sleep
 var status_time: float = 0.0

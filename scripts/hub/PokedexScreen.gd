@@ -253,6 +253,7 @@ func _refresh_team_strip() -> void:
 			if GameManager.get_assigned_item(pid) != "":
 				pw += GameManager.ITEM_WEIGHT
 			pw += _pokemon_move_weight(pid)
+			pw += GameManager.get_assigned_revives(pid) * GameManager.REVIVE_WEIGHT
 			var wl := Label.new()
 			wl.text = str(pw)
 			wl.position = Vector2(0, sw - 15)
@@ -760,6 +761,48 @@ func _open_item_picker(pid: int) -> void:
 	MenuNav.focus_first(panel)
 
 
+## Stepper simple (− N +) pour les rappels équipés d'un Pokémon (0 à
+## GameManager.MAX_REVIVES) — pas de sous-écran, façon Death Defiance de
+## Hades : chaque charge coûte REVIVE_WEIGHT de poids d'équipe, consommée
+## automatiquement à 0 PV en combat (cf. TeamMember._try_auto_revive).
+func _build_revive_row(pid: int, x: int, y: int) -> void:
+	var n := GameManager.get_assigned_revives(pid)
+	_detail_root.add_child(_lbl_node("Rappels : %d / %d" % [n, GameManager.MAX_REVIVES],
+		x, y, 130, 24, 13, C_TEXT))
+
+	var minus := Button.new()
+	minus.text     = "−"
+	minus.position = Vector2(x + 134, y - 3)
+	minus.size     = Vector2(28, 28)
+	minus.disabled = n <= 0
+	minus.add_theme_font_size_override("font_size", UiKit.scaled_font(14))
+	_style_button(minus, Color(0.34, 0.28, 0.16), C_GOLD_LT)
+	minus.pressed.connect(func() -> void:
+		GameManager.set_assigned_revives(pid, GameManager.get_assigned_revives(pid) - 1)
+		_refresh_detail()
+		_refresh_team_strip()
+	)
+	_detail_root.add_child(minus)
+
+	var plus := Button.new()
+	plus.text     = "+"
+	plus.position = Vector2(x + 168, y - 3)
+	plus.size     = Vector2(28, 28)
+	var would_fit := GameManager.compute_team_weight() + GameManager.REVIVE_WEIGHT <= GameManager.build_weight_cap
+	plus.disabled = n >= GameManager.MAX_REVIVES or not would_fit
+	plus.add_theme_font_size_override("font_size", UiKit.scaled_font(14))
+	_style_button(plus, Color(0.34, 0.28, 0.16), C_GOLD_LT)
+	plus.pressed.connect(func() -> void:
+		GameManager.set_assigned_revives(pid, GameManager.get_assigned_revives(pid) + 1)
+		_refresh_detail()
+		_refresh_team_strip()
+	)
+	_detail_root.add_child(plus)
+
+	_detail_root.add_child(_lbl_node("⚖%d chacun · partageables en multi" % GameManager.REVIVE_WEIGHT,
+		x + 206, y + 3, 240, 16, 9, C_DIM))
+
+
 ## Liste UNIFIÉE des capacités équipables par `pid` : attaques de base (déjà
 ## sues au niveau de départ) + CT achetées apprenables — fusionnées au même
 ## niveau, plus de section séparée « auto vs achat » (retour joueurs). Chaque
@@ -867,12 +910,13 @@ func _refresh_detail() -> void:
 	var w_species := GameManager.pokemon_weight(_selected_pid)
 	var w_item := GameManager.ITEM_WEIGHT if GameManager.get_assigned_item(_selected_pid) != "" else 0
 	var w_moves := _pokemon_move_weight(_selected_pid)
-	_detail_root.add_child(_lbl_node("⚖ %d" % (w_species + w_item + w_moves),
+	var w_revive := GameManager.get_assigned_revives(_selected_pid) * GameManager.REVIVE_WEIGHT
+	_detail_root.add_child(_lbl_node("⚖ %d" % (w_species + w_item + w_moves + w_revive),
 		428, 14, 70, 24, 15, C_GOLD_LT))
 	# Décomposition : chaque source de poids a sa valeur (retour joueurs :
 	# « afficher la valeur de chaque poids partout »).
-	_detail_root.add_child(_lbl_node("esp. %d · obj. %d · att. %d" % [w_species, w_item, w_moves],
-		370, 38, 130, 16, 9, C_DIM))
+	_detail_root.add_child(_lbl_node("esp. %d · obj. %d · att. %d · rap. %d" % [w_species, w_item, w_moves, w_revive],
+		330, 38, 170, 16, 9, C_DIM))
 
 	var type_row := Control.new()
 	type_row.position = Vector2(122, 48)
@@ -917,8 +961,14 @@ func _refresh_detail() -> void:
 	# Objet tenu (assignable uniquement ici, cf. cahier des charges) + Super Bonbon
 	_build_item_row(_selected_pid, 122, 82)
 
+	# Rappels équipés (façon Hades) — retour joueurs : « pouvoir équiper des
+	# rappels, ça coûte du poids, et pouvoir les partager avec ses partenaires »
+	# (partage géré côté combat, cf. Net.team_revive_pool ; ici on ne choisit
+	# que la part propre à CE Pokémon).
+	_build_revive_row(_selected_pid, 122, 122)
+
 	# Stats
-	var sy0 := 122
+	var sy0 := 152
 	for i in 6:
 		var sy := sy0 + i * 24
 		_detail_root.add_child(_lbl_node(STAT_NAMES[i], 16, sy, 76, 18, 12, C_TEXT))
@@ -941,7 +991,7 @@ func _refresh_detail() -> void:
 
 	# Séparateur
 	var sep := ColorRect.new()
-	sep.position = Vector2(16, 272)
+	sep.position = Vector2(16, 302)
 	sep.size     = Vector2(544, 2)
 	sep.color    = C_BORDER
 	_detail_root.add_child(sep)
@@ -960,16 +1010,16 @@ func _refresh_detail() -> void:
 
 	_detail_root.add_child(_lbl_node(
 		"── CAPACITÉS — %d / %d équipées  ·  [I] détails ──" % [equipped.size(), GameManager.MOVE_SLOTS],
-		16, 280, 544, 20, 13, C_DIM))
+		16, 310, 544, 20, 13, C_DIM))
 
 	if options.is_empty():
 		_detail_root.add_child(_lbl_node("Aucune capacité disponible (données non chargées)",
-			16, 302, 544, 20, 12, C_DIM))
-		_detail_root.custom_minimum_size.y = 340.0
+			16, 332, 544, 20, 12, C_DIM))
+		_detail_root.custom_minimum_size.y = 370.0
 		return
 
 	var mx := 16
-	var my := 302
+	var my := 332
 	var col_w := 178
 	for opt: Dictionary in options:
 		var api: String   = str(opt["api"])

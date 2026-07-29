@@ -61,7 +61,10 @@ run_scenario move_upgrade 20 smoke_move_upgrade
 run_scenario los_throttle 20 smoke_los_throttle
 run_scenario portrait_race 20 smoke_portrait_race
 run_scenario stats_overlay_item 20 smoke_stats_overlay_item
+run_scenario enemy_aggro 20 smoke_enemy_aggro
+run_scenario auto_revive 20 smoke_auto_revive
 run_scenario pokedex     20 smoke_pokedex
+run_scenario pokedex_revive 20 smoke_pokedex_revive
 run_scenario pokedex_stress 30 smoke_pokedex_stress
 run_scenario run_solo    25 smoke_run
 run_scenario run_acte2   25 smoke_run_room=9

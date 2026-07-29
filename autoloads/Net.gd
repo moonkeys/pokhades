@@ -33,6 +33,35 @@ var players:   Dictionary = {} # peer_id → {"name": String, "pid": int, "ready
 var host_unlocked: Array      = []
 var host_items:    Dictionary = {}
 
+## Pool PARTAGÉ de rappels d'équipe (façon Hades) — retour joueurs : « pouvoir
+## partager ses rappels avec ses partenaires ». Un Pokémon sans charge propre
+## (cf. GameManager.pokemon_revives, TeamMember._try_auto_revive) pioche ici
+## avant de tomber K.O. Chaque pair garde sa PROPRE copie du compteur,
+## initialisée IDENTIQUEMENT (déterministe depuis roster.size(), même
+## principe que base_seed) et resynchronisée par diffusion à chaque
+## consommation — optimiste plutôt qu'un aller-retour réseau à chaque K.O.
+## (qui rendrait take_damage() asynchrone, avec effet domino sur tous ses
+## appelants). Risque accepté : deux K.O. simultanés à la toute dernière
+## charge peuvent la consommer chacun de leur côté — un filet de sécurité
+## n'a pas besoin d'une exactitude parfaite au joueur près.
+const TEAM_REVIVE_PER_PLAYER := 1
+var team_revive_pool: int = 0
+
+@rpc("any_peer", "call_remote", "reliable")
+func _net_sync_revive_pool(n: int) -> void:
+	team_revive_pool = n
+
+## Consomme une charge du pool d'équipe si disponible — renvoie true si le
+## Pokémon appelant peut être ranimé. Synchrone (pas d'aller-retour réseau) :
+## voir le commentaire de team_revive_pool ci-dessus.
+func consume_team_revive() -> bool:
+	if team_revive_pool <= 0:
+		return false
+	team_revive_pool -= 1
+	if in_run:
+		_net_sync_revive_pool.rpc(team_revive_pool)
+	return true
+
 var _upnp_thread: Thread = null
 
 signal players_changed
@@ -255,6 +284,7 @@ func _begin(s: int, roster: Dictionary) -> void:
 	base_seed = s if s != 0 else 1
 	players   = roster
 	in_run    = true
+	team_revive_pool = players.size() * TEAM_REVIVE_PER_PLAYER
 	# start_run() ICI, sur CHAQUE pair, AVANT le changement de scène : la 1re
 	# zone se génère dans le _ready() du Map (enfant de CombatArena), qui
 	# s'exécute AVANT celui de l'arène elle-même — si le reset de
@@ -289,6 +319,7 @@ func request_retry() -> void:
 func _retry(s: int) -> void:
 	base_seed = s if s != 0 else 1
 	in_run    = true
+	team_revive_pool = players.size() * TEAM_REVIVE_PER_PLAYER
 	RunManager.inst().start_run()   # cf. _begin() — reset AVANT le changement de scène
 	get_tree().change_scene_to_file("res://scenes/combat/CombatArena.tscn")
 

@@ -276,6 +276,26 @@ var item_inventory:    Dictionary = {}
 var pokemon_item:      Dictionary = {}
 var start_level_bonus: Dictionary = {}
 
+## Rappels équipés (façon Hades — "Death Defiance") : pid → nb de charges
+## (0-3). Coûte du poids d'équipe (REVIVE_WEIGHT chacun), pas d'inventaire à
+## acheter — un choix de build, comme le nombre de slots de capacités.
+## Consommé automatiquement à 0 PV en run (cf. CombatArena._try_auto_revive) ;
+## en multijoueur, un coéquipier sans charge peut être sauvé par celles d'un
+## autre joueur (retour joueurs : « partager ses rappels avec ses partenaires »).
+var pokemon_revives: Dictionary = {}
+const REVIVE_WEIGHT := 3
+const MAX_REVIVES    := 3
+
+func get_assigned_revives(pid: int) -> int:
+	return int(pokemon_revives.get(pid, 0))
+
+func set_assigned_revives(pid: int, n: int) -> void:
+	var v := clampi(n, 0, MAX_REVIVES)
+	if v <= 0:
+		pokemon_revives.erase(pid)
+	else:
+		pokemon_revives[pid] = v
+
 ## Amélioration permanente : les baies au sol s'attirent vers le joueur
 ## (cf. BerryPickup). Achetée chez les Améliorations du hub.
 var berry_magnet: bool = false
@@ -496,6 +516,7 @@ func compute_team_weight() -> int:
 		# 3 pour une grosse frappe) — le build se paie en force de frappe, pas
 		# en nombre d'emplacements.
 		total += loadout_weight(pid)
+		total += get_assigned_revives(pid) * REVIVE_WEIGHT
 	return total
 
 
@@ -778,6 +799,7 @@ func save_game() -> void:
 		"owned_items":         owned_items,
 		"item_inventory":      item_inventory,
 		"pokemon_item":        _stringify_keys(pokemon_item),
+		"pokemon_revives":     _stringify_keys(pokemon_revives),
 		"start_level_bonus":   _stringify_keys(start_level_bonus),
 		"berry_magnet":        berry_magnet,
 		"move_slot_count":     move_slot_count,
@@ -828,6 +850,7 @@ func load_game() -> void:
 	owned_items.assign(d.get("owned_items", []))
 	item_inventory       = d.get("item_inventory", {})
 	pokemon_item         = _intify_keys(d.get("pokemon_item", {}))
+	pokemon_revives      = _intify_keys(d.get("pokemon_revives", {}))
 	start_level_bonus    = _intify_keys(d.get("start_level_bonus", {}))
 	berry_magnet         = bool(d.get("berry_magnet", berry_magnet))
 	move_slot_count      = int(d.get("move_slot_count", move_slot_count))
@@ -891,6 +914,7 @@ func reset_save() -> void:
 	owned_items           = []
 	item_inventory        = {}
 	pokemon_item          = {}
+	pokemon_revives       = {}
 	start_level_bonus     = {}
 	berry_magnet          = false
 	move_slot_count       = MOVE_SLOTS

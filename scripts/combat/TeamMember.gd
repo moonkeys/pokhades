@@ -159,6 +159,9 @@ signal portrait_ready(idx: int, texture: Texture2D)
 signal move_selected(idx: int)
 signal dash_changed(charges: int, max_charges: int)
 signal died
+## `shared` = la charge venait du pool d'équipe partagé (Net.consume_team_revive),
+## pas d'une charge propre — cf. _try_auto_revive.
+signal auto_revived(name_fr: String, shared: bool)
 
 @onready var sprite: AnimatedSprite3D = $AnimatedSprite3D
 
@@ -1348,6 +1351,8 @@ func take_damage(amount: int, source_pos: Vector3 = Vector3(INF, INF, INF)) -> b
 
 
 func _play_faint_anim() -> void:
+	if _try_auto_revive():
+		return
 	set_physics_process(false)
 	remove_from_group("players")
 	if is_instance_valid(_range_ring):
@@ -1360,6 +1365,32 @@ func _play_faint_anim() -> void:
 	sprite.modulate = Color(0.52, 0.52, 0.60, 0.9)
 	sprite.position = _sprite_base_pos
 	died.emit()
+
+
+## Rappel équipé façon Hades ("Death Defiance") : appelé par _play_faint_anim
+## AVANT que le K.O. ne se produise visuellement — jamais de flash "tombé"
+## suivi d'un "relevé", contrairement à revive() (qui ressuscite un membre
+## DÉJÀ tombé, cf. Rappel acheté en Boutique). Consomme une charge propre
+## (GameManager.pokemon_revives, équipée avant la run), sinon pioche dans le
+## pool d'équipe partagé (retour joueurs : « pouvoir partager ses rappels
+## avec ses partenaires »). Renvoie true si une charge a été trouvée.
+const REVIVE_HP_PCT := 0.5
+
+func _try_auto_revive() -> bool:
+	var shared := false
+	if pokemon_instance.revive_charges > 0:
+		pokemon_instance.revive_charges -= 1
+	elif Net.in_run and Net.consume_team_revive():
+		shared = true
+	else:
+		return false
+	pokemon_instance.current_hp = maxi(1, int(pokemon_instance.max_hp * REVIVE_HP_PCT))
+	hp_changed.emit(pokemon_instance.hp_ratio())
+	net_broadcast_hp()
+	CombatVFX.spawn_damage_number(get_parent(), global_position, 0, "heal")
+	CombatVFX.spawn_death_poof(get_parent(), global_position, Color(1.0, 0.85, 0.30))
+	auto_revived.emit(pokemon_instance.data.name_fr, shared)
+	return true
 
 
 ## Ranime un membre K.O. (bonus de fin de zone "revive") — restaure les PV

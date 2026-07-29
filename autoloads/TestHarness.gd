@@ -65,10 +65,16 @@ func _ready() -> void:
 			_run_scenario(_scenario_portrait_race)
 		elif arg == "smoke_stats_overlay_item":
 			_run_scenario(_scenario_stats_overlay_item)
+		elif arg == "smoke_enemy_aggro":
+			_run_scenario(_scenario_enemy_aggro)
+		elif arg == "smoke_auto_revive":
+			_run_scenario(_scenario_auto_revive)
 		elif arg == "smoke_cooldown_focus":
 			_run_scenario(_scenario_cooldown_focus)
 		elif arg == "smoke_pokedex":
 			_run_scenario(_scenario_pokedex)
+		elif arg == "smoke_pokedex_revive":
+			_run_scenario(_scenario_pokedex_revive)
 		elif arg == "smoke_pokedex_stress":
 			_run_scenario(_scenario_pokedex_stress)
 		elif arg == "mp_test_host":
@@ -245,6 +251,18 @@ func _find_label_with_text(node: Node, needle: String) -> Label:
 		return node
 	for c in node.get_children():
 		var found := _find_label_with_text(c, needle)
+		if found != null:
+			return found
+	return null
+
+
+## Même principe que _find_label_with_text, mais pour un Button dont le texte
+## est EXACTEMENT `text` (les steppers +/− du Pokédex n'ont qu'un caractère).
+func _find_button_with_text(node: Node, text: String) -> Button:
+	if node is Button and (node as Button).text == text:
+		return node
+	for c in node.get_children():
+		var found := _find_button_with_text(c, text)
 		if found != null:
 			return found
 	return null
@@ -486,6 +504,57 @@ func _scenario_pokedex() -> void:
 		_fail("pokedex", "focus inerte (%s -> %s)" % [f0, f1])
 		return
 	_pass("pokedex", "focus %s -> %s" % [f0.name, f1.name])
+
+
+## Retour joueurs : « pouvoir équiper des Rappels, ça coûte du poids ». Ouvre
+## le Pokédex, sélectionne le starter et presse le "+" du stepper de rappels
+## (cf. PokedexScreen._build_revive_row) : vérifie que GameManager.
+## pokemon_revives change ET que le poids d'équipe affiché suit.
+func _scenario_pokedex_revive() -> void:
+	var pid: int = GameManager.STARTER_IDS[0]
+	GameManager.hub_team = [pid]
+	GameManager.set_assigned_revives(pid, 0)
+	var screen := PokedexScreen.new()
+	get_tree().root.add_child(screen)
+	await get_tree().create_timer(2.5).timeout
+
+	screen.call("_select", pid)
+	await get_tree().process_frame
+	await get_tree().process_frame
+
+	var w_before := GameManager.compute_team_weight()
+	var plus := _find_button_with_text(screen, "+")
+	if plus == null:
+		_fail("pokedex_revive", "bouton + du stepper introuvable")
+		screen.queue_free()
+		return
+	plus.pressed.emit()
+	await get_tree().process_frame
+
+	if GameManager.get_assigned_revives(pid) != 1:
+		_fail("pokedex_revive", "le + n'a pas incrémenté la charge (eu %d)" % GameManager.get_assigned_revives(pid))
+		screen.queue_free()
+		return
+	var w_after := GameManager.compute_team_weight()
+	if w_after - w_before != GameManager.REVIVE_WEIGHT:
+		_fail("pokedex_revive", "poids d'équipe non mis à jour (%d -> %d)" % [w_before, w_after])
+		screen.queue_free()
+		return
+
+	var minus := _find_button_with_text(screen, "−")
+	if minus == null:
+		_fail("pokedex_revive", "bouton − du stepper introuvable")
+		screen.queue_free()
+		return
+	minus.pressed.emit()
+	await get_tree().process_frame
+	if GameManager.get_assigned_revives(pid) != 0:
+		_fail("pokedex_revive", "le − n'a pas décrémenté la charge (eu %d)" % GameManager.get_assigned_revives(pid))
+		screen.queue_free()
+		return
+
+	_pass("pokedex_revive", "stepper +/− : charge et poids d'équipe à jour")
+	screen.queue_free()
 
 
 ## STRESS : simule des remplacements d'attaque en RAFALE (retour joueurs :
@@ -983,6 +1052,128 @@ func _scenario_stats_overlay_item() -> void:
 		return
 	_pass("stats_overlay_item", "nom + description de l'objet affichés")
 	overlay.queue_free()
+
+
+## Retour joueurs : « les ennemis doivent attendre d'être provoqués/aggro, et
+## ne pas tous attaquer en même temps ». Un ennemi SAUVAGE (pas un champion —
+## ceux-là restent engagés dès l'arrivée, cf. setup()) doit rester immobile
+## tant qu'aucun joueur n'entre dans AGGRO_RANGE ou ne le frappe.
+func _scenario_enemy_aggro() -> void:
+	GameManager.is_first_run = false
+	GameManager.hub_team = [GameManager.STARTER_IDS[0]]
+	RunManager.inst().start_run()
+	get_tree().change_scene_to_file("res://scenes/combat/CombatArena.tscn")
+	var waited := 0.0
+	while get_tree().get_nodes_in_group("enemies").is_empty() and waited < 18.0:
+		await get_tree().create_timer(0.5).timeout
+		waited += 0.5
+	var enemies := get_tree().get_nodes_in_group("enemies")
+	var players := get_tree().get_nodes_in_group("players")
+	if enemies.is_empty() or players.is_empty():
+		_fail("enemy_aggro", "ennemis ou équipe non apparus")
+		return
+
+	var e: Node = null
+	for cand in enemies:
+		if not bool(cand.get("is_champion")):
+			e = cand
+			break
+	if e == null:
+		_fail("enemy_aggro", "aucun ennemi sauvage (non champion) trouvé")
+		return
+	var player: Node = players[0]
+
+	# Loin de tout joueur, délai de réveil déjà écoulé : doit rester passif.
+	e.set("_aggro", false)
+	e.set("_wake_delay", 0.0)
+	e.global_position = player.global_position + Vector3(500, 0, 0)
+	await get_tree().create_timer(0.3).timeout
+	if bool(e.get("_aggro")):
+		_fail("enemy_aggro", "un ennemi loin de tout joueur s'est aggro tout seul")
+		return
+
+	# À portée d'un joueur : doit s'aggro à la prochaine frame physique.
+	e.global_position = player.global_position + Vector3(2.0, 0, 0)
+	await get_tree().create_timer(0.3).timeout
+	if not bool(e.get("_aggro")):
+		_fail("enemy_aggro", "un ennemi à portée (AGGRO_RANGE) ne s'est pas aggro")
+		return
+
+	# Être frappé aggro INSTANTANÉMENT, même loin de tout joueur.
+	e.set("_aggro", false)
+	e.global_position = player.global_position + Vector3(500, 0, 0)
+	e.call("take_damage", 1)
+	if not bool(e.get("_aggro")):
+		_fail("enemy_aggro", "take_damage() ne force pas l'aggro")
+		return
+
+	_pass("enemy_aggro", "idle hors de portée, aggro à portée ET sur dégâts")
+
+
+## Retour joueurs : « pouvoir équiper des Rappels (façon Hades), coûtant du
+## poids, et pouvoir les partager avec ses partenaires ». Vérifie le coût en
+## poids (GameManager.compute_team_weight), l'auto-ranimation avec charge
+## propre (au lieu de tomber K.O.), et le partage via le pool réseau
+## (Net.consume_team_revive) une fois la charge propre épuisée.
+func _scenario_auto_revive() -> void:
+	GameManager.is_first_run = false
+	var pid: int = GameManager.STARTER_IDS[0]
+	GameManager.hub_team = [pid]
+	GameManager.set_assigned_revives(pid, 0)
+
+	var weight_without := GameManager.compute_team_weight()
+	GameManager.set_assigned_revives(pid, 1)
+	var weight_with := GameManager.compute_team_weight()
+	if weight_with - weight_without != GameManager.REVIVE_WEIGHT:
+		_fail("auto_revive", "coût en poids incorrect (%d -> %d, attendu +%d)"
+			% [weight_without, weight_with, GameManager.REVIVE_WEIGHT])
+		return
+
+	RunManager.inst().start_run()
+	get_tree().change_scene_to_file("res://scenes/combat/CombatArena.tscn")
+	var waited := 0.0
+	while get_tree().get_nodes_in_group("players").is_empty() and waited < 18.0:
+		await get_tree().create_timer(0.5).timeout
+		waited += 0.5
+	var players := get_tree().get_nodes_in_group("players")
+	if players.is_empty():
+		_fail("auto_revive", "équipe non apparue")
+		return
+	var member: Node = players[0]
+	var inst: PokemonInstance = member.get("pokemon_instance")
+	if inst.revive_charges != 1:
+		_fail("auto_revive", "charge équipée non assignée au spawn (attendu 1, eu %d)" % inst.revive_charges)
+		return
+
+	# Coup fatal : la charge propre doit absorber le K.O.
+	var landed: bool = member.call("take_damage", 999999)
+	if not landed:
+		_fail("auto_revive", "coup esquivé, test non concluant (relancer)")
+		return
+	if inst.is_fainted():
+		_fail("auto_revive", "K.O. malgré une charge de rappel équipée")
+		return
+	if inst.revive_charges != 0:
+		_fail("auto_revive", "charge propre non consommée (%d restante(s))" % inst.revive_charges)
+		return
+	if not member.is_in_group("players"):
+		_fail("auto_revive", "le membre a quitté le groupe 'players' malgré le rappel")
+		return
+
+	# Charge propre épuisée : doit maintenant piocher dans le pool partagé.
+	var pool_before: int = Net.team_revive_pool
+	if pool_before <= 0:
+		_pass("auto_revive", "charge propre consommée, K.O. évité (pool partagé vide, non testé)")
+		return
+	member.call("take_damage", 999999)
+	if inst.is_fainted():
+		_fail("auto_revive", "K.O. alors que le pool d'équipe partagé n'était pas vide")
+		return
+	if Net.team_revive_pool != pool_before - 1:
+		_fail("auto_revive", "pool partagé non décrémenté (%d -> %d)" % [pool_before, Net.team_revive_pool])
+		return
+
+	_pass("auto_revive", "charge propre puis pool partagé consommés, K.O. évité les deux fois")
 
 
 ## Retour joueurs : « le cooldown visuel se fige si on change de focus dans

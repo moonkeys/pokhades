@@ -135,6 +135,7 @@ var _mp: bool = false
 var _net_enemy_counter: int = 0
 var _net_pos_accum: float = 0.0
 const NET_POS_HZ := 10.0
+const MP_DEFAULT_REVIVES := 1   # cf. _spawn_team_mp — pas de choix au lobby, partage entre coéquipiers
 
 
 func _ready() -> void:
@@ -650,6 +651,7 @@ func _spawn_team() -> void:
 		var held: String = GameManager.get_assigned_item(base_pid)
 		if held != "":
 			instance.equip_catalog_item(held)
+		instance.revive_charges = GameManager.get_assigned_revives(base_pid)
 		var member   = TEAM_SCENE.instantiate()
 		add_child(member)
 		member.global_position = spawn_center + SPAWN_OFFSETS[i % SPAWN_OFFSETS.size()]
@@ -711,6 +713,10 @@ func _wire_team_member(member, idx: int) -> void:
 	member.evolved.connect(func(name_fr: String) -> void:
 		hud.notify("✦  %s a évolué !" % name_fr.capitalize(), Color(0.72, 0.55, 0.95))
 	)
+	member.auto_revived.connect(func(name_fr: String, shared: bool) -> void:
+		hud.notify("💗  %s tient bon grâce à %s !" % [name_fr.capitalize(), "un rappel partagé" if shared else "un Rappel"],
+			Color(1.0, 0.85, 0.30))
+	)
 	member.portrait_ready.connect(func(midx: int, tex: Texture2D) -> void:
 		hud.update_team_portrait(midx, tex)
 		if midx < _team.size() and is_instance_valid(_team[midx]):
@@ -761,6 +767,11 @@ func _spawn_team_mp() -> void:
 		var chosen_item: String = str(Net.players[peer].get("item", ""))
 		if chosen_item != "":
 			instance.equip_catalog_item(chosen_item)
+		# Multijoueur : pas de choix de rappels au lobby (comme les objets du
+		# hub, ça resterait ici pour l'équité — cf. commentaire plus haut) ; un
+		# rappel gratuit par joueur, complété par le PARTAGE entre coéquipiers
+		# si quelqu'un tombe à sec (cf. _try_auto_revive).
+		instance.revive_charges = MP_DEFAULT_REVIVES
 		var member = TEAM_SCENE.instantiate()
 		member.name = "P%d" % peer
 		add_child(member)
@@ -795,6 +806,10 @@ func _spawn_team_mp() -> void:
 		)
 		member.evolved.connect(func(name_fr: String) -> void:
 			hud.notify("✦  %s a évolué !" % name_fr.capitalize(), Color(0.72, 0.55, 0.95))
+		)
+		member.auto_revived.connect(func(name_fr: String, shared: bool) -> void:
+			hud.notify("💗  %s tient bon grâce à %s !" % [name_fr.capitalize(), "un rappel partagé" if shared else "un Rappel"],
+				Color(1.0, 0.85, 0.30))
 		)
 		member.portrait_ready.connect(func(midx: int, tex: Texture2D) -> void:
 			hud.update_team_portrait(midx, tex)
