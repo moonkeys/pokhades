@@ -26,6 +26,7 @@ ShadowTexture="*res://autoloads/ShadowTexture.gd"
 Net="*res://autoloads/Net.gd"
 Sfx="*res://autoloads/Sfx.gd"
 TestHarness="*res://autoloads/TestHarness.gd"
+DemoBoot="*res://autoloads/DemoBoot.gd"
 
 [display]
 

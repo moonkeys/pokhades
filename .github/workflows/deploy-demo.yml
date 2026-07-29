@@ -1,0 +1,57 @@
+# Exporte le preset "Web" (démo publique — biome 1 solo, Pikachu, cf.
+# autoloads/DemoBoot.gd) et dépose le résultat en artifact. Ne publie rien
+# tout seul : le build est inspecté puis committé à la main dans
+# docs/demo/, pour ne pas pousser un export non vérifié en production.
+name: Build demo web
+
+on:
+  workflow_dispatch:
+
+env:
+  GODOT_VERSION: "4.7"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bibliothèques système
+        # Même piège que le build Linux du workflow Release : le binaire
+        # Godot headless est lié à X11/ALSA même sans écran.
+        run: |
+          sudo apt-get update -qq
+          for pkg in libfontconfig1 libxcursor1 libxinerama1 libxi6 libxrandr2 \
+                     libxrender1 libxext6 libgl1 libasound2t64 libpulse0; do
+            sudo apt-get install -y --no-install-recommends "$pkg" \
+              || echo "::warning::paquet non installé : $pkg"
+          done
+
+      - name: Installer Godot + templates d'export
+        run: |
+          BASE="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable"
+          curl -fsSL -o godot.zip "$BASE/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          curl -fsSL -o tpl.tpz   "$BASE/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          unzip -q godot.zip
+          mv "Godot_v${GODOT_VERSION}-stable_linux.x86_64" godot
+          chmod +x godot
+          unzip -q tpl.tpz
+          mkdir -p "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+          mv templates/* "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable/"
+          ./godot --version
+
+      - name: Importer les ressources
+        run: timeout 900 ./godot --headless --import . || true
+
+      - name: Exporter la démo web
+        run: |
+          mkdir -p builds/web
+          timeout 900 ./godot --headless --export-release "Web" builds/web/index.html
+          test -f builds/web/index.html
+          ls -lh builds/web
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: demo-web
+          path: builds/web/

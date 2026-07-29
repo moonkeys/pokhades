@@ -1243,6 +1243,12 @@ func _current_theme() -> int:
 
 func _on_room_cleared() -> void:
 	var room := RunManager.inst().rooms_cleared
+	# Démo web : le contenu gratuit s'arrête au boss du biome 1 (acte 0),
+	# pas au boss final de la vraie run (cf. DemoBoot.gd).
+	if OS.has_feature("web_demo") and RunManager.inst().is_boss_room(room) \
+			and RunManager.inst().act_of(room) == 0:
+		_demo_complete()
+		return
 	# Vaincre le boss de la salle VICTORY_ROOM = victoire de run — le jeu
 	# n'avait jusqu'ici qu'une fin par défaite.
 	if _is_final_boss_room(room):
@@ -1320,6 +1326,20 @@ func _run_victory() -> void:
 	if _mp:
 		Net.reset()
 	get_tree().change_scene_to_file("res://scenes/hub/Hub.tscn")
+
+
+## Fin de la démo web : pas de hub, pas de multijoueur (DemoBoot force le
+## solo) — un écran de remerciement avec un lien vers le téléchargement.
+var _demo_complete_triggered: bool = false
+
+func _demo_complete() -> void:
+	if _demo_complete_triggered or _game_over_triggered or _victory_triggered:
+		return
+	_demo_complete_triggered = true
+	hud.set_wave("🏆 Biome 1 nettoyé !")
+	get_tree().call_group("combat_arena", "add_camera_shake", 0.2)
+	await get_tree().create_timer(1.2).timeout
+	add_child(DemoCompleteScreen.new())
 
 
 @rpc("authority", "call_remote", "reliable")
