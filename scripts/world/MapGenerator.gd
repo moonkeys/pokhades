@@ -783,8 +783,10 @@ func _theme_config(t: MapTheme) -> Dictionary:
 				"path_tiles":   [tile_chemin_terre],
 				"tree_origins": [tile_arbre_mort_orig],   # arbres morts/brûlés
 				"tree_density":    0.22,
-				"water_threshold": 0.50,   # coulées de lave bien présentes
-				"min_water_pools": 3,
+				# Marchable désormais (cf. CombatArena._update_lava_burn) : plus de
+				# risque de bloquer un passage, donc plus de lave (retour joueurs).
+				"water_threshold": 0.40,
+				"min_water_pools": 5,
 				"tg_threshold":    0.65,   # quasi pas de haute herbe
 				"flower_density":  0.0,
 				"path_width":      3,

@@ -224,22 +224,23 @@ func _unhandled_input(event: InputEvent) -> void:
 	get_viewport().set_input_as_handled()
 
 
-## Biome Volcan : longer une coulée de lave brûle (statut "burn" → DOT géré
-## par TeamMember._tick_status). La lave bloque déjà le passage (collision
-## WATER_LAYER) ; on brûle en la côtoyant de trop près.
+## Biome Volcan : la lave est MARCHABLE (retour joueurs) — plus de collision
+## bloquante (cf. MapRender3D._build_water_collision), mais y marcher brûle
+## (statut "burn" → DOT géré par TeamMember._tick_status), SAUF en pleine
+## ruée (Sprint) : trop rapide pour cuire, ça ouvre un raccourci risqué.
 func _update_lava_burn() -> void:
 	if not is_instance_valid(_map) or _current_theme() != MapGenerator.MapTheme.VOLCANO:
 		return
 	if not _map.has_method("is_water_cell"):
 		return
 	for m in _team:
-		if not is_instance_valid(m) or m.pokemon_instance == null:
+		if not is_instance_valid(m) or m.pokemon_instance == null or m.pokemon_instance.is_fainted():
+			continue
+		if m.has_method("is_dashing") and m.is_dashing():
 			continue
 		var cell: Vector2i = _map.world3_to_cell(m.global_position)
-		for d: Vector2i in [Vector2i(0,0), Vector2i(1,0), Vector2i(-1,0), Vector2i(0,1), Vector2i(0,-1)]:
-			if _map.is_water_cell(cell + d):
-				m.pokemon_instance.apply_status("burn", StatusFx.duration("burn"))
-				break
+		if _map.is_water_cell(cell):
+			m.pokemon_instance.apply_status("burn", StatusFx.duration("burn"))
 
 
 ## Biome Automne : marcher sur un tas de feuilles peut faire sauter un COLLET

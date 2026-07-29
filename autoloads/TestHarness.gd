@@ -63,6 +63,8 @@ func _ready() -> void:
 			_run_scenario(_scenario_los_throttle)
 		elif arg == "smoke_sprite_occlusion":
 			_run_scenario(_scenario_sprite_occlusion)
+		elif arg == "smoke_lava_burn":
+			_run_scenario(_scenario_lava_burn)
 		elif arg == "smoke_portrait_race":
 			_run_scenario(_scenario_portrait_race)
 		elif arg == "smoke_stats_overlay_item":
@@ -999,6 +1001,70 @@ func _scenario_sprite_occlusion() -> void:
 		return
 
 	_pass("sprite_occlusion", "occlusion détectée avec obstacle, levée sans")
+
+
+## Retour joueurs : « la lave doit être marchable, dégâts sauf en Sprint ».
+## Force une run sur le biome Volcan (RunManager.test_biome_override), place
+## le joueur sur une case de lave (aucune collision ne doit l'en empêcher,
+## cf. MapRender3D._build_water_collision) et vérifie que _update_lava_burn
+## l'enflamme normalement, mais PAS pendant une ruée (TeamMember._dash_timer).
+func _scenario_lava_burn() -> void:
+	GameManager.is_first_run = false
+	GameManager.hub_team = [GameManager.STARTER_IDS[0]]
+	RunManager.inst().test_biome_override = MapGenerator.MapTheme.VOLCANO
+	RunManager.inst().start_run()
+	get_tree().change_scene_to_file("res://scenes/combat/CombatArena.tscn")
+	var waited := 0.0
+	while get_tree().get_nodes_in_group("players").is_empty() and waited < 18.0:
+		await get_tree().create_timer(0.5).timeout
+		waited += 0.5
+	var players := get_tree().get_nodes_in_group("players")
+	if players.is_empty():
+		_fail("lava_burn", "équipe non apparue")
+		RunManager.inst().test_biome_override = -1
+		return
+	var member: Node = players[0]
+	var arena := get_tree().current_scene
+	var map: Node = arena.get("_map")
+	if map == null or not map.has_method("is_water_cell"):
+		_fail("lava_burn", "carte du volcan indisponible")
+		RunManager.inst().test_biome_override = -1
+		return
+
+	var lava_cell := Vector2i(-1, -1)
+	var size: Vector2i = map.call("get_map_cell_size")
+	for y in size.y:
+		for x in size.x:
+			var c := Vector2i(x, y)
+			if map.call("is_water_cell", c):
+				lava_cell = c
+				break
+		if lava_cell.x >= 0:
+			break
+	if lava_cell.x < 0:
+		_fail("lava_burn", "aucune case de lave générée (thème volcan forcé)")
+		RunManager.inst().test_biome_override = -1
+		return
+
+	var inst: PokemonInstance = member.get("pokemon_instance")
+	inst.clear_status()
+	member.global_position = map.call("cell_to_world3", lava_cell)
+	arena.call("_update_lava_burn")
+	if inst.status != "burn":
+		_fail("lava_burn", "pas de brûlure en marchant sur la lave (statut: %s)" % inst.status)
+		RunManager.inst().test_biome_override = -1
+		return
+
+	inst.clear_status()
+	member.set("_dash_timer", 0.5)
+	arena.call("_update_lava_burn")
+	if inst.status == "burn":
+		_fail("lava_burn", "brûlure appliquée malgré une ruée (Sprint) en cours")
+		RunManager.inst().test_biome_override = -1
+		return
+
+	RunManager.inst().test_biome_override = -1
+	_pass("lava_burn", "brûlure sur la lave, aucune pendant une ruée")
 
 
 ## Retour joueurs : « ça lag beaucoup en run, j'ai peur que ce soit pire en

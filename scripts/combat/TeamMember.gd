@@ -1285,6 +1285,12 @@ var _grass_reveal: float = 0.0
 ## le rendu (ci-dessous) ET le ciblage ennemi (EnemyAI._player_concealed) la
 ## consultent. Si les deux la calculaient chacun de leur côté, on finirait avec
 ## un Pokémon qui a l'air caché mais que l'IA voit — ou l'inverse.
+## En pleine ruée (fenêtre DASH_TIME) ? Consulté par CombatArena._update_lava_burn
+## (retour joueurs : « la lave brûle sauf en Sprint » — trop rapide pour cuire).
+func is_dashing() -> bool:
+	return _dash_timer > 0.0
+
+
 func is_grass_concealed() -> bool:
 	if _grass_reveal > 0.0:
 		return false   # on vient d'attaquer : on s'est trahi

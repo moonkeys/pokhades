@@ -1877,6 +1877,11 @@ func _build_water_collision() -> void:
 		# collision — seule l'eau "profonde" (LAKE) bloque le passage.
 		if _map.is_shallow_cell(cell):
 			continue
+		# Volcan : la lave est MARCHABLE (retour joueurs) — elle ne bloque plus
+		# le passage comme l'eau profonde, elle brûle (cf.
+		# CombatArena._update_lava_burn), sauf en pleine glissade (Sprint).
+		if _map.theme == MapGenerator.MapTheme.VOLCANO:
+			continue
 		if not rows.has(cell.y):
 			rows[cell.y] = []
 		rows[cell.y].append(cell.x)

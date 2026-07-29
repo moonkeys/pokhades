@@ -60,6 +60,7 @@ run_scenario team_buff  20 smoke_team_buff
 run_scenario move_upgrade 20 smoke_move_upgrade
 run_scenario los_throttle 20 smoke_los_throttle
 run_scenario sprite_occlusion 20 smoke_sprite_occlusion
+run_scenario lava_burn 20 smoke_lava_burn
 run_scenario portrait_race 20 smoke_portrait_race
 run_scenario stats_overlay_item 20 smoke_stats_overlay_item
 run_scenario enemy_aggro 20 smoke_enemy_aggro
