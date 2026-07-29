@@ -143,6 +143,11 @@ h1 .y{color:var(--gold-lt)}
 .btn:hover{transform:translateY(-3px); box-shadow:0 0 0 3px var(--ink), 0 9px 0 var(--gold-dk), 0 13px 0 rgba(0,0,0,.35)}
 .btn:active{transform:translateY(4px); box-shadow:0 0 0 3px var(--ink), 0 2px 0 var(--gold-dk)}
 .btn.alt{background:linear-gradient(180deg,#6d4826,#42280f); color:var(--beige); text-shadow:2px 2px 0 #000}
+/* Aucune build publiée pour cette plateforme : bouton grisé, façon slot verrouillé */
+.btn.pending{
+  background:linear-gradient(180deg,#8d8271,#5e5548); border-color:var(--gold-dk);
+  color:#2a241b; box-shadow:0 0 0 3px var(--ink), 0 6px 0 #3d372c, 0 10px 0 rgba(0,0,0,.3);
+}
 .btn svg{width:19px;height:19px}
 .meta{margin-top:18px; font-size:1rem; color:var(--beige)}
 .meta b{color:var(--gold-lt)}
@@ -282,9 +287,7 @@ footer a{color:#fff}
       <a class="btn alt" href="#features">VOIR LE JEU</a>
     </div>
     <p class="meta" id="dl-meta">Gratuit · Mises à jour automatiques</p>
-    <p class="others">Autres plateformes :
-      <a id="dl-win" href="#">Windows</a> · <a id="dl-mac" href="#">macOS</a> · <a id="dl-linux" href="#">Linux</a>
-    </p>
+    <p class="others" id="others"></p>
   </div>
 
   <!-- ── APERCU ── -->
@@ -466,10 +469,43 @@ function detectOS() {
 }
 
 const os = detectOS();
+const BTNS = ["dl-main", "dl-main2"], LABELS = ["dl-label", "dl-label2"];
 document.getElementById("nav-gh").href = `https://github.com/${REPO}`;
-for (const id of ["dl-main", "dl-main2"]) document.getElementById(id).href = RELEASE_URL(ASSETS[os]);
-for (const id of ["dl-label", "dl-label2"]) document.getElementById(id).textContent = `TELECHARGER · ${OS_LABEL[os]}`;
-for (const k of ["win", "mac", "linux"]) document.getElementById("dl-" + k).href = RELEASE_URL(ASSETS[k]);
+
+/* État par défaut : tant qu'aucune release n'est publiée, les liens de
+   téléchargement pointeraient vers un 404 — on les neutralise. */
+function setPending() {
+  for (const id of BTNS) {
+    const b = document.getElementById(id);
+    b.href = `https://github.com/${REPO}/releases`;
+    b.classList.add("pending");
+  }
+  for (const id of LABELS) document.getElementById(id).textContent = "BIENTOT DISPONIBLE";
+  document.getElementById("dl-meta").textContent = "La première version n'est pas encore publiée.";
+  document.getElementById("others").innerHTML =
+    `<a href="https://github.com/${REPO}" target="_blank" rel="noopener">Suivre le projet sur GitHub</a>`;
+}
+setPending();
+
+/* Active les téléchargements pour les plateformes réellement publiées */
+function setAvailable(rel) {
+  const names = new Set(rel.assets.map(a => a.name));
+  const mine = names.has(ASSETS[os]);
+
+  for (const id of BTNS) {
+    const b = document.getElementById(id);
+    b.classList.toggle("pending", !mine);
+    b.href = mine ? RELEASE_URL(ASSETS[os]) : `https://github.com/${REPO}/releases`;
+  }
+  for (const id of LABELS)
+    document.getElementById(id).textContent = mine ? `TELECHARGER · ${OS_LABEL[os]}` : "VOIR LES VERSIONS";
+
+  const links = ["win", "mac", "linux"].map(k => names.has(ASSETS[k])
+    ? `<a href="${RELEASE_URL(ASSETS[k])}">${OS_LABEL[k]}</a>`
+    : `<span style="opacity:.55">${OS_LABEL[k]} (bientôt)</span>`);
+  document.getElementById("others").innerHTML = "Autres plateformes : " + links.join(" · ");
+  return mine ? rel.assets.find(a => a.name === ASSETS[os]) : null;
+}
 
 /* ── Version, date et poids depuis l'API GitHub (aucune clé nécessaire) ── */
 const fmtDate = s => new Date(s).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" });
@@ -484,7 +520,7 @@ fetch(`https://api.github.com/repos/${REPO}/releases?per_page=5`)
 
     const last = rels[0];
     document.getElementById("hud-ver").textContent = last.tag_name;
-    const asset = last.assets.find(a => a.name === ASSETS[os]);
+    const asset = setAvailable(last);
     document.getElementById("dl-meta").innerHTML =
       `Gratuit · Mises à jour automatiques · <b>${esc(last.tag_name)}</b>` +
       (asset ? ` · ${fmtSize(asset.size)}` : "") + ` · ${fmtDate(last.published_at)}`;
