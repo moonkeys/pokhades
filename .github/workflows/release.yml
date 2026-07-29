@@ -73,12 +73,17 @@ jobs:
         # Le binaire Godot linux headless est lié à X11/audio même pour
         # tourner en --headless ; sans ces libs, ubuntu-latest le lance
         # sur un binaire dont dépendances manquent et l'exécution échoue.
+        # Chaque paquet est installé individuellement : un nom de paquet qui
+        # change entre versions d'Ubuntu (déjà vu : libxrandr1 -> libxrandr2,
+        # libasound2 -> libasound2t64) ne doit pas faire échouer tous les
+        # autres.
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            libfontconfig1 libxcursor1 libxinerama1 libxi6 libxrandr1 \
-            libxrender1 libxext6 libgl1 libasound2t64 libpulse0 \
-            || sudo apt-get install -y --no-install-recommends libasound2
+          for pkg in libfontconfig1 libxcursor1 libxinerama1 libxi6 libxrandr2 \
+                     libxrender1 libxext6 libgl1 libasound2t64 libpulse0; do
+            sudo apt-get install -y --no-install-recommends "$pkg" \
+              || echo "::warning::paquet non installé : $pkg"
+          done
 
       - name: Installer Godot + templates d'export
         run: |
@@ -107,13 +112,24 @@ jobs:
       - name: Importer les ressources
         # --import se termine tout seul, mais un projet non importé peut laisser
         # Godot en attente : timeout dur + on ignore un code de sortie non nul,
-        # l'export qui suit est le vrai test.
-        run: timeout 900 "$GODOT_BIN" --headless --import . || true
+        # l'export qui suit est le vrai test. `timeout` est un outil GNU
+        # absent des runners macOS ; sur cette plateforme le garde-fou de
+        # 30 min du job (timeout-minutes) sert de filet à la place.
+        run: |
+          if command -v timeout >/dev/null 2>&1; then
+            timeout 900 "$GODOT_BIN" --headless --import . || true
+          else
+            "$GODOT_BIN" --headless --import . || true
+          fi
 
       - name: Exporter le jeu (${{ matrix.channel }})
         run: |
           mkdir -p "$(dirname "${{ matrix.export_path }}")"
-          timeout 900 "$GODOT_BIN" --headless --export-release "${{ matrix.preset }}" "${{ matrix.export_path }}"
+          if command -v timeout >/dev/null 2>&1; then
+            timeout 900 "$GODOT_BIN" --headless --export-release "${{ matrix.preset }}" "${{ matrix.export_path }}"
+          else
+            "$GODOT_BIN" --headless --export-release "${{ matrix.preset }}" "${{ matrix.export_path }}"
+          fi
           test -e "${{ matrix.export_path }}"   # échoue franchement si l'export n'a rien produit
           ls -lh "$(dirname "${{ matrix.export_path }}")"
 
@@ -172,7 +188,12 @@ jobs:
 
           matches=(releases/*."$ext")
           if [ "${#matches[@]}" -gt 0 ]; then
-            cp "${matches[0]}" "releases/$dest"
+            # vpk --channel produit parfois déjà le nom exact attendu
+            # (ex. Windows : Pokhades-win-Setup.exe) : ne pas copier un
+            # fichier sur lui-même.
+            if [ "$(basename "${matches[0]}")" != "$dest" ]; then
+              cp "${matches[0]}" "releases/$dest"
+            fi
           else
             echo "::warning::Aucun .$ext produit par vpk pour le canal ${{ matrix.channel }} — vérifie le contenu de releases/"
           fi
