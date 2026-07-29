@@ -1517,6 +1517,11 @@ func _build_props() -> void:
 			if _map.theme == MapGenerator.MapTheme.VOLCANO:
 				_add_dead_tree(tl)
 				continue
+			# Marais GOTHIQUE : arbres tordus custom (cf. tools/DA_bible.md) à la
+			# place des feuillus Kenney.
+			if _map.theme == MapGenerator.MapTheme.SWAMP:
+				_add_gothic_tree(tl)
+				continue
 			var tree_cfg := _kit_tree_config(tree_origin)
 			if not (tree_cfg["pool"] as Array).is_empty():
 				_add_kit_tree(tl, tree_cfg["pool"], tree_cfg["tints"])
@@ -1708,6 +1713,119 @@ func _add_kit_tree(top_left: Vector2i, pool: Array, tints: Dictionary = {}) -> v
 		_map.get_height_at_cell(Vector2i(top_left.x + 1, top_left.y + 2)), top_left.y + 2.5)
 	tree.rotation.y = jitter * TAU
 	add_child(tree)
+
+
+# ── Assets gothiques custom (cf. tools/DA_bible.md) ─────────────────────
+# Mix marais gothique : 0-4 = squelettes nus (majoritaires, dont 3-4 très
+# ramifiés), 5-7 = feuillus à canopée sombre (variété). Le tirage par hash
+# favorise les nus (5 sur 8).
+const GOTHIC_TREES := [
+	"res://assets/gothic/tree_gnarled_0.glb",
+	"res://assets/gothic/tree_gnarled_1.glb",
+	"res://assets/gothic/tree_gnarled_2.glb",
+	"res://assets/gothic/tree_gnarled_3.glb",
+	"res://assets/gothic/tree_gnarled_4.glb",
+	"res://assets/gothic/tree_gnarled_5.glb",
+	"res://assets/gothic/tree_gnarled_6.glb",
+	"res://assets/gothic/tree_gnarled_7.glb",
+]
+
+## Charge un .glb custom en GARDANT ses matériaux (couleur de sommet +
+## émission), contrairement à KitProps.instance qui les remplace par des
+## aplats toon. Force vertex_color_use_as_albedo (l'import glTF l'oublie sur
+## certaines surfaces) + ombrage toon, pour rester cohérent avec le reste.
+func _load_gothic_glb(path: String) -> Node3D:
+	var scene: PackedScene = load(path)
+	if scene == null:
+		push_error("Gothic asset introuvable : %s" % path)
+		return Node3D.new()
+	var inst := scene.instantiate()
+	_fix_gothic_materials(inst)
+	return inst
+
+
+const GOTHIC_LEAF_COLOR := Color(0.16, 0.28, 0.22)   # vert marais sombre et froid
+
+func _fix_gothic_materials(n: Node) -> void:
+	if n is MeshInstance3D and (n as MeshInstance3D).mesh:
+		var mesh: Mesh = (n as MeshInstance3D).mesh
+		for si in mesh.get_surface_count():
+			var mat := mesh.surface_get_material(si)
+			if mat is StandardMaterial3D:
+				var m := mat as StandardMaterial3D
+				if String(m.resource_name).contains("Leaves"):
+					# BUG connu : la couleur de sommet du feuillage sort BLANCHE
+					# à l'export glTF (from_mesh bmesh) → on force une couleur
+					# plate sombre au lieu de couleurs de sommet non fiables.
+					m.vertex_color_use_as_albedo = false
+					m.albedo_color = GOTHIC_LEAF_COLOR
+				else:
+					m.vertex_color_use_as_albedo = true
+				m.diffuse_mode  = BaseMaterial3D.DIFFUSE_TOON
+				m.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+	for c in n.get_children():
+		_fix_gothic_materials(c)
+
+
+## Hauteur (Y) du plus grand mesh d'un nœud chargé — pour normaliser l'échelle
+## sur KIT_TREE_TARGET_HEIGHT comme les arbres Kenney.
+func _node_height(n: Node) -> float:
+	var found := false
+	var box := AABB()
+	var stack: Array = [n]
+	while not stack.is_empty():
+		var cur = stack.pop_back()
+		if cur is MeshInstance3D and (cur as MeshInstance3D).mesh:
+			var a: AABB = (cur as MeshInstance3D).get_aabb()
+			box = a if not found else box.merge(a)
+			found = true
+		for c in cur.get_children():
+			stack.append(c)
+	return box.size.y if found else 0.0
+
+
+const GOTHIC_MUSHROOMS := [
+	"res://assets/gothic/mushroom_glow_0.glb",
+	"res://assets/gothic/mushroom_glow_1.glb",
+]
+const GOTHIC_MUSHROOM_HEIGHT := 0.55
+# Les arbres gothiques sont plus GRANDS que les Kenney (proportions plus
+# imposantes/menaçantes — retour joueur).
+const GOTHIC_TREE_SCALE := 1.45
+
+## Arbre tordu gothique (biome Marais) — .glb custom, matériaux conservés.
+## ~55% des arbres ont un bouquet de champignons cyan luminescents au pied
+## (cf. tools/DA_bible.md — marqueur "cyan = le monde").
+func _add_gothic_tree(top_left: Vector2i) -> void:
+	var seed_val := hash(top_left)
+	var path: String = GOTHIC_TREES[abs(seed_val) % GOTHIC_TREES.size()]
+	var jitter := float(abs(seed_val) % 1000) / 1000.0
+
+	var tree := _load_gothic_glb(path)
+	var native_h := _node_height(tree)
+	var target_h := KIT_TREE_TARGET_HEIGHT * GOTHIC_TREE_SCALE * lerpf(0.85, 1.15, jitter)
+	if native_h > 0.01:
+		tree.scale = Vector3.ONE * (target_h / native_h)
+	var base_y: float = _map.get_height_at_cell(Vector2i(top_left.x + 1, top_left.y + 2))
+	tree.position = Vector3(top_left.x + 1.5, base_y, top_left.y + 2.5)
+	tree.rotation.y = jitter * TAU
+	add_child(tree)
+
+	if abs(seed_val) % 100 < 55:
+		var off := Vector3(lerpf(-0.9, 0.9, jitter), 0.0,
+			lerpf(-0.9, 0.9, float(abs(seed_val >> 5) % 1000) / 1000.0))
+		_add_glow_mushroom(tree.position + off, seed_val ^ 0x9E37)
+
+
+func _add_glow_mushroom(pos: Vector3, seed_val: int) -> void:
+	var path: String = GOTHIC_MUSHROOMS[abs(seed_val) % GOTHIC_MUSHROOMS.size()]
+	var m := _load_gothic_glb(path)
+	var nh := _node_height(m)
+	if nh > 0.01:
+		m.scale = Vector3.ONE * (GOTHIC_MUSHROOM_HEIGHT / nh)
+	m.position = pos
+	m.rotation.y = float(abs(seed_val) % 628) * 0.01
+	add_child(m)
 
 
 # ─────────────────────────────────────────────────────────────────

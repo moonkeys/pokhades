@@ -89,6 +89,14 @@ const REEDS:     Array[String] = ["grass_leafsLarge.glb", "grass_large.glb"]   #
 static var _mesh_cache: Dictionary = {}
 static var _wind_shader: Shader = null
 
+## `trample_pos` est une uniform GLOBALE (process-wide, cf.
+## register_trample_uniform()) plutôt qu'une uniform normale : le Mesh —
+## et donc son ShaderMaterial — est partagé par TOUTE l'herbe/les fleurs
+## du même fichier sur TOUTE la carte (cf. _mesh_cache), donc une uniform
+## normale se réglerait pour tout le monde à la fois de toute façon ; la
+## variante globale évite en plus d'avoir à retrouver/itérer ces matériaux
+## depuis le joueur — un seul set() par frame, quel que soit le nombre
+## d'instances d'herbe affichées.
 const _WIND_SHADER := """
 shader_type spatial;
 render_mode cull_disabled, diffuse_toon, specular_disabled;
@@ -97,13 +105,33 @@ uniform vec4 albedo : source_color = vec4(1.0);
 uniform float sway = 0.05;
 uniform float height_ref = 0.22;
 
+global uniform vec3 trample_pos;
+uniform float trample_radius = 1.1;
+uniform float trample_strength = 0.55;
+
 void vertex() {
 	// VERTEX.y est en espace local (avant l'échelle du nœud/de l'instance
 	// MultiMesh) — la base du modèle (y≈0) reste fixe, le sommet oscille.
 	float t = clamp(VERTEX.y / height_ref, 0.0, 1.0);
 	float phase = INSTANCE_CUSTOM.x;
-	VERTEX.x += sin(TIME * 1.4 + phase) * sway * t;
-	VERTEX.z += cos(TIME * 1.1 + phase) * sway * 0.6 * t;
+	vec3 local = VERTEX;
+	local.x += sin(TIME * 1.4 + phase) * sway * t;
+	local.z += cos(TIME * 1.1 + phase) * sway * 0.6 * t;
+
+	// Écrasement sous le joueur : calculé en espace MONDE (une seule
+	// position de joueur pour toutes les instances, quelle que soit leur
+	// transform), puis reconverti en espace local avant d'écrire VERTEX.
+	vec3 world_pos = (MODEL_MATRIX * vec4(local, 1.0)).xyz;
+	vec2 to_vertex = world_pos.xz - trample_pos.xz;
+	float dist = length(to_vertex);
+	if (dist < trample_radius && dist > 0.0001) {
+		float push = (1.0 - dist / trample_radius) * trample_strength * t;
+		vec2 dir = to_vertex / dist;
+		world_pos.xz += dir * push;
+		world_pos.y -= push * 0.15;   // léger affaissement, pas juste latéral
+		local = (inverse(MODEL_MATRIX) * vec4(world_pos, 1.0)).xyz;
+	}
+	VERTEX = local;
 }
 
 void fragment() {
@@ -112,7 +140,24 @@ void fragment() {
 }
 """
 
+static var _trample_registered: bool = false
+
+## Déclare l'uniform globale "trample_pos" auprès du moteur — REQUIS avant
+## qu'un shader qui la référence ne puisse être utilisé. Idempotent, à
+## appeler une fois au démarrage (cf. get_wind_shader()) ; la valeur par
+## défaut est loin sous la carte pour qu'aucune herbe ne plie tant
+## qu'aucun joueur n'a encore poussé sa position (cf. CombatArena/HubWorld).
+static func register_trample_uniform() -> void:
+	if _trample_registered:
+		return
+	_trample_registered = true
+	if RenderingServer.global_shader_parameter_get("trample_pos") == null:
+		RenderingServer.global_shader_parameter_add(
+			"trample_pos", RenderingServer.GLOBAL_VAR_TYPE_VEC3, Vector3(0.0, -1000.0, 0.0))
+
+
 static func get_wind_shader() -> Shader:
+	register_trample_uniform()
 	if _wind_shader == null:
 		_wind_shader = Shader.new()
 		_wind_shader.code = _WIND_SHADER

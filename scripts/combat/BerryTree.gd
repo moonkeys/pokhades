@@ -48,6 +48,10 @@ func setup(scale_mult: float = 1.0, seed_val: int = 0,
 		cell_h = float(_sprite.texture.get_height())
 	_sprite.pixel_size    = target_h / maxf(1.0, cell_h)
 	_sprite.position.y    = target_h * 0.5     # pied au niveau du sol
+	# Prend la teinte de décor du biome courant (nuit cyan au marais, etc.) —
+	# sinon le sprite non éclairé reste en couleurs plein jour et "sort" du
+	# monde (cf. BiomeAmbiance.current_decor_tint).
+	_sprite.modulate      = BiomeAmbiance.current_decor_tint
 	add_child(_sprite)
 
 	# Collision — tronc bloquant (couche 1, comme les arbres normaux)
@@ -64,6 +68,13 @@ func setup(scale_mult: float = 1.0, seed_val: int = 0,
 	add_child(body)
 
 	add_to_group("berry_trees")
+
+
+## Applique la teinte de décor du biome (appelée par BiomeAmbiance via le
+## groupe "berry_trees" à chaque changement de biome).
+func apply_biome_tint(col: Color) -> void:
+	if is_instance_valid(_sprite):
+		_sprite.modulate = col
 
 
 ## Découpe la case en bas à droite (arbre mûr, baies dessinées) de la planche.

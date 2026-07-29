@@ -272,6 +272,11 @@ func _update_leaf_traps() -> void:
 func _process(delta: float) -> void:
 	if _team.size() > 0 and is_instance_valid(_team[_active_index]):
 		_cam_pos = _cam_pos.lerp(_team[_active_index].global_position, 8.0 * delta)
+		# Écrasement de l'herbe/des fleurs sous le Pokémon contrôlé (cf.
+		# KitProps._WIND_SHADER) — une seule uniform globale, aucun coût
+		# supplémentaire même avec des centaines d'instances d'herbe.
+		RenderingServer.global_shader_parameter_set(
+			"trample_pos", _team[_active_index].global_position)
 	_shake = maxf(0.0, _shake - delta * 2.2)
 	_update_camera()
 	if not _mp or multiplayer.is_server():

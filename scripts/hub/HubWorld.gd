@@ -557,6 +557,10 @@ func _process(delta: float) -> void:
 	if not is_instance_valid(_player):
 		return
 
+	# Écrasement de l'herbe/des fleurs sous le joueur (cf.
+	# KitProps._WIND_SHADER, même mécanisme qu'en combat).
+	RenderingServer.global_shader_parameter_set("trample_pos", _player.global_position)
+
 	_player.move_tick(delta, _blocked)
 	for peer: int in _remote_avatars:
 		var avatar: HubPlayer = _remote_avatars[peer]

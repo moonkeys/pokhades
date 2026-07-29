@@ -4,6 +4,9 @@
 
 # Export
 export/
+builds/
+# Paquets Velopack générés par le packaging (installeurs + deltas)
+releases/
 *.apk
 *.aab
 *.ipa
@@ -14,3 +17,66 @@ export/
 # Éditeur
 .DS_Store
 Pokemon Essentials v21.1 2023-07-30.zip
+
+# ── Assets bruts non utilisés — packs importés en entier mais dont seule
+# une petite partie sert vraiment (cf. audit) : on garde les fichiers
+# utilisés SUIVIS individuellement (déjà commités), tout le reste passe en
+# ignoré pour ne pas alourdir le dépôt avec des centaines de Mo inutiles.
+# Le contenu reste sur le disque (utile si on pioche dedans plus tard), git
+# arrête juste de le suivre.
+
+# Dump RPG Maker/Pokémon Essentials — ~130 Mo, seuls ~90 fichiers (polices,
+# quelques sons, sprites de dresseurs/baies, tileset Outside.png) sont
+# chargés par le jeu ; ils restent suivis individuellement malgré cette règle.
+Pokemon Essentials v21.1 2023-07-30/
+
+# Kenney Nature Kit (structure complète, dossier à tiret) — seuls les
+# modèles GLTF listés ci-dessous sont chargés (via HubMap.NATURE_FULL_DIR /
+# MapRender3D._FULL_KIT) ; formats DAE/FBX/OBJ/STL, Isometric/, Side/ et les
+# ~320 autres .glb ne servent à rien.
+assets/kenney_nature-kit/**
+!assets/kenney_nature-kit/License.txt
+!assets/kenney_nature-kit/Models/
+!assets/kenney_nature-kit/Models/GLTF format/
+!assets/kenney_nature-kit/Models/GLTF format/tent_smallOpen.glb
+!assets/kenney_nature-kit/Models/GLTF format/tent_detailedOpen.glb
+!assets/kenney_nature-kit/Models/GLTF format/tent_detailedClosed.glb
+!assets/kenney_nature-kit/Models/GLTF format/fence_planksDouble.glb
+!assets/kenney_nature-kit/Models/GLTF format/lily_large.glb
+!assets/kenney_nature-kit/Models/GLTF format/lily_small.glb
+!assets/kenney_nature-kit/Models/GLTF format/crops_bambooStageA.glb
+!assets/kenney_nature-kit/Models/GLTF format/crops_bambooStageB.glb
+
+# Kenney Mini-Dungeon — seuls banner.glb/barrel.glb + leur atlas de texture
+# sont utilisés (HubMap.MINI_DUNGEON_DIR).
+assets/kenney_mini-dungeon/**
+!assets/kenney_mini-dungeon/Models/
+!assets/kenney_mini-dungeon/Models/GLB format/
+!assets/kenney_mini-dungeon/Models/GLB format/banner.glb
+!assets/kenney_mini-dungeon/Models/GLB format/barrel.glb
+!assets/kenney_mini-dungeon/Models/GLB format/Textures/
+!assets/kenney_mini-dungeon/Models/GLB format/Textures/colormap.png
+
+# Kenney Modular Cave Kit — seuls les 3 modules réellement posés
+# (KitProps.CAVE_KIT_DIR : gate-rock, template-floor, template-wall) restent ;
+# le kit propose bien plus de variantes que ce qui est câblé dans le jeu.
+assets/kenney_modular-cave-kit_1.0/**
+!assets/kenney_modular-cave-kit_1.0/License.txt
+!assets/kenney_modular-cave-kit_1.0/Models/
+!assets/kenney_modular-cave-kit_1.0/Models/GLB format/
+!assets/kenney_modular-cave-kit_1.0/Models/GLB format/gate-rock.glb
+!assets/kenney_modular-cave-kit_1.0/Models/GLB format/template-floor.glb
+!assets/kenney_modular-cave-kit_1.0/Models/GLB format/template-wall.glb
+!assets/kenney_modular-cave-kit_1.0/Models/GLB format/Textures/
+!assets/kenney_modular-cave-kit_1.0/Models/GLB format/Textures/colormap.png
+
+# Kenney 3D Road Tiles — importé mais jamais câblé dans le code, 100% inutilisé.
+assets/kenney_3d-road-tiles/
+
+# Sorties d'un outil de génération ponctuel (ProcessNatureSprites.gd /
+# GenerateNatureAssets.gd) jamais rechargées en jeu, + doublons horodatés.
+assets/nature/sprites/
+assets/nature/*.jpeg
+assets/nature/* [0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.png
+assets/res_outdoor.png *.png
+assets/tilesets/res_outdoor.png *.png

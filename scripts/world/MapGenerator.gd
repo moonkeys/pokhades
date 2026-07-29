@@ -1544,11 +1544,27 @@ func _tg_cell_ok(cell: Vector2i) -> bool:
 ## 8 — DÉCORATIONS (override de MapBase._gen_decorations)
 ## ─────────────────────────────────────────────────────────────────
 
+## Prairie/Lac : au lieu d'un semis uniforme, la densité de fleurs varie par
+## larges taches (bruit basse fréquence) — quelques vrais "champs" denses au
+## lieu d'une poussière de fleurs partout identique. Les autres biomes
+## gardent le semis uniforme d'origine (flower_density y est déjà faible,
+## pas besoin de zones).
+func _flower_field_noise() -> FastNoiseLite:
+	if theme != MapTheme.MEADOW and theme != MapTheme.LAKE:
+		return null
+	var noise := FastNoiseLite.new()
+	noise.seed = _rng.randi()
+	noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	noise.frequency = 0.045   # taches larges de plusieurs cases, pas du bruit fin
+	return noise
+
+
 func _gen_decorations() -> void:
 	var W := map_size.x
 	var H := map_size.y
 	var flowers: Array[Vector2i] = [tile_fleur_rouge, tile_fleur_violette, tile_fleur_blanche]
 	flowers.append_array(tiles_petites_fleurs)
+	var field_noise := _flower_field_noise()
 
 	for r in range(3, H - 3):
 		for c in range(3, W - 3):
@@ -1560,12 +1576,16 @@ func _gen_decorations() -> void:
 			if _grid[r][c] == Terrain.PATH:                continue
 			if _is_near_portal(c, r, 4):                   continue
 			if _is_bridge_cell(cell):                      continue   # rien sur le pont
+			var local_flower_density := flower_density
+			if field_noise:
+				var field: float = (field_noise.get_noise_2d(c, r) + 1.0) * 0.5   # 0..1
+				local_flower_density = flower_density * lerpf(0.25, 3.2, field)
 			var roll := _rng.randf()
-			if roll < flower_density:
+			if roll < local_flower_density:
 				_tall_grass.set_cell(cell, source_id, flowers[_rng.randi() % flowers.size()])
-			elif roll < flower_density + herb_density:
+			elif roll < local_flower_density + herb_density:
 				_tall_grass.set_cell(cell, source_id, tile_petite_herbe)
-			elif roll < flower_density + herb_density + rock_density:
+			elif roll < local_flower_density + herb_density + rock_density:
 				_objects.set_cell(cell, source_id, tile_rocher)
 
 	_gen_logs()

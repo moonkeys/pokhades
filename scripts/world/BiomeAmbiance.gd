@@ -55,6 +55,11 @@ func apply_theme(theme: int, map_cell_size: Vector2i, is_cave: bool = false,
 	_apply_leaves(cfg)
 	_apply_fireflies(cfg)
 	_rebuild_backdrop(cfg, is_cave)
+	# Teinte des sprites de décor (arbres à baies) selon le biome — les
+	# existants sont mis à jour, les futurs la lisent à leur création.
+	current_decor_tint = cfg.get("decor_tint", Color.WHITE)
+	if is_inside_tree():
+		get_tree().call_group("berry_trees", "apply_biome_tint", current_decor_tint)
 
 
 ## ── Presets — mêmes clés pour les 4 thèmes + variante grotte ──────────────
@@ -103,7 +108,17 @@ const _BASE_AMBIANCE := {
 	"backdrop_mountains": true,
 	"cloud_alpha":    0.55,
 	"cloud_tint":     Color(1.0, 1.0, 1.0),
+	# Teinte (modulate) appliquée aux SPRITES DE DÉCOR non éclairés (arbres à
+	# baies…) pour qu'ils prennent l'ambiance du biome au lieu de rester en
+	# couleurs plein jour. Blanc = inchangé ; les biomes sombres l'assombrissent
+	# et la refroidissent. Les Pokémon (joueur/ennemis) ne sont PAS concernés —
+	# ce sont des "figurines" qui popent (cf. DA).
+	"decor_tint":     Color(1.0, 1.0, 1.0),
 }
+
+## Teinte de décor du biome courant — lue par les sprites de décor à leur
+## création (cf. BerryTree.setup), et re-poussée aux existants dans apply_theme.
+static var current_decor_tint: Color = Color.WHITE
 
 ## Palettes — uniquement des TEINTES + signatures. Les écarts de densité de
 ## brouillard sont volontairement bornés (0.003–0.011) pour que le passage
@@ -127,28 +142,38 @@ const _FOREST_PALETTE := {
 }
 
 const _SWAMP_PALETTE := {
-	# Marécage : mêmes verts que la forêt mais DÉSATURÉS et voilés — la
-	# signature est la brume au sol + le brouillard plus dense, pas un
-	# changement de luminosité.
-	"sky_top":      Color(0.48, 0.55, 0.58),
-	"sky_horizon":  Color(0.68, 0.70, 0.62),
-	"fog_color":    Color(0.55, 0.60, 0.52),
-	"fog_density":  0.014,
-	"sun_color":    Color(0.90, 0.94, 0.82),
-	"hill_a":       Color(0.36, 0.42, 0.38),
-	"hill_b":       Color(0.30, 0.36, 0.34),
-	"cloud_alpha":  0.42,
-	"cloud_tint":   Color(0.82, 0.84, 0.80),
-	"mist":         true,
-	"mist_color":   Color(0.72, 0.78, 0.66, 0.09),
-	"fireflies":    Color(0.85, 1.0, 0.45),
-	"ground_tint":  Color(0.36, 0.40, 0.28),
-	# Marécage : plat et embrumé jusqu'à l'horizon — la forêt lointaine se noie
-	# dans le brouillard dense (fog_density 0.014), pas de chaîne de montagnes.
-	# Feuillages OLIVE moribonds, pas le vert franc générique.
+	# Marécage GOTHIQUE-LUMINEUX (cf. tools/DA_bible.md) — biome tardif/sombre.
+	# Nuit froide, brume CYAN, glow poussé, spores luminescentes qui rayonnent.
+	# Base d'ombre + lueur cyan = "le monde" (la braise du joueur tranche).
+	"sky_top":        Color(0.07, 0.13, 0.16),
+	"sky_horizon":    Color(0.13, 0.22, 0.25),
+	"ambient_energy": 0.24,                       # nuit CLAIRE — lisible
+	"fog_color":      Color(0.12, 0.32, 0.36),    # brouillard cyan-teal
+	"fog_density":    0.014,
+	"fog_scatter":    0.06,
+	"glow_intensity": 0.50,                       # fait rayonner les émissifs
+	"glow_bloom":     0.18,
+	"sun_color":      Color(0.58, 0.74, 0.96),    # clair de lune froid
+	"sun_energy":     0.44,
+	"exposure":       0.88,
+	"hill_a":         Color(0.10, 0.16, 0.18),
+	"hill_b":         Color(0.07, 0.12, 0.14),
+	"cloud_alpha":    0.25,
+	"cloud_tint":     Color(0.30, 0.45, 0.50),
+	"mist":           true,
+	"mist_color":     Color(0.20, 0.45, 0.50, 0.10),   # brume cyan au sol
+	"fireflies":      Color(0.20, 0.85, 1.0),          # spores CYAN spectrales
+	"ground_tint":    Color(0.12, 0.20, 0.20),
+	# Décor (arbres à baies) assombri + refroidi pour se fondre dans la nuit
+	# cyan — teinte plus SOMBRE et verte (pas bleu-pâle) pour éviter le rendu
+	# délavé/blanchâtre (retour joueur).
+	"decor_tint":     Color(0.30, 0.46, 0.42),
 	"backdrop_mountains": false,
-	"backdrop_leaf_a": Color(0.36, 0.40, 0.24),
-	"backdrop_leaf_b": Color(0.26, 0.30, 0.18),
+	"backdrop_leaf_a": Color(0.12, 0.22, 0.20),
+	"backdrop_leaf_b": Color(0.08, 0.15, 0.14),
+	# Forêt lointaine en SQUELETTES gothiques (au lieu des arbres ronds Kenney)
+	# — forêt morte tout autour de l'horizon (cf. tools/DA_bible.md).
+	"gothic_forest":  true,
 }
 
 const _ROCKY_PALETTE := {
@@ -517,6 +542,11 @@ func _apply_fireflies(cfg: Dictionary) -> void:
 	mat.shading_mode    = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mat.billboard_mode  = BaseMaterial3D.BILLBOARD_PARTICLES
 	mat.vertex_color_use_as_albedo = true   # applique le color_ramp du process material
+	# Émission HDR : la particule dépasse le seuil de glow et RAYONNE (halo),
+	# au lieu de rester un point plat. C'est ce qui vend le gothique-lumineux.
+	mat.emission_enabled = true
+	mat.emission = col
+	mat.emission_energy_multiplier = 3.0
 	quad.material = mat
 	_fireflies.draw_pass_1 = quad
 	add_child(_fireflies)
@@ -549,7 +579,9 @@ func _rebuild_backdrop(cfg: Dictionary, is_cave: bool) -> void:
 	_build_ground_apron(cfg, center)
 	_build_exit_trails(cfg, center)
 	_build_midground(cfg, rng, center)
-	if cfg.get("backdrop_mountains", true):
+	if cfg.get("gothic_forest", false):
+		_build_gothic_distant_forest(cfg, rng, center)
+	elif cfg.get("backdrop_mountains", true):
 		_build_mountains(cfg, rng, center)
 	else:
 		_build_distant_forest(cfg, rng, center)
@@ -605,6 +637,74 @@ func _build_distant_forest(cfg: Dictionary, rng: RandomNumberGenerator, center: 
 		_add_tree_batch(cfg, rng, positions, heights, _haze_tints(cfg, 0.28 + 0.19 * layer))
 
 
+## FORÊT LOINTAINE GOTHIQUE (marais) — mêmes anneaux que _build_distant_forest,
+## mais avec notre arbre NU tordu au lieu des arbres ronds Kenney : une forêt
+## morte silhouettée tout autour de l'horizon. Un MultiMesh par anneau (un seul
+## draw call), matériau plat sombre fondu vers la brume (perspective
+## atmosphérique, comme _haze_tints).
+const _GOTHIC_BARE_TREE := "res://assets/gothic/tree_gnarled_0.glb"
+static var _bare_tree_mesh: Mesh = null
+
+static func _get_bare_tree_mesh() -> Mesh:
+	if _bare_tree_mesh == null:
+		var scene: PackedScene = load(_GOTHIC_BARE_TREE)
+		if scene:
+			var inst := scene.instantiate()
+			var mi := _find_mesh_instance(inst)
+			if mi:
+				_bare_tree_mesh = mi.mesh
+			inst.queue_free()
+	return _bare_tree_mesh
+
+
+static func _find_mesh_instance(n: Node) -> MeshInstance3D:
+	if n is MeshInstance3D:
+		return n
+	for c in n.get_children():
+		var f := _find_mesh_instance(c)
+		if f:
+			return f
+	return null
+
+
+func _build_gothic_distant_forest(cfg: Dictionary, rng: RandomNumberGenerator, center: Vector3) -> void:
+	var mesh := _get_bare_tree_mesh()
+	if mesh == null:
+		_build_distant_forest(cfg, rng, center)   # secours si l'asset manque
+		return
+	var native_h := maxf(0.1, mesh.get_aabb().size.y)
+	var fog: Color = cfg["fog_color"]
+	var dark: Color = cfg.get("backdrop_leaf_b", Color(0.10, 0.12, 0.12))
+	var base_r := maxf(_map_size.x, _map_size.y) * 0.5
+	for layer in 4:
+		var dist := base_r + 16.0 + layer * 24.0
+		var count := 70 + layer * 22
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.mesh = mesh
+		mm.instance_count = count
+		for i in count:
+			var ang := TAU * (float(i) + rng.randf_range(-0.42, 0.42)) / float(count)
+			var r := dist + rng.randf_range(-9.0, 9.0)
+			var pos := center + Vector3(cos(ang) * r, 0, sin(ang) * r)
+			var h := (7.0 + layer * 3.4) * rng.randf_range(0.72, 1.4)
+			var basis := Basis(Vector3.UP, rng.randf_range(0.0, TAU)).scaled(
+				Vector3.ONE * (h / native_h))
+			mm.set_instance_transform(i, Transform3D(basis, pos))
+		var mmi := MultiMeshInstance3D.new()
+		mmi.multimesh = mm
+		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		# Fondu vers la brume selon l'anneau (plus loin = plus délavé).
+		var amount := 0.30 + 0.19 * layer
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color  = dark.lerp(fog, amount)
+		mat.roughness     = 1.0
+		mat.diffuse_mode  = BaseMaterial3D.DIFFUSE_TOON
+		mat.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+		mmi.material_override = mat
+		_backdrop.add_child(mmi)
+
+
 ## Pose un lot d'arbres en MULTIMESH — un seul draw call par (fichier, teinte),
 ## quel que soit le nombre d'arbres. Indispensable ici : la ceinture + la forêt
 ## lointaine dépassent le millier d'arbres, et autant de MeshInstance3D
@@ -618,6 +718,11 @@ func _build_distant_forest(cfg: Dictionary, rng: RandomNumberGenerator, center: 
 ## une brise, pas comme une déformation.
 func _add_tree_batch(cfg: Dictionary, rng: RandomNumberGenerator, positions: Array[Vector3],
 		heights: Array[float], tints: Dictionary) -> void:
+	# Biomes gothiques : silhouettes d'arbres NUS custom (forêt morte) au lieu
+	# des arbres ronds Kenney — même pour le midground/la ceinture.
+	if cfg.get("gothic_forest", false):
+		_add_gothic_tree_batch(rng, positions, heights, tints)
+		return
 	var pool: Array = KitProps.TREES_PINE if cfg.get("midground_cliffs", false) else KitProps.TREES_ROUND
 	var by_file: Dictionary = {}   # fichier -> {"t": Array[Transform3D], "p": Array[float]}
 	for i in positions.size():
@@ -632,6 +737,37 @@ func _add_tree_batch(cfg: Dictionary, rng: RandomNumberGenerator, positions: Arr
 	for file: String in by_file:
 		_backdrop.add_child(
 			KitProps.build_multimesh(file, by_file[file]["t"], by_file[file]["p"], tints))
+
+
+## Variante gothique de _add_tree_batch : un MultiMesh de notre arbre NU, en
+## silhouettes sombres fondues vers la brume (la couleur de fondu est déjà
+## dans `tints` via _haze_tints). Utilisé pour le midground ET la ceinture des
+## biomes gothiques → aucun arbre Kenney rond ne subsiste.
+func _add_gothic_tree_batch(rng: RandomNumberGenerator, positions: Array[Vector3],
+		heights: Array[float], tints: Dictionary) -> void:
+	var mesh := _get_bare_tree_mesh()
+	if mesh == null or positions.is_empty():
+		return
+	var native_h := maxf(0.1, mesh.get_aabb().size.y)
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.mesh = mesh
+	mm.instance_count = positions.size()
+	for i in positions.size():
+		var basis := Basis(Vector3.UP, rng.randf_range(0.0, TAU)).scaled(
+			Vector3.ONE * (heights[i] / native_h))
+		mm.set_instance_transform(i, Transform3D(basis, positions[i]))
+	var mmi := MultiMeshInstance3D.new()
+	mmi.multimesh = mm
+	mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var mat := StandardMaterial3D.new()
+	# "woodBark" de _haze_tints porte déjà le fondu vers la brume de l'anneau.
+	mat.albedo_color  = tints.get("woodBark", Color(0.12, 0.12, 0.13))
+	mat.roughness     = 1.0
+	mat.diffuse_mode  = BaseMaterial3D.DIFFUSE_TOON
+	mat.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+	mmi.material_override = mat
+	_backdrop.add_child(mmi)
 
 
 const _GRASS_TEX_PATH := "res://assets/nature/grass.png"

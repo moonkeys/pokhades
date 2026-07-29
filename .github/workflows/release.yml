@@ -1,0 +1,58 @@
+# Publie une nouvelle version : export Godot -> paquet Velopack -> GitHub Release.
+# Déclenché en poussant un tag :  git tag v1.0.0 && git push origin v1.0.0
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  GODOT_VERSION: "4.4.1"
+  APP_ID: Pokhades
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer Godot + templates d'export
+        run: |
+          BASE="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable"
+          curl -sSL -o godot.zip  "$BASE/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          curl -sSL -o tpl.tpz    "$BASE/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          unzip -q godot.zip && mv Godot_v*_linux.x86_64 /usr/local/bin/godot && chmod +x /usr/local/bin/godot
+          unzip -q tpl.tpz
+          mkdir -p ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
+          mv templates/* ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable/
+
+      - name: Exporter le jeu (Windows)
+        run: |
+          mkdir -p builds/windows
+          godot --headless --import .            # premier import des ressources
+          godot --headless --export-release "Windows Desktop" builds/windows/Pokhades.exe
+
+      - name: Installer Velopack
+        run: dotnet tool install -g vpk
+
+      - name: Packager (installeur + delta vs version précédente)
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Récupère les paquets précédents pour que Velopack calcule un delta
+          gh release download --pattern "*.nupkg" --dir releases || true
+          ~/.dotnet/tools/vpk pack \
+            --packId "$APP_ID" \
+            --packVersion "$VERSION" \
+            --packDir builds/windows \
+            --mainExe Pokhades.exe \
+            --outputDir releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Publier la Release
+        run: gh release create "$GITHUB_REF_NAME" releases/* --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

@@ -1,13 +1,13 @@
-[gd_resource type="Theme" load_steps=3 format=3]
+[gd_resource type="Theme" format=3 uid="uid://wi7a025vkad3"]
 
-[ext_resource type="FontFile" path="res://Pokemon Essentials v21.1 2023-07-30/Fonts/power clear.ttf" id="1"]
-[ext_resource type="FontFile" path="res://Pokemon Essentials v21.1 2023-07-30/Fonts/power clear bold.ttf" id="2"]
+[ext_resource type="FontFile" uid="uid://cav7txca8wot4" path="res://Pokemon Essentials v21.1 2023-07-30/Fonts/power clear.ttf" id="1"]
+[ext_resource type="FontFile" uid="uid://fwtpa5a3jkxo" path="res://Pokemon Essentials v21.1 2023-07-30/Fonts/power clear bold.ttf" id="2"]
 
 [sub_resource type="FontVariation" id="FontVariation_bold"]
 base_font = ExtResource("2")
 
 [resource]
-default_font      = ExtResource("1")
-default_font_size = 17
+default_font = ExtResource("1")
+default_font_size = 20
 Button/fonts/font = SubResource("FontVariation_bold")
-Label/fonts/font  = SubResource("FontVariation_bold")
+Label/fonts/font = SubResource("FontVariation_bold")
