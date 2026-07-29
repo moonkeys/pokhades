@@ -655,9 +655,17 @@ func _spawn_team() -> void:
 		member.global_position = spawn_center + SPAWN_OFFSETS[i % SPAWN_OFFSETS.size()]
 
 		var is_active := i == 0
-		member.setup(instance, i, is_active)
+		# _wire_team_member AVANT setup() : setup() déclenche le chargement du
+		# sprite PMD (PMDSprites.get_walk_sprites), qui appelle son callback
+		# SYNCHRONEMENT si l'espèce est déjà en cache mémoire (cas fréquent —
+		# le joueur a probablement déjà vu son starter au Hub/Pokédex avant de
+		# lancer la run). Si _wire_team_member connectait portrait_ready APRÈS
+		# setup(), ce premier signal partait dans le vide : le portrait restait
+		# vide pour TOUTE la run (retour joueurs : « on ne voit pas les sprites
+		# des pokemons en run »).
 		_team.append(member)
 		_wire_team_member(member, i)
+		member.setup(instance, i, is_active)
 
 	# Centre la caméra immédiatement sur le premier membre
 	_cam_pos = _team[0].global_position
@@ -759,7 +767,6 @@ func _spawn_team_mp() -> void:
 		member.global_position = spawn_center + SPAWN_OFFSETS[i % SPAWN_OFFSETS.size()]
 
 		var is_local := peer == local_peer
-		member.setup(instance, i, is_local)
 		if not is_local:
 			member.remote_peer = peer
 		else:
@@ -798,6 +805,12 @@ func _spawn_team_mp() -> void:
 			if idx == _active_index:
 				hud.update_dash(charges, max_c)
 		)
+		# setup() APRÈS tous les connect() ci-dessus : elle déclenche le
+		# chargement du sprite PMD, dont le callback peut s'exécuter
+		# SYNCHRONEMENT si l'espèce est déjà en cache mémoire — portrait_ready
+		# partirait dans le vide si personne n'était encore à l'écoute (cf.
+		# même correctif sur le spawn solo).
+		member.setup(instance, i, is_local)
 
 	if _team.is_empty():
 		push_error("MP: aucun membre spawné — retour au hub.")
@@ -1575,9 +1588,10 @@ func _do_recruit() -> void:
 	var member = TEAM_SCENE.instantiate()
 	add_child(member)
 	member.global_position = spawn_ref + SPAWN_OFFSETS[idx % SPAWN_OFFSETS.size()]
-	member.setup(instance, idx, false)   # compagnon IA
+	# _wire_team_member AVANT setup() — cf. _spawn_team, même correctif.
 	_team.append(member)
 	_wire_team_member(member, idx)
+	member.setup(instance, idx, false)   # compagnon IA
 	_update_leaders()
 
 	var instances: Array = []

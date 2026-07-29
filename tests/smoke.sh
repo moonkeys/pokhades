@@ -59,6 +59,8 @@ run_scenario new_bonuses 25 smoke_new_bonuses
 run_scenario team_buff  20 smoke_team_buff
 run_scenario move_upgrade 20 smoke_move_upgrade
 run_scenario los_throttle 20 smoke_los_throttle
+run_scenario portrait_race 20 smoke_portrait_race
+run_scenario stats_overlay_item 20 smoke_stats_overlay_item
 run_scenario pokedex     20 smoke_pokedex
 run_scenario pokedex_stress 30 smoke_pokedex_stress
 run_scenario run_solo    25 smoke_run

@@ -61,6 +61,10 @@ func _ready() -> void:
 			_run_scenario(_scenario_move_upgrade)
 		elif arg == "smoke_los_throttle":
 			_run_scenario(_scenario_los_throttle)
+		elif arg == "smoke_portrait_race":
+			_run_scenario(_scenario_portrait_race)
+		elif arg == "smoke_stats_overlay_item":
+			_run_scenario(_scenario_stats_overlay_item)
 		elif arg == "smoke_cooldown_focus":
 			_run_scenario(_scenario_cooldown_focus)
 		elif arg == "smoke_pokedex":
@@ -890,6 +894,95 @@ func _scenario_los_throttle() -> void:
 		_fail("los_throttle", "le minuteur ne décroît pas — la vue est revérifiée à chaque appel")
 		return
 	_pass("los_throttle", "vérification LOS throttlée (%.3f -> %.3f)" % [timer_after_first, timer_after_second])
+
+
+## Retour joueurs : « on ne voit pas les sprites des pokemons en run ».
+## Cause : TeamMember.setup() (qui charge le sprite PMD) était appelé AVANT
+## que CombatArena connecte portrait_ready — si le sprite est DÉJÀ en cache
+## mémoire (PMDSprites._cache, cas fréquent : le joueur a vu son starter au
+## Hub/Pokédex avant de lancer la run), le callback est SYNCHRONE et le tout
+## premier portrait_ready partait dans le vide, portrait_texture restant null
+## pour toute la run. Reproduit la course : préchauffe le cache PMD du
+## starter AVANT de lancer la run (comme un vrai passage au Pokédex), puis
+## vérifie que le portrait se peuple quand même.
+func _scenario_portrait_race() -> void:
+	GameManager.is_first_run = false
+	var starter: int = GameManager.STARTER_IDS[0]
+	GameManager.hub_team = [starter]
+
+	var warmed := [false]
+	PMDSprites.get_walk_sprites(starter, self, func(_r: Dictionary) -> void: warmed[0] = true)
+	var warm_wait := 0.0
+	while not warmed[0] and warm_wait < 10.0:
+		await get_tree().create_timer(0.2).timeout
+		warm_wait += 0.2
+	if not warmed[0]:
+		_fail("portrait_race", "préchauffage du sprite PMD du starter échoué")
+		return
+
+	RunManager.inst().start_run()
+	get_tree().change_scene_to_file("res://scenes/combat/CombatArena.tscn")
+	var waited := 0.0
+	while get_tree().get_nodes_in_group("players").is_empty() and waited < 18.0:
+		await get_tree().create_timer(0.5).timeout
+		waited += 0.5
+	var players := get_tree().get_nodes_in_group("players")
+	if players.is_empty():
+		_fail("portrait_race", "équipe non apparue")
+		return
+	await get_tree().create_timer(0.3).timeout   # laisse passer 1-2 frames après le spawn
+
+	var inst: PokemonInstance = players[0].get("pokemon_instance")
+	if not is_instance_valid(inst.portrait_texture):
+		_fail("portrait_race", "portrait_texture toujours vide (cache PMD pourtant préchauffé)")
+		return
+	var arena := get_tree().current_scene
+	var hud_node: Node = arena.get("hud")
+	var card_tex: Texture2D = (hud_node.get("_team_cards")[0] as Dictionary).get("portrait").texture
+	if not is_instance_valid(card_tex):
+		_fail("portrait_race", "la case d'équipe du HUD n'a pas reçu le portrait")
+		return
+	_pass("portrait_race", "portrait peuplé malgré un cache PMD préchauffé (course évitée)")
+
+
+## Retour joueurs : « on ne voit pas l'objet associé au poke quand on veut
+## voir tous les stats avec sa description et son bonus ». TeamStatsOverlay
+## (touche Tab) lisait held_item["name_fr"]/["api_name"] — des clés qui
+## n'ont JAMAIS existé dans ItemCatalog (toujours "name"/"api"/"desc") : le
+## nom retombait systématiquement sur "?", sans aucune description.
+func _scenario_stats_overlay_item() -> void:
+	GameManager.is_first_run = false
+	GameManager.hub_team = [GameManager.STARTER_IDS[0]]
+	RunManager.inst().start_run()
+	get_tree().change_scene_to_file("res://scenes/combat/CombatArena.tscn")
+	var waited := 0.0
+	while get_tree().get_nodes_in_group("players").is_empty() and waited < 18.0:
+		await get_tree().create_timer(0.5).timeout
+		waited += 0.5
+	var players := get_tree().get_nodes_in_group("players")
+	if players.is_empty():
+		_fail("stats_overlay_item", "équipe non apparue")
+		return
+	var inst: PokemonInstance = players[0].get("pokemon_instance")
+	inst.equip_catalog_item("choice-band")   # ItemCatalog : "Bandeau Choix", +50% Attaque.
+
+	var overlay := TeamStatsOverlay.new()
+	get_tree().root.add_child(overlay)
+	overlay.setup(players)
+	await get_tree().process_frame
+
+	var name_lbl := _find_label_with_text(overlay, "Bandeau Choix")
+	if name_lbl == null:
+		_fail("stats_overlay_item", "nom de l'objet absent (\"?\" par défaut ?)")
+		overlay.queue_free()
+		return
+	var desc_lbl := _find_label_with_text(overlay, "+50% Attaque")
+	if desc_lbl == null:
+		_fail("stats_overlay_item", "description/bonus de l'objet non affichée")
+		overlay.queue_free()
+		return
+	_pass("stats_overlay_item", "nom + description de l'objet affichés")
+	overlay.queue_free()
 
 
 ## Retour joueurs : « le cooldown visuel se fige si on change de focus dans

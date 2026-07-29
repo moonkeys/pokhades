@@ -8,7 +8,7 @@ extends CanvasLayer
 ## Se referme d'un nouvel appui sur Tab (géré par CombatArena).
 
 const CARD_W := 236.0
-const CARD_H := 240.0
+const CARD_H := 290.0
 
 
 func setup(team: Array) -> void:
@@ -70,9 +70,11 @@ func _build_card(inst: PokemonInstance) -> Panel:
 	# affiché en VERT avec le % quand il y a un boost (l'impact se voit).
 	var y := 54.0
 	for row: Array in [
-		["Attaque", inst.data.attack,  inst.attack_mult],
-		["Défense", inst.data.defense, inst.defense_mult],
-		["Vitesse", inst.data.speed,   inst.speed_mult],
+		["Attaque",   inst.data.attack,      inst.attack_mult],
+		["Défense",   inst.data.defense,     inst.defense_mult],
+		["Atq. Spé",  inst.data.sp_attack,   inst.sp_attack_mult],
+		["Déf. Spé",  inst.data.sp_defense,  inst.sp_defense_mult],
+		["Vitesse",   inst.data.speed,       inst.speed_mult],
 	]:
 		var base_v: int = row[1]
 		var mult: float = row[2]
@@ -84,12 +86,34 @@ func _build_card(inst: PokemonInstance) -> Panel:
 			UiKit.GREEN_DARK if boosted else UiKit.TEXT_DARK, CARD_W - 96)
 		y += 20.0
 
-	# Objet tenu
-	var held := "Aucun objet"
-	if not inst.held_item.is_empty():
-		held = "Tient : %s" % str(inst.held_item.get("name_fr", inst.held_item.get("api_name", "?")))
-	UiKit.label(card, held, Vector2(10, y + 2), 11, UiKit.TEXT_DARK.lightened(0.25), CARD_W - 20)
-	y += 24.0
+	# Objet tenu : nom + description/bonus (retour joueurs : « on ne voit pas
+	# l'objet associé au poke... avec sa description et son bonus »). Les clés
+	# lues ici ("name_fr"/"api_name") n'ont JAMAIS existé dans ItemCatalog
+	# (toujours "name"/"api"/"desc") — le nom retombait donc systématiquement
+	# sur "?", et aucune description n'était affichée du tout.
+	if inst.held_item.is_empty():
+		UiKit.label(card, "Aucun objet", Vector2(10, y + 2), 11, UiKit.TEXT_DARK.lightened(0.25), CARD_W - 20)
+		y += 20.0
+	else:
+		var item_icon: Texture2D = ItemCatalog.icon(str(inst.held_item.get("api", "")))
+		var text_x := 10.0
+		if is_instance_valid(item_icon):
+			var itex := TextureRect.new()
+			itex.position = Vector2(10, y)
+			itex.size     = Vector2(16, 16)
+			itex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			itex.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+			itex.texture  = item_icon
+			card.add_child(itex)
+			text_x = 30.0
+		UiKit.label(card, "Tient : %s" % str(inst.held_item.get("name", "?")),
+			Vector2(text_x, y + 2), 11, UiKit.TEXT_DARK, CARD_W - text_x - 10)
+		y += 18.0
+		var item_desc := str(inst.held_item.get("desc", ""))
+		if item_desc != "":
+			UiKit.label(card, item_desc, Vector2(10, y), 10, UiKit.GREEN_DARK, CARD_W - 20)
+			y += 16.0
+	y += 6.0
 
 	# Attaques équipées (nom + pastille de type)
 	for md: MoveData in inst.equipped_moves:
