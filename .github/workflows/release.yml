@@ -241,6 +241,13 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      # `gh release create --generate-notes` a besoin de l'historique git
+      # (comparer avec le tag précédent) — sans checkout : "fatal: not a
+      # git repository".
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # tout l'historique, pas juste le tag courant : --generate-notes doit voir le tag précédent
+
       - uses: actions/download-artifact@v4
         with:
           pattern: pokhades-*
