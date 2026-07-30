@@ -9,8 +9,15 @@ extends CanvasLayer
 
 signal finished
 
-const PORTRAIT_SIZE := 128
+const ARTWORK_SIZE  := 190
 const CHAR_INTERVAL := 0.022   # machine à écrire : s/caractère
+
+## Illustration officielle PokeAPI (sprites GitHub, URL déterministe — pas
+## besoin d'appel API pour la trouver). Mise en cache mémoire (statique,
+## partagée par toutes les instances) pour ne la retélécharger qu'une fois
+## par espèce et par session.
+const ARTWORK_URL := "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/%d.png"
+static var _artwork_cache: Dictionary = {}   # pid -> Texture2D (ou null si échec)
 
 var _lines: Array = []
 var _line_idx: int = 0
@@ -35,28 +42,38 @@ func setup(display_name: String, pokemon_id: int, accent: Color, lines: Array) -
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.add_child(bg)
 
-	var panel := UiKit.main_panel(Vector2(140, 460), Vector2(1000, 210))
+	var panel := UiKit.main_panel(Vector2(110, 420), Vector2(1060, 250))
 	root.add_child(panel)
 	UiKit.pop_in(panel)
 
-	# Portrait : sprite PMD animé (« idle »), même technique que le Pokédex
-	# (PokedexScreen._add_idle_sprite) — un AnimatedSprite2D se centre sur sa
-	# position, ce qui règle le cadrage sans y penser.
-	var port_frame := UiKit.dark_card(panel, Vector2(20, 20), Vector2(PORTRAIT_SIZE, PORTRAIT_SIZE + 40))
-	_add_idle_sprite(port_frame, pokemon_id, PORTRAIT_SIZE - 16,
-		Vector2(PORTRAIT_SIZE * 0.5, PORTRAIT_SIZE * 0.5))
-	var name_col := accent if accent.a > 0.01 else UiKit.GOLD
-	UiKit.label(port_frame, display_name.to_upper(), Vector2(0, PORTRAIT_SIZE - 4),
-		14, name_col, PORTRAIT_SIZE, HORIZONTAL_ALIGNMENT_CENTER)
+	# Portrait : SANS cadre (retour joueurs — « on enlève le petit encadré
+	# pour le sprite »), en grand format. Le sprite PMD animé « idle »
+	# s'affiche tout de suite (comme avant) ; si le réseau répond, le beau
+	# dessin officiel PokeAPI le remplace en douceur — repli silencieux sur
+	# le PMD si hors ligne, pas de rupture de l'expérience.
+	var art_holder := Control.new()
+	art_holder.position     = Vector2(24, 14)
+	art_holder.size         = Vector2(ARTWORK_SIZE, ARTWORK_SIZE)
+	art_holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(art_holder)
+	_add_idle_sprite(art_holder, pokemon_id, ARTWORK_SIZE - 10,
+		Vector2(ARTWORK_SIZE * 0.5, ARTWORK_SIZE * 0.5))
+	_fetch_artwork(pokemon_id, art_holder)
 
-	var text_area := UiKit.dark_card(panel, Vector2(170, 20), Vector2(810, PORTRAIT_SIZE + 40))
-	_lbl = UiKit.label(text_area, "", Vector2(20, 16), 18, UiKit.CREAM, 770,
+	var name_col := accent if accent.a > 0.01 else UiKit.GOLD
+	UiKit.label(panel, display_name.to_upper(), Vector2(24, ARTWORK_SIZE + 20),
+		14, name_col, ARTWORK_SIZE, HORIZONTAL_ALIGNMENT_CENTER)
+
+	var text_x := ARTWORK_SIZE + 48
+	var text_w := 1060 - text_x - 24
+	var text_area := UiKit.dark_card(panel, Vector2(text_x, 14), Vector2(text_w, ARTWORK_SIZE))
+	_lbl = UiKit.label(text_area, "", Vector2(20, 16), 18, UiKit.CREAM, text_w - 40,
 		HORIZONTAL_ALIGNMENT_LEFT, true)
-	_lbl.size = Vector2(770, PORTRAIT_SIZE + 8)
+	_lbl.size = Vector2(text_w - 40, ARTWORK_SIZE - 8)
 	_lbl.clip_text = true
 	_lbl.visible_characters = 0
 
-	_hint = UiKit.label(panel, "", Vector2(170, PORTRAIT_SIZE + 46), 13,
+	_hint = UiKit.label(panel, "", Vector2(text_x, ARTWORK_SIZE + 20), 13,
 		UiKit.CREAM.darkened(0.2), 600)
 	var blink := create_tween().set_loops()
 	blink.tween_property(_hint, "modulate:a", 1.0, 0.5)
@@ -85,6 +102,44 @@ func _add_idle_sprite(parent: Control, pid: int, box: float, center: Vector2) ->
 		par.add_child(spr)
 		spr.play("idle")
 	)
+
+
+func _fetch_artwork(pid: int, holder: Control) -> void:
+	if _artwork_cache.has(pid):
+		var cached: Texture2D = _artwork_cache[pid]
+		if cached != null:
+			_show_artwork(holder, cached)
+		return
+	var http := HTTPRequest.new()
+	add_child(http)
+	var wref: WeakRef = weakref(holder)
+	http.request_completed.connect(func(res: int, code: int, _h, body: PackedByteArray) -> void:
+		http.queue_free()
+		if res != HTTPRequest.RESULT_SUCCESS or code != 200:
+			_artwork_cache[pid] = null
+			return
+		var img := Image.new()
+		if img.load_png_from_buffer(body) != OK:
+			_artwork_cache[pid] = null
+			return
+		var tex: Texture2D = ImageTexture.create_from_image(img)
+		_artwork_cache[pid] = tex
+		var h: Control = wref.get_ref()
+		if h != null:
+			_show_artwork(h, tex)
+	)
+	http.request(ARTWORK_URL % pid)
+
+
+func _show_artwork(holder: Control, tex: Texture2D) -> void:
+	for c in holder.get_children():
+		c.queue_free()
+	var rect := TextureRect.new()
+	rect.texture         = tex
+	rect.stretch_mode    = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	rect.mouse_filter    = Control.MOUSE_FILTER_IGNORE
+	rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	holder.add_child(rect)
 
 
 func _show_line(idx: int) -> void:

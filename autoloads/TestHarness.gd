@@ -43,6 +43,8 @@ func _ready() -> void:
 			_run_scenario(_scenario_final_boss)
 		elif arg == "smoke_npc_dialogue":
 			_run_scenario(_scenario_npc_dialogue)
+		elif arg == "smoke_npc_intro_once":
+			_run_scenario(_scenario_npc_intro_once)
 		elif arg == "smoke_boutique_dialogue":
 			_run_scenario(_scenario_boutique_dialogue)
 		elif arg == "smoke_freed_pokemon":
@@ -77,6 +79,8 @@ func _ready() -> void:
 			_run_scenario(_scenario_cooldown_focus)
 		elif arg == "smoke_pokedex":
 			_run_scenario(_scenario_pokedex)
+		elif arg == "smoke_gromago_refresh":
+			_run_scenario(_scenario_gromago_refresh)
 		elif arg == "smoke_pokedex_revive":
 			_run_scenario(_scenario_pokedex_revive)
 		elif arg == "smoke_pokedex_stress":
@@ -175,6 +179,10 @@ func _scenario_npc_dialogue() -> void:
 	GameManager.is_first_run = false
 	if GameManager.hub_team.is_empty():
 		GameManager.hub_team = [GameManager.STARTER_IDS[0]]
+	# Un précédent smoke_npc_intro_once (même sauvegarde user://save.json,
+	# persistante entre lancements headless) peut avoir marqué "pokedex"
+	# comme déjà vu — ce test veut spécifiquement l'intro, on la garantit.
+	GameManager.seen_npc_intros = {}
 	get_tree().change_scene_to_file("res://scenes/hub/Hub.tscn")
 	var waited := 0.0
 	while waited < 12.0:
@@ -233,6 +241,84 @@ func _scenario_npc_dialogue() -> void:
 		_fail("npc_dialogue", "le Pokédex ne s'est pas ouvert après le dialogue")
 		return
 	_pass("npc_dialogue", "dialogue fermé → Pokédex ouvert")
+
+
+## Retour joueurs : « les PNJ à service ne doivent parler qu'une fois, puis
+## ouvrir le menu directement » (Dracolosse, Porygon…). Réutilise le PNJ
+## Pokédex : une 2e interaction, APRÈS que l'intro a déjà été vue une 1re
+## fois, doit ouvrir le Pokédex SANS repasser par NpcDialogueScreen.
+func _scenario_npc_intro_once() -> void:
+	GameManager.is_first_run = false
+	if GameManager.hub_team.is_empty():
+		GameManager.hub_team = [GameManager.STARTER_IDS[0]]
+	GameManager.seen_npc_intros = {}
+	get_tree().change_scene_to_file("res://scenes/hub/Hub.tscn")
+	var waited := 0.0
+	while waited < 12.0:
+		await get_tree().create_timer(0.5).timeout
+		waited += 0.5
+		var sc := get_tree().current_scene
+		if sc != null and sc.get_node_or_null("HubWorld") != null:
+			break
+	await get_tree().create_timer(2.0).timeout
+
+	var scene := get_tree().current_scene
+	var hw: Node = scene.get_node_or_null("HubWorld") if scene != null else null
+	if hw == null:
+		hw = scene if scene != null and scene.get_script() != null else null
+	if hw == null:
+		_fail("npc_intro_once", "HubWorld introuvable")
+		return
+
+	var npcs: Array = hw.get("_npcs")
+	var pokedex_npc: Node = null
+	for n in npcs:
+		if n.npc_id == "pokedex":
+			pokedex_npc = n
+			break
+	if pokedex_npc == null:
+		_fail("npc_intro_once", "PNJ pokedex introuvable")
+		return
+
+	# 1re interaction : intro normale, puis fermeture du Pokédex (marque vu).
+	hw.call("_interact", pokedex_npc)
+	await get_tree().process_frame
+	var dlg := _find_child_by_class(hw, "NpcDialogueScreen")
+	if dlg == null:
+		_fail("npc_intro_once", "1re interaction : dialogue absent")
+		return
+	for i in 10:
+		var ev := InputEventAction.new()
+		ev.action  = "interact"
+		ev.pressed = true
+		Input.parse_input_event(ev)
+		await get_tree().process_frame
+		await get_tree().create_timer(0.05).timeout
+		if not is_instance_valid(dlg):
+			break
+	await get_tree().create_timer(0.3).timeout
+	var pdx: Node = _find_child_by_class(hw, "PokedexScreen")
+	if pdx == null:
+		_fail("npc_intro_once", "1re interaction : Pokédex jamais ouvert")
+		return
+	if pdx.has_signal("closed"):
+		pdx.emit_signal("closed")
+	await get_tree().create_timer(0.3).timeout
+
+	if not GameManager.has_seen_npc_intro("pokedex"):
+		_fail("npc_intro_once", "l'intro n'a pas été marquée comme vue")
+		return
+
+	# 2e interaction : DOIT sauter le dialogue et ouvrir le Pokédex direct.
+	hw.call("_interact", pokedex_npc)
+	await get_tree().process_frame
+	if _find_child_by_class(hw, "NpcDialogueScreen") != null:
+		_fail("npc_intro_once", "2e interaction : le dialogue s'est rejoué")
+		return
+	if _find_child_by_class(hw, "PokedexScreen") == null:
+		_fail("npc_intro_once", "2e interaction : le Pokédex ne s'est pas ouvert directement")
+		return
+	_pass("npc_intro_once", "intro jouée une fois, menu direct ensuite")
 
 
 ## Les nœuds créés via `MaClasse.new()` gardent le nom de leur classe MOTEUR
@@ -508,6 +594,48 @@ func _scenario_pokedex() -> void:
 		_fail("pokedex", "focus inerte (%s -> %s)" % [f0, f1])
 		return
 	_pass("pokedex", "focus %s -> %s" % [f0.name, f1.name])
+
+
+## Retour joueurs : « le Bazar de Gromago se ferme et se rouvre violemment
+## après un achat ». _rebuild() détruisait tout l'écran (voile, cadre,
+## bannière — dont l'anim pop_in rejouée à chaque achat) ; vérifie que
+## _panel reste la MÊME instance après un achat (rafraîchi en place,
+## cf. GromagoShopScreen._refresh_cards) et que le compteur "×N" suit.
+func _scenario_gromago_refresh() -> void:
+	GameManager.gold           = 999999
+	GameManager.item_inventory = {}
+	var screen := GromagoShopScreen.new()
+	get_tree().root.add_child(screen)
+	await get_tree().process_frame
+	await get_tree().process_frame
+
+	var panel_before: Node = screen.get("_panel")
+	if panel_before == null:
+		_fail("gromago_refresh", "panneau introuvable")
+		screen.queue_free()
+		return
+
+	var buy := _find_button_with_text(screen, "Acheter")
+	if buy == null:
+		_fail("gromago_refresh", "bouton Acheter introuvable")
+		screen.queue_free()
+		return
+	buy.pressed.emit()
+	await get_tree().process_frame
+
+	var panel_after: Node = screen.get("_panel")
+	if panel_after != panel_before or not is_instance_valid(panel_before):
+		_fail("gromago_refresh", "le panneau a été détruit/recréé après l'achat")
+		screen.queue_free()
+		return
+
+	if _find_label_with_text(screen, "×1") == null:
+		_fail("gromago_refresh", "compteur ×1 non affiché après l'achat")
+		screen.queue_free()
+		return
+
+	_pass("gromago_refresh", "achat rafraîchi en place, panneau non détruit")
+	screen.queue_free()
 
 
 ## Retour joueurs : « pouvoir équiper des Rappels, ça coûte du poids ». Ouvre

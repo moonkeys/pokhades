@@ -296,6 +296,19 @@ func set_assigned_revives(pid: int, n: int) -> void:
 	else:
 		pokemon_revives[pid] = v
 
+## PNJ de SERVICE (menu associé, cf. HubWorld._SERVICE_NPCS) dont l'intro a
+## déjà été jouée — retour joueurs : « les PNJ à service ne doivent parler
+## qu'une fois, puis ouvrir le menu directement ». Les PNJ décoratifs
+## (Pokémon libérés qui déambulent…) ne consultent jamais ceci : ils
+## continuent de parler à chaque interaction.
+var seen_npc_intros: Dictionary = {}
+
+func has_seen_npc_intro(npc_id: String) -> bool:
+	return seen_npc_intros.has(npc_id)
+
+func mark_npc_intro_seen(npc_id: String) -> void:
+	seen_npc_intros[npc_id] = true
+
 ## Amélioration permanente : les baies au sol s'attirent vers le joueur
 ## (cf. BerryPickup). Achetée chez les Améliorations du hub.
 var berry_magnet: bool = false
@@ -800,6 +813,7 @@ func save_game() -> void:
 		"item_inventory":      item_inventory,
 		"pokemon_item":        _stringify_keys(pokemon_item),
 		"pokemon_revives":     _stringify_keys(pokemon_revives),
+		"seen_npc_intros":     seen_npc_intros,
 		"start_level_bonus":   _stringify_keys(start_level_bonus),
 		"berry_magnet":        berry_magnet,
 		"move_slot_count":     move_slot_count,
@@ -851,6 +865,7 @@ func load_game() -> void:
 	item_inventory       = d.get("item_inventory", {})
 	pokemon_item         = _intify_keys(d.get("pokemon_item", {}))
 	pokemon_revives      = _intify_keys(d.get("pokemon_revives", {}))
+	seen_npc_intros      = d.get("seen_npc_intros", {})
 	start_level_bonus    = _intify_keys(d.get("start_level_bonus", {}))
 	berry_magnet         = bool(d.get("berry_magnet", berry_magnet))
 	move_slot_count      = int(d.get("move_slot_count", move_slot_count))
@@ -915,6 +930,7 @@ func reset_save() -> void:
 	item_inventory        = {}
 	pokemon_item          = {}
 	pokemon_revives       = {}
+	seen_npc_intros       = {}
 	start_level_bonus     = {}
 	berry_magnet          = false
 	move_slot_count       = MOVE_SLOTS

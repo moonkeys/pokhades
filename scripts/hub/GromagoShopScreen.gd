@@ -6,7 +6,9 @@ extends CanvasLayer
 
 signal closed
 
-var _panel: Panel = null
+var _panel:      Panel   = null
+var _gold_lbl:   Label   = null
+var _cards_root: Control = null
 
 
 func _ready() -> void:
@@ -27,8 +29,31 @@ func _build() -> void:
 	UiKit.banner(_panel, "Bazar de Gromago")
 	UiKit.pop_in(_panel)
 
-	UiKit.label(_panel, "◆ %d Baies    ·    Objets à assigner dans « Pokédex & Équipe »"
-		% GameManager.gold, Vector2(0, 64), 14, UiKit.GOLD, 1160, HORIZONTAL_ALIGNMENT_CENTER)
+	_gold_lbl = UiKit.label(_panel, "", Vector2(0, 64), 14, UiKit.GOLD, 1160,
+		HORIZONTAL_ALIGNMENT_CENTER)
+
+	_cards_root = Control.new()
+	_cards_root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_panel.add_child(_cards_root)
+	_refresh_cards()
+
+	var close := UiKit.button("✕  Fermer", Vector2(160, 40), false)
+	close.position = Vector2(24, 588)
+	close.pressed.connect(func() -> void: closed.emit())
+	_panel.add_child(close)
+
+
+## Retour joueurs : « le menu se ferme et se rouvre violemment après un
+## achat ». _rebuild() détruisait TOUT l'écran (voile, cadre, bannière) pour
+## le reconstruire à l'identique une frame plus tard — dont un _build()
+## qui rejouait l'anim UiKit.pop_in à chaque achat. Un achat ne change que
+## le solde et les compteurs "×N" : seule la grille de cartes + le libellé
+## de Baies ont besoin d'être rafraîchis, le reste du décor reste en place.
+func _refresh_cards() -> void:
+	_gold_lbl.text = "◆ %d Baies    ·    Objets à assigner dans « Pokédex & Équipe »" % GameManager.gold
+
+	for c in _cards_root.get_children():
+		c.queue_free()
 
 	# Grille 3×N
 	var cols   := 3
@@ -41,16 +66,11 @@ func _build() -> void:
 		var cy := 90.0 + (i / cols) * (card_h + 10.0)
 		_build_item_card(it, cx, cy, card_w, card_h)
 
-	var close := UiKit.button("✕  Fermer", Vector2(160, 40), false)
-	close.position = Vector2(24, 588)
-	close.pressed.connect(func() -> void: closed.emit())
-	_panel.add_child(close)
-
 
 func _build_item_card(it: Dictionary, x: float, y: float, w: float, h: float) -> void:
 	var api:   String = it["api"]
 	var owned: int    = GameManager.get_item_count(api)
-	var card := UiKit.card(_panel, Vector2(x, y), Vector2(w, h))
+	var card := UiKit.card(_cards_root, Vector2(x, y), Vector2(w, h))
 
 	var tex := ItemCatalog.icon(api)
 	if tex != null:
@@ -84,14 +104,5 @@ func _build_item_card(it: Dictionary, x: float, y: float, w: float, h: float) ->
 func _buy(api: String) -> void:
 	if GameManager.buy_item(api):
 		Sfx.play_file(Sfx.SE_BUY_ITEM)
-		_rebuild()
-
-
-func _rebuild() -> void:
-	for child in get_children():
-		if child is MenuNav:
-			continue
-		child.queue_free()
-	await get_tree().process_frame
-	_build()
-	MenuNav.focus_first(self)
+		_refresh_cards()
+		MenuNav.focus_first(self)

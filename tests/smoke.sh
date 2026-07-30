@@ -49,6 +49,7 @@ run_scenario rumors      20 smoke_rumors
 run_scenario recruit     20 smoke_recruit
 run_scenario final_boss  20 smoke_final_boss
 run_scenario npc_dialogue 20 smoke_npc_dialogue
+run_scenario npc_intro_once 20 smoke_npc_intro_once
 run_scenario boutique_dialogue 25 smoke_boutique_dialogue
 run_scenario freed_pokemon 20 smoke_freed_pokemon
 run_scenario boon_claim  20 smoke_boon_claim
@@ -66,6 +67,7 @@ run_scenario stats_overlay_item 20 smoke_stats_overlay_item
 run_scenario enemy_aggro 20 smoke_enemy_aggro
 run_scenario auto_revive 20 smoke_auto_revive
 run_scenario pokedex     20 smoke_pokedex
+run_scenario gromago_refresh 20 smoke_gromago_refresh
 run_scenario pokedex_revive 20 smoke_pokedex_revive
 run_scenario pokedex_stress 30 smoke_pokedex_stress
 run_scenario run_solo    25 smoke_run

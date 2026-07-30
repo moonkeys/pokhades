@@ -634,17 +634,31 @@ func _update_prompt(npc: HubNPC) -> void:
 	_prompt_lbl.add_theme_stylebox_override("normal", s)
 
 
+## PNJ à SERVICE (menu associé, cf. _open_npc_screen) — mêmes clés que le
+## match ci-dessous. Retour joueurs : « les PNJ à service ne doivent parler
+## qu'une fois, puis ouvrir directement le menu » — un PNJ décoratif (pas
+## dans cette liste, ex. "reserve") continue lui de parler à chaque fois.
+const _SERVICE_NPCS := ["start", "story", "rumors", "shop", "pokedex", "upgrades", "gromago", "moves"]
+
 ## Petit échange (2-3 phrases, cf. NpcDialogue) AVANT d'ouvrir le menu associé
 ## au PNJ — retour joueurs : « je veux pouvoir avoir un petit dialogue avec
 ## chaque PNJ ». Le menu ne s'ouvre qu'une fois le dialogue refermé.
 func _interact(npc: HubNPC) -> void:
 	_blocked = true
+	var is_service := npc.npc_id in _SERVICE_NPCS
+	if is_service and GameManager.has_seen_npc_intro(npc.npc_id):
+		_open_npc_screen(npc)
+		return
 	var dlg := NpcDialogueScreen.new()
 	add_child(dlg)
 	var display_name := npc.npc_name if not npc.npc_name.is_empty() else "…"
 	dlg.setup(display_name, npc.pokemon_id, npc.accent, NpcDialogue.lines_for(npc.npc_id))
 	Sfx.play_file(Sfx.SE_MENU_OPEN, -6.0)
-	dlg.finished.connect(func() -> void: _open_npc_screen(npc))
+	dlg.finished.connect(func() -> void:
+		if is_service:
+			GameManager.mark_npc_intro_seen(npc.npc_id)
+		_open_npc_screen(npc)
+	)
 
 
 func _open_npc_screen(npc: HubNPC) -> void:
