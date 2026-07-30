@@ -87,6 +87,10 @@ func _ready() -> void:
 			_run_scenario(_scenario_pokedex_tabs)
 		elif arg == "smoke_team_evolve_display":
 			_run_scenario(_scenario_team_evolve_display)
+		elif arg == "smoke_evolution_popup":
+			_run_scenario(_scenario_evolution_popup)
+		elif arg == "smoke_pokedex_item_row":
+			_run_scenario(_scenario_pokedex_item_row)
 		elif arg == "smoke_pokedex_stress":
 			_run_scenario(_scenario_pokedex_stress)
 		elif arg == "mp_test_host":
@@ -757,6 +761,82 @@ func _scenario_team_evolve_display() -> void:
 		screen.queue_free()
 		return
 	_pass("team_evolve_display", "Pikachu nv.10+2 Bonbons → évolution Raichu nv.20 calculée et affichée")
+	screen.queue_free()
+
+
+## Retour joueurs : « en cliquant sur le sprite animé d'un Pokémon, ouvrir
+## une pop-up affichant toutes ses évolutions possibles ». Ouvre la pop-up
+## depuis Florizarre (#3, DERNIER maillon) : vérifie que la chaîne remonte
+## bien jusqu'à Bulbizarre (#1, la racine) au lieu de ne montrer que
+## Florizarre lui-même (cf. PokedexScreen._evolution_chain).
+func _scenario_evolution_popup() -> void:
+	GameManager.unlocked_pokemon = [1, 2, 3]
+	var screen := PokedexScreen.new()
+	get_tree().root.add_child(screen)
+	await get_tree().create_timer(2.5).timeout
+
+	var chain: Array = screen.call("_evolution_chain", 3)
+	if chain != [1, 2, 3]:
+		_fail("evolution_popup", "chaîne incorrecte pour Florizarre (attendu [1,2,3], eu %s)" % [chain])
+		screen.queue_free()
+		return
+
+	screen.call("_open_evolution_popup", 3)
+	await get_tree().process_frame
+	await get_tree().process_frame
+
+	var popup: Node = screen.get("_evo_popup")
+	if popup == null or not is_instance_valid(popup):
+		_fail("evolution_popup", "la pop-up ne s'est pas ouverte")
+		screen.queue_free()
+		return
+	if _find_label_with_text(popup, "BULBIZARRE") == null:
+		_fail("evolution_popup", "1er maillon (Bulbizarre) absent de la pop-up")
+		popup.queue_free()
+		screen.queue_free()
+		return
+	if _find_label_with_text(popup, "Niv.16") == null:
+		_fail("evolution_popup", "niveau d'évolution absent de la pop-up")
+		popup.queue_free()
+		screen.queue_free()
+		return
+
+	_pass("evolution_popup", "chaîne complète (3 formes) affichée depuis n'importe quel maillon")
+	screen.queue_free()
+
+
+## Retour joueurs : « supprimer les textes inutiles (ex : 'objet 2.', 'ESP 3.
+## objet')… afficher uniquement le sprite, le nom, et une description claire
+## de son effet ». La ligne d'objet tenu du Pokédex mélangeait le nom de
+## l'objet ET le bonus de Super Bonbon dans un seul libellé "Objet : Nom ·
+## Départ +N niv" — vérifie que le nom seul apparaît, avec sa description,
+## sans ce préfixe/concaténation.
+func _scenario_pokedex_item_row() -> void:
+	var pid: int = GameManager.STARTER_IDS[0]
+	GameManager.hub_team = [pid]
+	if not (pid in GameManager.unlocked_pokemon):
+		GameManager.unlocked_pokemon.append(pid)
+	GameManager.item_inventory["choice-band"] = 1
+	GameManager.assign_item(pid, "choice-band")   # ItemCatalog : "Bandeau Choix", desc "+50% Attaque."
+	var screen := PokedexScreen.new()
+	get_tree().root.add_child(screen)
+	await get_tree().create_timer(2.5).timeout
+	screen.call("_select", pid)
+	await get_tree().process_frame
+
+	if _find_label_with_text(screen, "Objet :") != null:
+		_fail("pokedex_item_row", "le préfixe 'Objet :' concaténé subsiste")
+		screen.queue_free()
+		return
+	if _find_label_with_text(screen, "Bandeau Choix") == null:
+		_fail("pokedex_item_row", "le nom de l'objet tenu n'est pas affiché")
+		screen.queue_free()
+		return
+	if _find_label_with_text(screen, "+50% Attaque") == null:
+		_fail("pokedex_item_row", "la description de l'effet n'est pas affichée")
+		screen.queue_free()
+		return
+	_pass("pokedex_item_row", "nom + description seuls, sans concaténation parasite")
 	screen.queue_free()
 
 

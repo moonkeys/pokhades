@@ -643,6 +643,106 @@ func _refresh_detail_locked(pd: PokemonData) -> void:
 	_detail_root.add_child(_lbl_node(msg, 16, 178, 544, 24, 13, C_DIM))
 
 
+## Chaîne d'évolution COMPLÈTE de `pid` : remonte jusqu'à la forme de base
+## (GameManager.EVOLUTIONS n'indexe que base → suivant, pas l'inverse), puis
+## redescend jusqu'au bout. Chaîne linéaire ici (pas d'embranchements
+## modélisés) — suffisant pour tout le roster actuel.
+func _evolution_chain(pid: int) -> Array[int]:
+	var root := pid
+	var changed := true
+	while changed:
+		changed = false
+		for base in GameManager.EVOLUTIONS:
+			if int(GameManager.EVOLUTIONS[base]["evolves_to"]) == root:
+				root = int(base)
+				changed = true
+				break
+	var chain: Array[int] = [root]
+	var cur := root
+	while GameManager.EVOLUTIONS.has(cur):
+		cur = int(GameManager.EVOLUTIONS[cur]["evolves_to"])
+		chain.append(cur)
+	return chain
+
+
+## Pop-up « arbre d'évolution » — retour joueurs : « en cliquant sur le
+## sprite animé d'un Pokémon, ouvrir une pop-up affichant toutes ses
+## évolutions possibles ». Une forme non débloquée reste en silhouette
+## (comme le reste du Pokédex) : on ne révèle pas l'espèce avant coup.
+var _evo_popup: CanvasLayer = null
+
+func _open_evolution_popup(pid: int) -> void:
+	if is_instance_valid(_evo_popup):
+		_evo_popup.queue_free()
+	var chain := _evolution_chain(pid)
+
+	var pop := CanvasLayer.new()
+	pop.layer = 30
+	_evo_popup = pop
+	add_child(pop)
+
+	var close_pop := func() -> void:
+		pop.queue_free()
+		_evo_popup = null
+	pop.add_child(MenuNav.make(close_pop))
+
+	var veil := ColorRect.new()
+	veil.color = Color(0.02, 0.02, 0.01, 0.6)
+	veil.set_anchors_preset(Control.PRESET_FULL_RECT)
+	pop.add_child(veil)
+
+	var stage_w := 160.0
+	var pw := maxf(360.0, stage_w * chain.size() + 40.0)
+	var ph := 260.0
+	var panel := UiKit.main_panel(Vector2((1280.0 - pw) * 0.5, (720.0 - ph) * 0.5), Vector2(pw, ph))
+	pop.add_child(panel)
+	UiKit.banner(panel, "Évolutions")
+
+	if chain.size() <= 1:
+		UiKit.label(panel, "Ce Pokémon n'évolue pas.", Vector2(0, 100), 14, UiKit.CREAM, pw,
+			HORIZONTAL_ALIGNMENT_CENTER)
+	else:
+		var start_x := (pw - stage_w * chain.size()) * 0.5
+		for i in chain.size():
+			var stage_pid: int = chain[i]
+			var sx := start_x + i * stage_w
+			var box_w := stage_w - 30.0
+			var box := Control.new()
+			box.position = Vector2(sx, 60)
+			box.size     = Vector2(box_w, 140)
+			panel.add_child(box)
+
+			var stage_unlocked := stage_pid in GameManager.unlocked_pokemon
+			if stage_unlocked:
+				_add_idle_sprite(box, stage_pid, 78.0, Vector2(box_w * 0.5, 66))
+			else:
+				var silhouette := TextureRect.new()
+				silhouette.position     = Vector2(box_w * 0.5 - 39.0, 20)
+				silhouette.size         = Vector2(78, 78)
+				silhouette.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+				silhouette.modulate     = Color.BLACK
+				if _portraits.has(stage_pid):
+					silhouette.texture = _portraits[stage_pid]
+				box.add_child(silhouette)
+
+			var name_txt := "???"
+			if stage_unlocked and _loaded_data.has(stage_pid):
+				name_txt = (_loaded_data[stage_pid] as PokemonData).name_fr.to_upper()
+			box.add_child(_lbl_node(name_txt, 0, 112, box_w, 18, 12,
+				C_GOLD if stage_unlocked else C_DIM, true))
+			box.add_child(_lbl_node("#%d" % stage_pid, 0, 130, box_w, 14, 9, C_DIM, true))
+
+			if i < chain.size() - 1:
+				var lvl := int(GameManager.EVOLUTIONS[stage_pid]["level"])
+				panel.add_child(_lbl_node("→\nNiv.%d" % lvl, sx + box_w, 90, 30, 40, 11, C_GOLD_LT, true))
+
+	var close := UiKit.button("Fermer  (Échap)", Vector2(180, 36), false)
+	close.position = Vector2((pw - 180.0) * 0.5, ph - 46.0)
+	close.pressed.connect(close_pop)
+	panel.add_child(close)
+	MenuNav.focus_first(panel)
+
+
 ## Ligne "objet tenu" : icône + nom de l'objet assigné à `pid`, bouton pour
 ## cycler parmi les objets possédés (dont « Aucun »), et bouton Super Bonbon.
 func _build_item_row(pid: int, x: int, y: int) -> void:
@@ -660,13 +760,18 @@ func _build_item_row(pid: int, x: int, y: int) -> void:
 			icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 			_detail_root.add_child(icon)
 
+	# Sprite + nom + description de l'EFFET, rien d'autre (retour joueurs :
+	# « supprimer les textes inutiles… afficher uniquement le sprite, le nom
+	# et une description claire »). Le bonus de Super Bonbon n'a rien à voir
+	# avec l'objet TENU — il a sa propre ligne plus bas (niveau de départ).
 	var item_name := "Aucun objet"
 	if held != "":
 		item_name = str(ItemCatalog.get_item(held).get("name", held))
-	var bonus_now := GameManager.get_start_level_bonus(pid)
-	if bonus_now > 0:
-		item_name += "   ·   Départ +%d niv" % bonus_now
-	_detail_root.add_child(_lbl_node("Objet : " + item_name, x + 34, y + 4, 300, 22, 13, C_TEXT))
+	_detail_root.add_child(_lbl_node(item_name, x + 34, y, 300, 18, 13, C_TEXT))
+	if held != "":
+		var held_desc := str(ItemCatalog.get_item(held).get("desc", ""))
+		if held_desc != "":
+			_detail_root.add_child(_lbl_node(held_desc, x + 34, y + 17, 300, 14, 10, C_GOLD_LT))
 
 	# Bouton d'ouverture du CHOIX d'objet — un vrai menu (cf. _open_item_picker)
 	# et non plus un cycle aveugle : avec 8+ objets possédés, « Changer » qui
@@ -906,12 +1011,19 @@ func _refresh_detail() -> void:
 		# Débloqué : sprite ANIMÉ en idle (cf. _add_idle_sprite). Le portrait
 		# statique servait juste d'illustration ; l'animation rend la fiche
 		# vivante et montre le Pokémon tel qu'on le verra en jeu.
-		var holder := Control.new()
-		holder.position = Vector2(16, 12)
-		holder.size     = Vector2(96, 96)
-		holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		# Bouton (pas juste un Control) : retour joueurs — cliquer le sprite
+		# animé ouvre la pop-up d'arbre d'évolution (cf. _open_evolution_popup).
+		var holder := Button.new()
+		holder.position  = Vector2(16, 12)
+		holder.size      = Vector2(96, 96)
+		holder.flat      = true
+		holder.focus_mode = Control.FOCUS_ALL
+		holder.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		holder.tooltip_text = "Voir les évolutions"
 		_detail_root.add_child(holder)
 		_add_idle_sprite(holder, _selected_pid, 84.0, Vector2(48, 48))
+		var evo_pid := _selected_pid
+		holder.pressed.connect(func() -> void: _open_evolution_popup(evo_pid))
 	else:
 		# Non débloqué : on garde le portrait STATIQUE en silhouette noire — le
 		# but est justement de ne pas révéler l'espèce.
