@@ -1,5 +1,5 @@
 # Publie une nouvelle version : export Godot -> paquet Velopack -> GitHub Release,
-# pour Windows, Linux et macOS.
+# pour Windows et macOS.
 # Déclenché en poussant un tag :  git tag v1.0.0 && git push origin v1.0.0
 # (déclenchement manuel possible depuis l'onglet Actions, sans publier de release)
 name: Release
@@ -40,16 +40,6 @@ jobs:
             godot_asset_bin: win64.exe
             templates_dir: "$APPDATA/Godot/export_templates/4.7.stable"
 
-          - channel: linux
-            os: ubuntu-latest
-            preset: "Linux"
-            export_path: builds/linux/Pokhades.x86_64
-            pack_dir: builds/linux
-            main_exe: Pokhades.x86_64
-            godot_asset: linux.x86_64.zip
-            godot_asset_bin: linux.x86_64
-            templates_dir: "$HOME/.local/share/godot/export_templates/4.7.stable"
-
           - channel: osx
             os: macos-latest
             preset: "macOS"
@@ -62,32 +52,11 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30   # garde-fou : un export bloqué ne tourne pas indéfiniment
-    # Le job "build" est agrégé sur toute la matrice : sans ceci, un seul
-    # canal en échec (Linux, encore instable) ferait sauter "publish" même
-    # si Windows et macOS ont réussi.
-    continue-on-error: ${{ matrix.channel == 'linux' }}
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v4
-
-      - name: Bibliothèques système (Linux uniquement)
-        if: matrix.channel == 'linux'
-        # Le binaire Godot linux headless est lié à X11/audio même pour
-        # tourner en --headless ; sans ces libs, ubuntu-latest le lance
-        # sur un binaire dont dépendances manquent et l'exécution échoue.
-        # Chaque paquet est installé individuellement : un nom de paquet qui
-        # change entre versions d'Ubuntu (déjà vu : libxrandr1 -> libxrandr2,
-        # libasound2 -> libasound2t64) ne doit pas faire échouer tous les
-        # autres.
-        run: |
-          sudo apt-get update -qq
-          for pkg in libfontconfig1 libxcursor1 libxinerama1 libxi6 libxrandr2 \
-                     libxrender1 libxext6 libgl1 libasound2t64 libpulse0; do
-            sudo apt-get install -y --no-install-recommends "$pkg" \
-              || echo "::warning::paquet non installé : $pkg"
-          done
 
       - name: Installer Godot + templates d'export
         run: |
@@ -177,8 +146,17 @@ jobs:
           [ "$VERSION" = "$GITHUB_REF_NAME" ] && VERSION="0.0.$GITHUB_RUN_NUMBER"   # run manuel, hors tag
           mkdir -p releases
           # Récupère les paquets précédents de CE canal pour que Velopack calcule un delta
-          # (nom tel que renommé par l'étape "Renommer les paquets" d'un run antérieur)
-          gh release download --pattern "${{ matrix.channel }}-*.nupkg" --dir releases || true
+          # (nom tel que renommé par l'étape "Renommer les paquets" d'un run antérieur).
+          # UNIQUEMENT sur un vrai tag : gh release download sans tag précis
+          # cible la DERNIÈRE release publiée, dont la version réelle (ex.
+          # 0.1.6) dépasse presque toujours le "0.0.$RUN_NUMBER" arbitraire
+          # d'un run manuel — vpk refuse alors de packager une version plus
+          # ancienne que ce qu'il trouve ("There is a release ... equal or
+          # greater to the current version"). Un run manuel n'a de toute
+          # façon aucune raison de calculer un delta contre du réel.
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            gh release download --pattern "${{ matrix.channel }}-*.nupkg" --dir releases || true
+          fi
           vpk pack \
             --packId "$APP_ID" \
             --packVersion "$VERSION" \
@@ -205,8 +183,6 @@ jobs:
 
           if [ "${{ matrix.channel }}" = "win" ]; then
             ext="exe"; dest="Pokhades-win-Setup.exe"
-          elif [ "${{ matrix.channel }}" = "linux" ]; then
-            ext="AppImage"; dest="Pokhades-linux.AppImage"
           else
             ext="pkg"; dest="Pokhades-osx-Setup.pkg"
           fi

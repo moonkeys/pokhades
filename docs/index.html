@@ -336,7 +336,7 @@ footer a{color:#fff}
           <span class="type t-fight">COOP EN LIGNE</span><span class="type t-fairy">COLLECTION</span>
           <span class="type t-dark">META-PROGRESSION</span><span class="type t-normal">SOLO</span>
           <p style="color:var(--dim); margin-bottom:0">
-            Fait avec Godot 4. Windows, macOS et Linux. Manette et clavier.
+            Fait avec Godot 4. Windows et macOS. Manette et clavier.
             Pas de compte, pas de pub, pas d'achat : tu télécharges, tu joues.</p>
         </div>
       </div>
@@ -412,9 +412,8 @@ const REPO = "moonkeys/pokhades";
 
 /* Noms des fichiers publiés dans chaque GitHub Release */
 const ASSETS = {
-  win:   "Pokhades-win-Setup.exe",
-  mac:   "Pokhades-osx-Setup.pkg",
-  linux: "Pokhades-linux.AppImage",
+  win: "Pokhades-win-Setup.exe",
+  mac: "Pokhades-osx-Setup.pkg",
 };
 
 /* Sprites animés Gen V (dispo pour les n° 1 à 649) */
@@ -460,12 +459,13 @@ document.getElementById("dex").innerHTML = FEATURES.map(f => `
 
 /* ── Téléchargements ── */
 const RELEASE_URL = f => `https://github.com/${REPO}/releases/latest/download/${f}`;
-const OS_LABEL = { win: "WINDOWS", mac: "MACOS", linux: "LINUX" };
+const OS_LABEL = { win: "WINDOWS", mac: "MACOS" };
 
+// Pas de build Linux : un visiteur Linux tombe sur le défaut "win" comme
+// n'importe quel OS non reconnu (déjà le comportement d'avant Linux).
 function detectOS() {
   const p = (navigator.userAgentData?.platform || navigator.platform || navigator.userAgent).toLowerCase();
   if (p.includes("mac")) return "mac";
-  if (p.includes("linux") || p.includes("android")) return "linux";
   return "win";
 }
 
@@ -501,7 +501,7 @@ function setAvailable(rel) {
   for (const id of LABELS)
     document.getElementById(id).textContent = mine ? `TELECHARGER · ${OS_LABEL[os]}` : "VOIR LES VERSIONS";
 
-  const links = ["win", "mac", "linux"].map(k => names.has(ASSETS[k])
+  const links = ["win", "mac"].map(k => names.has(ASSETS[k])
     ? `<a href="${RELEASE_URL(ASSETS[k])}">${OS_LABEL[k]}</a>`
     : `<span style="opacity:.55">${OS_LABEL[k]} (bientôt)</span>`);
   document.getElementById("others").innerHTML = "Autres plateformes : " + links.join(" · ");
