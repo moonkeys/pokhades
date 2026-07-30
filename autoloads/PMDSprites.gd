@@ -125,10 +125,16 @@ func _finish_png(dex_id: int, bytes: PackedByteArray, info: Dictionary) -> void:
 	var fh: int = info.get("frame_h", 32)
 	# Ligne "walk_down" (row 0), 1ère frame — sert de référence pour la position des pieds.
 	var foot_row := _find_foot_row(img, Rect2i(0, 0, fw, fh))
+	var h_bounds := _find_h_bounds(img, Rect2i(0, 0, fw, fh))
 	_resolve(dex_id, {
 		"frames": frames,
 		"frame_size": Vector2i(fw, fh),
 		"foot_row": foot_row,   # rangée (depuis le haut de la frame) du pixel opaque le plus bas
+		# Centre HORIZONTAL du contenu opaque (≠ fw*0.5 géométrique) — les
+		# planches PMD ont parfois une marge asymétrique gauche/droite, un
+		# sprite centré sur la frame paraît alors décalé dans son carré
+		# (retour joueurs : « centrer correctement les sprites » du Pokédex).
+		"center_col": (h_bounds.x + h_bounds.y) * 0.5,
 	})
 
 
@@ -148,6 +154,30 @@ func _find_foot_row(img: Image, rect: Rect2i) -> int:
 	if lowest == -1:
 		return rect.size.y - 1
 	return lowest - rect.position.y
+
+
+## Colonnes (relatives à `rect`) du pixel opaque le plus à gauche et le plus
+## à droite — cf. center_col dans _finish_png.
+func _find_h_bounds(img: Image, rect: Rect2i) -> Vector2:
+	if rect.position.x < 0 or rect.position.y < 0 \
+			or rect.position.x + rect.size.x > img.get_width() \
+			or rect.position.y + rect.size.y > img.get_height():
+		return Vector2(0.0, float(rect.size.x))
+	var left := -1
+	var right := -1
+	for x in range(rect.position.x, rect.position.x + rect.size.x):
+		var has_pixel := false
+		for y in range(rect.position.y, rect.position.y + rect.size.y):
+			if img.get_pixel(x, y).a > 0.05:
+				has_pixel = true
+				break
+		if has_pixel:
+			if left == -1:
+				left = x
+			right = x
+	if left == -1:
+		return Vector2(0.0, float(rect.size.x))
+	return Vector2(float(left - rect.position.x), float(right - rect.position.x))
 
 
 # ── Cache disque (user://) — évite de retélécharger d'une session à l'autre ──

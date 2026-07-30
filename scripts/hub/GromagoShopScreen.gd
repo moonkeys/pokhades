@@ -58,7 +58,11 @@ func _refresh_cards() -> void:
 	# Grille 3×N
 	var cols   := 3
 	var card_w := 366.0
-	var card_h := 100.0
+	# Assez haut pour que la description du Super Bonbon (la plus longue du
+	# catalogue, ~90 caractères) ait la place de se replier sur plusieurs
+	# lignes SANS chevaucher le prix/bouton en dessous (retour joueurs :
+	# « forcer le retour à la ligne au lieu de couper le texte »).
+	var card_h := 120.0
 	var items := ItemCatalog.ITEMS
 	for i in items.size():
 		var it: Dictionary = items[i]
@@ -85,16 +89,16 @@ func _build_item_card(it: Dictionary, x: float, y: float, w: float, h: float) ->
 	UiKit.label(card, str(it["name"]), Vector2(64, 8), 15, UiKit.TEXT_DARK, w - 130)
 	var desc := UiKit.label(card, str(it["desc"]), Vector2(64, 32), 11,
 		UiKit.TEXT_DARK.lightened(0.22), w - 74)
-	desc.size.y = 38
+	desc.size.y = 58
 	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 
 	if owned > 0:
 		UiKit.label(card, "×%d" % owned, Vector2(w - 52, 8), 16, UiKit.GREEN_DARK, 44)
 
-	UiKit.label(card, "◆ %d" % int(it["price"]), Vector2(64, 72), 13, UiKit.GOLD.darkened(0.25), 100)
+	UiKit.label(card, "◆ %d" % int(it["price"]), Vector2(64, 92), 13, UiKit.GOLD.darkened(0.25), 100)
 
 	var btn := UiKit.button("Acheter", Vector2(104, 30))
-	btn.position = Vector2(w - 116, 62)
+	btn.position = Vector2(w - 116, 82)
 	btn.disabled = GameManager.gold < int(it["price"])
 	var cap_api := api
 	btn.pressed.connect(func() -> void: _buy(cap_api))

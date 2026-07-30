@@ -83,6 +83,8 @@ func _ready() -> void:
 			_run_scenario(_scenario_gromago_refresh)
 		elif arg == "smoke_pokedex_revive":
 			_run_scenario(_scenario_pokedex_revive)
+		elif arg == "smoke_pokedex_tabs":
+			_run_scenario(_scenario_pokedex_tabs)
 		elif arg == "smoke_pokedex_stress":
 			_run_scenario(_scenario_pokedex_stress)
 		elif arg == "mp_test_host":
@@ -686,6 +688,35 @@ func _scenario_pokedex_revive() -> void:
 		return
 
 	_pass("pokedex_revive", "stepper +/− : charge et poids d'équipe à jour")
+	screen.queue_free()
+
+
+## Retour joueurs : « réorganiser les onglets pour que tout soit visible » —
+## "Débloqués (140)"/"À débloquer (12)" débordait de son bouton dans une
+## colonne de 456px partagée par 4 onglets. Le compte est passé en infobulle ;
+## vérifie que le texte du bouton ne contient plus de parenthèses (donc plus
+## court) et que le compte reste consultable via tooltip_text.
+func _scenario_pokedex_tabs() -> void:
+	GameManager.hub_team = [GameManager.STARTER_IDS[0]]
+	var screen := PokedexScreen.new()
+	get_tree().root.add_child(screen)
+	await get_tree().create_timer(2.5).timeout
+
+	var tabs: Array = screen.get("_tab_buttons")
+	if tabs.is_empty():
+		_fail("pokedex_tabs", "aucun onglet construit")
+		screen.queue_free()
+		return
+	for b: Button in tabs:
+		if "(" in b.text or ")" in b.text:
+			_fail("pokedex_tabs", "le texte de l'onglet déborde encore avec un compte inline : %s" % b.text)
+			screen.queue_free()
+			return
+		if not b.tooltip_text.ends_with("Pokémon"):
+			_fail("pokedex_tabs", "le compte n'est pas exposé en infobulle : %s" % b.tooltip_text)
+			screen.queue_free()
+			return
+	_pass("pokedex_tabs", "%d onglets, libellés courts, compte en infobulle" % tabs.size())
 	screen.queue_free()
 
 

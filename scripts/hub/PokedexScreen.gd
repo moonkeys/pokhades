@@ -196,13 +196,16 @@ func _add_idle_sprite(parent: Control, pid: int, box: float, center: Vector2) ->
 		var s := 1.0 if big <= 0.0 else box / big
 		spr.scale = Vector2.ONE * s
 
-		# AnimatedSprite2D centre la FRAME sur sa position — or les planches PMD
-		# ont une marge vide sous le personnage (cf. PMDSprites.foot_row, la
-		# rangée du pixel opaque le plus bas). Centrer la frame décalait donc le
-		# Pokémon vers le haut du carré. On recentre sur le CONTENU VISIBLE.
+		# AnimatedSprite2D centre la FRAME (géométrique) sur sa position — or
+		# les planches PMD ont une marge vide sous le personnage (cf.
+		# PMDSprites.foot_row) ET parfois asymétrique à gauche/droite (cf.
+		# center_col). Centrer sur la frame brute décalait donc le Pokémon
+		# hors du centre visuel du carré (retour joueurs). On recentre sur le
+		# CONTENU VISIBLE, verticalement (pieds) et horizontalement.
 		var h := float(fs.y)
 		var foot := float(res.get("foot_row", fs.y - 1))
-		spr.position = center + Vector2(0.0, (h - foot) * 0.5 * s)
+		var cx := float(res.get("center_col", float(fs.x) * 0.5))
+		spr.position = center + Vector2((float(fs.x) * 0.5 - cx) * s, (h - foot) * 0.5 * s)
 
 		par.add_child(spr)
 		spr.play("idle")
@@ -337,11 +340,17 @@ func _build_tab_bar(panel: Panel) -> void:
 	for i in TAB_LABELS.size():
 		var count := _compute_tab_ids(i).size()
 		var btn := Button.new()
-		btn.text = "%s (%d)" % [TAB_LABELS[i], count]
+		# Le compte entre parenthèses ("À débloquer (12)") faisait déborder le
+		# texte hors du bouton dans une colonne de 456px partagée par 4 onglets
+		# (retour joueurs : « réorganiser pour que tout soit visible ») — le
+		# libellé seul suffit, le compte reste consultable en infobulle.
+		btn.text = TAB_LABELS[i]
+		btn.tooltip_text = "%d Pokémon" % count
 		btn.position = Vector2(16 + i * (btn_w + gap), TAB_BAR_Y)
 		btn.size     = Vector2(btn_w, TAB_BAR_H)
 		btn.focus_mode = Control.FOCUS_ALL
 		btn.clip_text = true
+		btn.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		btn.add_theme_font_size_override("font_size", 10)
 		panel.add_child(btn)
 		_tab_buttons.append(btn)
