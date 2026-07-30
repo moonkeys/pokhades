@@ -51,7 +51,7 @@ jobs:
             templates_dir: "$HOME/Library/Application Support/Godot/export_templates/4.7.stable"
 
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30   # garde-fou : un export bloqué ne tourne pas indéfiniment
+    timeout-minutes: 60   # garde-fou : un export bloqué ne tourne pas indéfiniment (import à froid inclus)
     defaults:
       run:
         shell: bash
@@ -83,16 +83,31 @@ jobs:
           "$GODOT_BIN" --version
 
       - name: Importer les ressources
-        # --import se termine tout seul, mais un projet non importé peut laisser
-        # Godot en attente : timeout dur + on ignore un code de sortie non nul,
-        # l'export qui suit est le vrai test. `timeout` est un outil GNU
-        # absent des runners macOS ; sur cette plateforme le garde-fou de
-        # 30 min du job (timeout-minutes) sert de filet à la place.
+        # .godot/ est gitignoré : chaque run CI part d'un cache d'import
+        # totalement VIDE (contrairement à un poste de dev où il est déjà
+        # là). Sur un projet de cette taille (dump Pokemon Essentials, packs
+        # Kenney...), un import à froid peut dépasser largement les 900s
+        # d'origine — qui échouaient silencieusement (`|| true`), livrant un
+        # export sans AUCUNE ressource importée : tout ce qui est chargé
+        # dynamiquement par chemin (berrytree, grass.png, les .glb Kenney...)
+        # plante au premier load() avec "No loader found for resource".
+        # Découvert sur l'export Web (inspection du .pck livré : 0 fichier
+        # .import, 0 entrée .godot/imported/ dedans) — même mécanisme ici,
+        # `timeout` étant absent de macOS on garde le fallback existant.
+        # Le code de sortie de Godot reste peu fiable (`|| true` conservé),
+        # donc on vérifie directement le symptôme diagnostiqué : un
+        # .godot/imported/ quasi vide = import resté incomplet.
         run: |
           if command -v timeout >/dev/null 2>&1; then
-            timeout 900 "$GODOT_BIN" --headless --import . || true
+            timeout 2700 "$GODOT_BIN" --headless --import . || true
           else
             "$GODOT_BIN" --headless --import . || true
+          fi
+          count=$(find .godot/imported -type f 2>/dev/null | wc -l)
+          echo "Ressources importées : $count"
+          if [ "$count" -lt 500 ]; then
+            echo "::error::Import quasi vide ($count fichiers) — timeout trop court ou échec silencieux."
+            exit 1
           fi
 
       - name: Exporter le jeu (${{ matrix.channel }})

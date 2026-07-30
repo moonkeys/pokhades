@@ -16,7 +16,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60   # cf. commentaire sur l'étape d'import : un import à froid peut être long
     steps:
       - uses: actions/checkout@v4
 
@@ -45,7 +45,27 @@ jobs:
           ./godot --version
 
       - name: Importer les ressources
-        run: timeout 900 ./godot --headless --import . || true
+        # .godot/ est gitignoré : chaque run CI part d'un cache d'import
+        # totalement VIDE, contrairement à un poste de dev où l'import est
+        # déjà fait depuis longtemps. Sur un projet de cette taille (dump
+        # Pokemon Essentials, packs Kenney...), un import à froid peut
+        # largement dépasser les 900s d'origine — qui échouaient
+        # silencieusement (`|| true`), livrant un .pck sans AUCUNE ressource
+        # importée (0 fichier .import, 0 entrée .godot/imported/ dedans,
+        # vérifié en inspectant le .pck livré) : tout ce qui est chargé
+        # dynamiquement par chemin (berrytree, grass.png, les .glb Kenney...)
+        # plantait au premier load() avec "No loader found for resource".
+        # Le code de sortie de Godot reste peu fiable ici (`|| true`
+        # conservé), donc on vérifie directement le symptôme diagnostiqué :
+        # un .godot/imported/ quasi vide = import resté incomplet.
+        run: |
+          timeout 2700 ./godot --headless --import . || true
+          count=$(find .godot/imported -type f 2>/dev/null | wc -l)
+          echo "Ressources importées : $count"
+          if [ "$count" -lt 500 ]; then
+            echo "::error::Import quasi vide ($count fichiers) — timeout trop court ou échec silencieux."
+            exit 1
+          fi
 
       - name: Exporter la démo web
         run: |
