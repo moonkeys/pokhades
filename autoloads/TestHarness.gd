@@ -59,6 +59,8 @@ func _ready() -> void:
 			_run_scenario(_scenario_new_bonuses)
 		elif arg == "smoke_team_buff":
 			_run_scenario(_scenario_team_buff)
+		elif arg == "smoke_move_protect":
+			_run_scenario(_scenario_move_protect)
 		elif arg == "smoke_move_upgrade":
 			_run_scenario(_scenario_move_upgrade)
 		elif arg == "smoke_los_throttle":
@@ -1164,6 +1166,55 @@ func _scenario_team_buff() -> void:
 		return
 
 	_pass("team_buff", "boost appliqué + étiquette cumulable : %s" % lbl.text)
+
+
+## Retour joueurs : « Protection doit indiquer 'Se protège' et fonctionner
+## in-game » — la CT (power=0, damage_class="status") n'avait aucun `effect`
+## déclaré, donc ne faisait RIEN à l'usage. Vérifie que _use_status_move
+## (kind="protect") arme la fenêtre de protection ET que take_damage()
+## bloque bien tout coup pendant cette fenêtre (PV inchangés, coup refusé).
+func _scenario_move_protect() -> void:
+	GameManager.is_first_run = false
+	GameManager.hub_team = [GameManager.STARTER_IDS[0]]
+	RunManager.inst().start_run()
+	get_tree().change_scene_to_file("res://scenes/combat/CombatArena.tscn")
+	var waited := 0.0
+	while get_tree().get_nodes_in_group("players").is_empty() and waited < 18.0:
+		await get_tree().create_timer(0.5).timeout
+		waited += 0.5
+	var players := get_tree().get_nodes_in_group("players")
+	if players.is_empty():
+		_fail("move_protect", "équipe non apparue")
+		return
+	var member: Node = players[0]
+	var inst: PokemonInstance = member.get("pokemon_instance")
+
+	var protect_move: MoveData = null
+	for m: Dictionary in MoveShopScreen.MOVE_LIST:
+		if str(m.get("api", "")) == "protect":
+			var md := MoveData.new()
+			md.api_name     = "protect"
+			md.display_name = str(m["label"])
+			md.type         = str(m["type"])
+			md.power        = 0
+			md.damage_class = "status"
+			md.effect       = m["effect"]
+			protect_move = md
+			break
+	if protect_move == null:
+		_fail("move_protect", "CT Protection introuvable dans MoveShopScreen.MOVE_LIST")
+		return
+
+	member.call("_use_status_move", protect_move)
+	var hp_before := inst.current_hp
+	var landed: bool = member.call("take_damage", 999999)
+	if landed:
+		_fail("move_protect", "le coup a porté malgré la Protection active")
+		return
+	if inst.current_hp != hp_before:
+		_fail("move_protect", "PV modifiés malgré la Protection (%d -> %d)" % [hp_before, inst.current_hp])
+		return
+	_pass("move_protect", "Protection bloque bien tout coup pendant sa fenêtre")
 
 
 ## Retour joueurs : « avoir vraiment plus de choix, pouvoir donner des bonus

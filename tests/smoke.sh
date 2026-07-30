@@ -58,6 +58,7 @@ run_scenario lobby_item_stats 20 smoke_lobby_item_stats
 run_scenario cooldown_focus 20 smoke_cooldown_focus
 run_scenario new_bonuses 25 smoke_new_bonuses
 run_scenario team_buff  20 smoke_team_buff
+run_scenario move_protect 20 smoke_move_protect
 run_scenario move_upgrade 20 smoke_move_upgrade
 run_scenario los_throttle 20 smoke_los_throttle
 run_scenario sprite_occlusion 20 smoke_sprite_occlusion

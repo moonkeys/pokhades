@@ -1297,6 +1297,12 @@ func _move_house_effect(api: String) -> String:
 				return "Effet : %s la cible" % nm
 			"heal_team": return "Effet : soigne l'équipe de %d %%" % int(float(fx.get("pct", 0.0)) * 100)
 			"heal_self": return "Effet : se soigne de %d %%" % int(float(fx.get("pct", 0.0)) * 100)
+			"protect":   return "Effet : se protège"
+			"buff_team":
+				var stat_name: String = {"atk": "Attaque", "def": "Défense", "spatk": "Atq. Spé",
+					"spdef": "Déf. Spé", "spd": "Vitesse"}.get(str(fx.get("stat", "atk")), "stat")
+				return "Effet : booste %s de l'équipe (+%d %%)" % [stat_name,
+					int(round((float(fx.get("mult", 1.0)) - 1.0) * 100.0))]
 		return ""
 	return ""
 

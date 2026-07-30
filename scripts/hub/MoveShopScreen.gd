@@ -20,10 +20,10 @@ const MOVE_LIST: Array[Dictionary] = [
 	{"api": "waterfall",    "label": "Chute d'Eau",     "type": "water",    "price": 90},
 	# Attaques physiques
 	{"api": "earthquake",   "label": "Séisme",          "type": "ground",   "price": 150},
-	{"api": "iron-tail",    "label": "Kro-Kqueue",      "type": "steel",    "price": 120},
-	{"api": "aerial-ace",   "label": "Jackpot Aérien",  "type": "flying",   "price": 80},
-	{"api": "rock-slide",   "label": "Rockblast",       "type": "rock",     "price": 90},
-	{"api": "brick-break",  "label": "Destructor",      "type": "fighting", "price": 90},
+	{"api": "iron-tail",    "label": "Queue de Fer",    "type": "steel",    "price": 120},
+	{"api": "aerial-ace",   "label": "Cru-Aile",        "type": "flying",   "price": 80},
+	{"api": "rock-slide",   "label": "Éboulement",      "type": "rock",     "price": 90},
+	{"api": "brick-break",  "label": "Casse-Brique",    "type": "fighting", "price": 90},
 	{"api": "shadow-claw",  "label": "Griffe d'Ombre",  "type": "ghost",    "price": 100},
 	# Attaques spéciales
 	{"api": "flamethrower", "label": "Lance-Flammes",   "type": "fire",     "price": 100},
@@ -40,10 +40,17 @@ const MOVE_LIST: Array[Dictionary] = [
 	# étiquette dorée cumulable au-dessus de chaque Pokémon buffé.
 	{"api": "swords-dance", "label": "Danse-Lames",     "type": "normal",   "price": 200,
 		"effect": {"kind": "buff_team", "stat": "atk",   "mult": 1.50, "dur": 8.0}},
-	{"api": "calm-mind",    "label": "Méditation",      "type": "psychic",  "price": 200,
+	# "Méditation" était un nom inventé — le vrai nom officiel FR de Calm Mind
+	# est Plénitude (retour joueurs : « corriger Plénitude »).
+	{"api": "calm-mind",    "label": "Plénitude",       "type": "psychic",  "price": 200,
 		"effect": {"kind": "buff_team", "stat": "spatk", "mult": 1.40, "dur": 8.0}},
-	{"api": "protect",      "label": "Protection",      "type": "normal",   "price": 120},
-	{"api": "recover",      "label": "Récupération",    "type": "normal",   "price": 180},
+	# Protection/Soin n'avaient pas d'"effect" — de VRAIES attaques de statut
+	# PokéAPI (power=0) qui ne faisaient donc RIEN à l'usage (retour joueurs :
+	# « Protection doit indiquer Se protège et fonctionner in-game »).
+	{"api": "protect",      "label": "Protection",      "type": "normal",   "price": 120,
+		"effect": {"kind": "protect", "dur": 1.5}},
+	{"api": "recover",      "label": "Soin",            "type": "normal",   "price": 180,
+		"effect": {"kind": "heal_self", "pct": 0.5}},
 	# CT à effet réel — attaques de statut PokéAPI (puissance 0, damage_class
 	# "status") : soin ou altération GARANTIE (pas de tirage par type comme
 	# sur les attaques normales), pour un vrai choix de rôle soigneur/contrôle

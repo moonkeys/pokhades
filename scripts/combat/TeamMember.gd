@@ -123,6 +123,10 @@ var _dash_recharge: float = 0.0
 var _dash_timer:    float = 0.0
 var _dash_dir:      Vector3 = Vector3.ZERO
 
+## Fenêtre de Protection (CT) — cf. _use_status_move kind="protect" et
+## take_damage(). Décompte comme le reste des minuteurs de statut.
+var _protect_timer: float = 0.0
+
 ## Verrou d'animation d'action (attaque/dégâts PMD) — tant qu'il court,
 ## _update_anim ne reprend pas la main sur l'animation en cours.
 var _action_lock: float = 0.0
@@ -426,10 +430,11 @@ func _physics_process(delta: float) -> void:
 		_capture_process(delta)
 		return
 
-	_attack_timer = max(0.0, _attack_timer - delta)
-	_attack_flash = max(0.0, _attack_flash - delta * 4.0)
-	_action_lock  = max(0.0, _action_lock - delta)
-	_global_lock  = max(0.0, _global_lock - delta)
+	_attack_timer  = max(0.0, _attack_timer - delta)
+	_attack_flash  = max(0.0, _attack_flash - delta * 4.0)
+	_action_lock   = max(0.0, _action_lock - delta)
+	_global_lock   = max(0.0, _global_lock - delta)
+	_protect_timer = max(0.0, _protect_timer - delta)
 	for i in _move_cd.size():
 		_move_cd[i] = max(0.0, _move_cd[i] - delta)
 	_update_range_ring()
@@ -1178,6 +1183,13 @@ func _use_status_move(move: MoveData) -> void:
 					str(move.effect.get("status", "")),
 					StatusFx.duration(str(move.effect.get("status", ""))))
 				AttackAnim.play(get_parent(), target.global_position, move.type)
+		"protect":
+			# « Se protège » — bloque tout coup pendant une courte fenêtre
+			# (cf. take_damage). Rafraîchit plutôt qu'accumule : relancer la
+			# CT prolonge la fenêtre au lieu de l'empiler indéfiniment.
+			_protect_timer = maxf(_protect_timer, float(move.effect.get("dur", 1.5)))
+			CombatVFX.spawn_impact(get_parent(), global_position + Vector3(0, 0.6, 0),
+				Color(0.55, 0.85, 1.0))
 
 	if not _evolving:
 		# Anim PMD DIFFÉRENTE d'une frappe : Charge (concentration) — une CT
@@ -1367,6 +1379,12 @@ func take_damage(amount: int, source_pos: Vector3 = Vector3(INF, INF, INF)) -> b
 	# protégé — en contrepartie le Pokémon ne peut pas attaquer non plus
 	# (cf. les gardes _evolving sur _attack_timer).
 	if _evolving:
+		return false
+	# Protection (CT) : bloque TOUT coup pendant sa fenêtre — retour joueurs :
+	# « Protection doit indiquer 'Se protège' et fonctionner in-game » (la CT
+	# ne faisait jusque-là RIEN, cf. _use_status_move kind="protect").
+	if _protect_timer > 0.0:
+		CombatVFX.spawn_damage_number(get_parent(), global_position, 0, "dodge")
 		return false
 	# Esquive : chance d'ignorer TOTALEMENT le coup (cf. PokemonInstance.
 	# dodge_chance, bonus de fin de zone « Chances d'esquive »). Retour visuel
