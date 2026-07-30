@@ -247,9 +247,26 @@ func _refresh_team_strip() -> void:
 		if filled:
 			var pid: int = GameManager.hub_team[i]
 			_style_team_slot(slot as Button)
-			# Sprite ANIMÉ centré (cf. _add_idle_sprite) au lieu du portrait
-			# statique, qui débordait du carré par le bas.
-			_add_idle_sprite(slot, pid, sw - 14.0, Vector2(sw * 0.5, sw * 0.5 - 4.0))
+			# Sprite de la forme EFFECTIVE au départ (espèce + niveau de base +
+			# Super Bonbons, cf. GameManager.get_effective_start) — retour
+			# joueurs : « si un Bonbon fait dépasser le niveau d'évolution, il
+			# doit se transformer ». Même calcul que CombatArena au spawn, donc
+			# ce qu'on voit ici EST ce qui apparaîtra en run.
+			var eff := GameManager.get_effective_start(pid, GameManager.BASE_TEAM_LEVEL)
+			_add_idle_sprite(slot, int(eff["id"]), sw - 14.0, Vector2(sw * 0.5, sw * 0.5 - 4.0))
+
+			var lvl_lbl := Label.new()
+			lvl_lbl.text = "Nv %d" % int(eff["level"])
+			lvl_lbl.position = Vector2(0, 2)
+			lvl_lbl.size     = Vector2(sw - 3, 14)
+			lvl_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+			lvl_lbl.add_theme_font_size_override("font_size", UiKit.scaled_font(9))
+			lvl_lbl.add_theme_color_override("font_color", C_TEXT)
+			lvl_lbl.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.85))
+			lvl_lbl.add_theme_constant_override("shadow_offset_y", 1)
+			lvl_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			slot.add_child(lvl_lbl)
+
 			# Poids de CE Pokémon (espèce + objet tenu + CT équipées) — on lit
 			# la composition du build d'un coup d'œil.
 			var pw := GameManager.pokemon_weight(pid)
@@ -926,6 +943,23 @@ func _refresh_detail() -> void:
 	# « afficher la valeur de chaque poids partout »).
 	_detail_root.add_child(_lbl_node("esp. %d · obj. %d · att. %d · rap. %d" % [w_species, w_item, w_moves, w_revive],
 		330, 38, 170, 16, 9, C_DIM))
+
+	# Niveau de DÉPART (avant/après Super Bonbons, cf. GameManager.
+	# get_effective_start) — retour joueurs : « afficher le niveau de base ».
+	# Si le bonus fait franchir le seuil d'évolution, celui-ci se déclenche
+	# déjà réellement au spawn (get_effective_start) : on le montre ici pour
+	# que ce ne soit plus une surprise (« il doit se transformer »).
+	var base_lvl := GameManager.BASE_TEAM_LEVEL + GameManager.get_start_level_bonus(_selected_pid)
+	_detail_root.add_child(_lbl_node("Niveau de départ : %d" % base_lvl,
+		330, 54, 220, 13, 9, C_DIM))
+	var eff_start := GameManager.get_effective_start(_selected_pid, GameManager.BASE_TEAM_LEVEL)
+	if int(eff_start["id"]) != _selected_pid:
+		var evo_id := int(eff_start["id"])
+		var evo_name := "?"
+		if _loaded_data.has(evo_id):
+			evo_name = (_loaded_data[evo_id] as PokemonData).name_fr.to_upper()
+		_detail_root.add_child(_lbl_node("→ évolue en %s au départ !" % evo_name,
+			330, 67, 220, 13, 9, C_GOLD))
 
 	var type_row := Control.new()
 	type_row.position = Vector2(122, 48)

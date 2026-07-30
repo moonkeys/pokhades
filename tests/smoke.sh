@@ -70,6 +70,7 @@ run_scenario pokedex     20 smoke_pokedex
 run_scenario gromago_refresh 20 smoke_gromago_refresh
 run_scenario pokedex_revive 20 smoke_pokedex_revive
 run_scenario pokedex_tabs 20 smoke_pokedex_tabs
+run_scenario team_evolve_display 20 smoke_team_evolve_display
 run_scenario pokedex_stress 30 smoke_pokedex_stress
 run_scenario run_solo    25 smoke_run
 run_scenario run_acte2   25 smoke_run_room=9

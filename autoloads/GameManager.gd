@@ -399,6 +399,12 @@ var move_loadouts: Dictionary = {}
 
 const MOVE_SLOTS := 4   # tous les Pokémon ont 4 emplacements, d'office
 
+## Niveau de départ AVANT tout Super Bonbon (cf. CombatArena.PLAYER_LEVEL,
+## qui reprend cette valeur) — source unique, nécessaire pour que le
+## Pokédex puisse afficher le niveau effectif (get_effective_start) sans
+## dépendre d'une scène de combat.
+const BASE_TEAM_LEVEL := 10
+
 ## Cache api_name -> puissance, alimenté par PokemonAPI dès qu'une fiche est
 ## résolue. Le poids d'un build doit se calculer SYNCHRONEMENT (affichage du
 ## Pokédex, blocage du lancement de run) alors que les puissances arrivent en

@@ -40,7 +40,7 @@ const POOL_CAVE_ELITE    := PokePools.CAVE_ELITE
 const POOL_CAVE_DEMIBOSS := PokePools.CAVE_DEMIBOSS
 const POOL_BIOME         := PokePools.BIOME
 
-const PLAYER_LEVEL:    int = 10
+const PLAYER_LEVEL:    int = GameManager.BASE_TEAM_LEVEL
 const SEMI_BOSS_LEVEL: int = 13
 const BOSS_LEVEL:      int = 18
 

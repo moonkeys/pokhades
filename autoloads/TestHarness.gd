@@ -85,6 +85,8 @@ func _ready() -> void:
 			_run_scenario(_scenario_pokedex_revive)
 		elif arg == "smoke_pokedex_tabs":
 			_run_scenario(_scenario_pokedex_tabs)
+		elif arg == "smoke_team_evolve_display":
+			_run_scenario(_scenario_team_evolve_display)
 		elif arg == "smoke_pokedex_stress":
 			_run_scenario(_scenario_pokedex_stress)
 		elif arg == "mp_test_host":
@@ -717,6 +719,44 @@ func _scenario_pokedex_tabs() -> void:
 			screen.queue_free()
 			return
 	_pass("pokedex_tabs", "%d onglets, libellés courts, compte en infobulle" % tabs.size())
+	screen.queue_free()
+
+
+## Retour joueurs : « afficher le niveau de base » + « si un Bonbon fait
+## dépasser le niveau d'évolution, il doit se transformer » (ex. Pikachu
+## nv.20 → Raichu). Pikachu (STARTER_IDS[0]=25) évolue à 20 ; base 10 +
+## 2 Bonbons (+5 chacun) = 20, pile le seuil. Vérifie que get_effective_start
+## calcule bien l'évolution ET que le niveau effectif est affiché sur le
+## carré d'équipe (cf. PokedexScreen._refresh_team_strip).
+func _scenario_team_evolve_display() -> void:
+	var pid := 25   # Pikachu — cf. GameManager.EVOLUTIONS: {"level": 20, "evolves_to": 26}
+	GameManager.hub_team = [pid]
+	GameManager.start_level_bonus.erase(pid)
+	GameManager.item_inventory["rare-candy"] = 2
+	if not GameManager.use_candy(pid) or not GameManager.use_candy(pid):
+		_fail("team_evolve_display", "les Super Bonbons n'ont pas pu être consommés")
+		return
+	if GameManager.get_start_level_bonus(pid) < 10:
+		_fail("team_evolve_display", "bonus de niveau non appliqué (%d)" % GameManager.get_start_level_bonus(pid))
+		return
+
+	var eff := GameManager.get_effective_start(pid, GameManager.BASE_TEAM_LEVEL)
+	if int(eff["id"]) != 26 or int(eff["level"]) != 20:
+		_fail("team_evolve_display", "get_effective_start ne calcule pas l'évolution (id=%s niveau=%s)"
+			% [eff["id"], eff["level"]])
+		return
+
+	var screen := PokedexScreen.new()
+	get_tree().root.add_child(screen)
+	await get_tree().create_timer(2.5).timeout
+	screen.call("_refresh_team_strip")
+	await get_tree().process_frame
+
+	if _find_label_with_text(screen, "Nv 20") == null:
+		_fail("team_evolve_display", "niveau effectif (Nv 20) non affiché sur le carré d'équipe")
+		screen.queue_free()
+		return
+	_pass("team_evolve_display", "Pikachu nv.10+2 Bonbons → évolution Raichu nv.20 calculée et affichée")
 	screen.queue_free()
 
 
