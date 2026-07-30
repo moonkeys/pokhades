@@ -1,11 +1,14 @@
 # Exporte le preset "Web" (démo publique — biome 1 solo, Pikachu, cf.
-# autoloads/DemoBoot.gd) et dépose le résultat en artifact. Ne publie rien
-# tout seul : le build est inspecté puis committé à la main dans
-# docs/demo/, pour ne pas pousser un export non vérifié en production.
+# autoloads/DemoBoot.gd) et publie le résultat dans docs/demo/, servi par
+# GitHub Pages. Déclenchement manuel uniquement : à relancer après un
+# changement de gameplay qui doit se refléter dans la démo.
 name: Build demo web
 
 on:
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 env:
   GODOT_VERSION: "4.7"
@@ -55,3 +58,19 @@ jobs:
         with:
           name: demo-web
           path: builds/web/
+
+      - name: Publier dans docs/demo/
+        run: |
+          rm -rf docs/demo
+          mkdir -p docs/demo
+          cp -r builds/web/* docs/demo/
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/demo
+          if git diff --cached --quiet; then
+            echo "Aucun changement dans le build web, rien à committer."
+          else
+            git commit -m "chore(demo): mise à jour du build web"
+            git pull --rebase origin main
+            git push
+          fi
