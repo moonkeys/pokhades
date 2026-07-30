@@ -20,6 +20,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Retirer les fichiers non nécessaires à l'import
+        # "blender assets.blend" est un fichier source d'auteur (aucune
+        # référence res:// dans le code/les scènes) : Godot tente de
+        # l'importer comme scène 3D via un vrai binaire Blender externe,
+        # absent du runner — "Blender path is invalid or not set... Cannot
+        # configure blender path in headless mode." L'échec est FATAL à
+        # tout le reste du batch d'import (le scan s'arrête net juste
+        # après, "Ressources importées : 0" malgré 97% de progression
+        # affichée avant). Retiré de la copie CI seulement, pas du dépôt.
+        run: rm -f "blender assets.blend" "blender assets.blend1" "blender assets.blend.import"
+
       - name: Bibliothèques système
         # Même piège que le build Linux du workflow Release : le binaire
         # Godot headless est lié à X11/ALSA même sans écran. xvfb en plus :
