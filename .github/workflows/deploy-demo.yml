@@ -22,11 +22,18 @@ jobs:
 
       - name: Bibliothèques système
         # Même piège que le build Linux du workflow Release : le binaire
-        # Godot headless est lié à X11/ALSA même sans écran.
+        # Godot headless est lié à X11/ALSA même sans écran. xvfb en plus :
+        # ubuntu-latest n'a AUCUN GPU, et l'import de textures/modèles (donc
+        # PAS juste l'exécution du jeu) a besoin d'un contexte OpenGL, même
+        # en --headless. Sans display à s'accrocher, l'import échouait
+        # silencieusement sur TOUT (0 fichier importé, quelle que soit la
+        # patience qu'on lui laissait — vérifié : 73s et 22836 fichiers en
+        # local avec un vrai GPU, donc ce n'était jamais une question de
+        # timeout).
         run: |
           sudo apt-get update -qq
           for pkg in libfontconfig1 libxcursor1 libxinerama1 libxi6 libxrandr2 \
-                     libxrender1 libxext6 libgl1 libasound2t64 libpulse0; do
+                     libxrender1 libxext6 libgl1 libasound2t64 libpulse0 xvfb; do
             sudo apt-get install -y --no-install-recommends "$pkg" \
               || echo "::warning::paquet non installé : $pkg"
           done
@@ -45,32 +52,27 @@ jobs:
           ./godot --version
 
       - name: Importer les ressources
-        # .godot/ est gitignoré : chaque run CI part d'un cache d'import
-        # totalement VIDE, contrairement à un poste de dev où l'import est
-        # déjà fait depuis longtemps. Sur un projet de cette taille (dump
-        # Pokemon Essentials, packs Kenney...), un import à froid peut
-        # largement dépasser les 900s d'origine — qui échouaient
-        # silencieusement (`|| true`), livrant un .pck sans AUCUNE ressource
-        # importée (0 fichier .import, 0 entrée .godot/imported/ dedans,
-        # vérifié en inspectant le .pck livré) : tout ce qui est chargé
-        # dynamiquement par chemin (berrytree, grass.png, les .glb Kenney...)
-        # plantait au premier load() avec "No loader found for resource".
-        # Le code de sortie de Godot reste peu fiable ici (`|| true`
-        # conservé), donc on vérifie directement le symptôme diagnostiqué :
-        # un .godot/imported/ quasi vide = import resté incomplet.
+        # ubuntu-latest n'a aucun GPU : l'import de textures/modèles a
+        # besoin d'un contexte OpenGL même en --headless, contrairement à
+        # l'exécution pure du jeu. xvfb-run fournit ce display virtuel.
+        # (Ce n'était pas un problème de timeout : 73s et 22836 fichiers
+        # importés en local avec un vrai GPU sur un cache tout aussi vide.)
+        # Le code de sortie de Godot reste peu fiable (`|| true` conservé),
+        # donc on vérifie directement le symptôme diagnostiqué : un
+        # .godot/imported/ quasi vide = import resté incomplet.
         run: |
-          timeout 2700 ./godot --headless --import . || true
+          xvfb-run -a timeout 2700 ./godot --headless --import . || true
           count=$(find .godot/imported -type f 2>/dev/null | wc -l)
           echo "Ressources importées : $count"
           if [ "$count" -lt 500 ]; then
-            echo "::error::Import quasi vide ($count fichiers) — timeout trop court ou échec silencieux."
+            echo "::error::Import quasi vide ($count fichiers) — vérifie xvfb / les libs GL."
             exit 1
           fi
 
       - name: Exporter la démo web
         run: |
           mkdir -p builds/web
-          timeout 900 ./godot --headless --export-release "Web" builds/web/index.html
+          xvfb-run -a timeout 900 ./godot --headless --export-release "Web" builds/web/index.html
           test -f builds/web/index.html
           ls -lh builds/web
 
